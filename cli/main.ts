@@ -293,9 +293,7 @@ async function tryIt() {
       (card: { id: number; state: string }) => card.id === asked && card.state === "done",
     );
     if (done) {
-      say(
-        `它把活干完了：${done.result}\n\n通了。接下来把 ${RULES_FILE} 改成你自己的规则，或者跟你的 Agent 说一句。`,
-      );
+      say(`它把活干完了：${done.result}\n\n通了。接下来把 ${RULES_FILE} 改成你自己的规则，或者跟你的 Agent 说一句。`);
       return;
     }
   }
@@ -318,9 +316,7 @@ async function status(raw = false) {
   const { totals } = state;
   const clock = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
   const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { timeZone: state.timezone, ...clock });
-  say(
-    `在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`,
-  );
+  say(`在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`);
   say(`${spendLine(state.spending)}\n`);
   for (const agent of state.agents) say(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
   for (const channel of state.channels) say(`${channel.online ? "●" : "○"} ${channel.name}`);
