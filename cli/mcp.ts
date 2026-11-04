@@ -1,4 +1,5 @@
 // `agent-autoloop mcp`: the hub's doors as MCP tools over stdio, using the keys already in this machine's config.json.
+// Reads by default: writing tools are offered only under --allow-writes (or AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1).
 import { createInterface } from "node:readline";
 import { readConfig } from "../host/config.ts";
 import { hubClient, type Hub } from "../protocol/client.ts";
@@ -26,10 +27,12 @@ const specs = [
 ] as const;
 
 const usesSourceKey = (name: string) => ["emit", "tell"].includes(name);
+const WRITES = ["answer", "resolve", "stop", "emit", "tell"];
 
-function toolsFor(config: ReturnType<typeof readConfig>) {
+function toolsFor(config: ReturnType<typeof readConfig>, allowWrites = false) {
   return specs
     .filter(([name]) => (usesSourceKey(name) ? config.source : config.owner))
+    .filter(([name]) => allowWrites || !WRITES.includes(name))
     .map(([name, description, properties, required]) => ({
       name,
       description,
@@ -74,9 +77,9 @@ function callTool(hub: Hub, name: Tool["name"], args: any) {
   }
 }
 
-export async function mcp() {
+export async function mcp(allowWrites = false) {
   const config = readConfig();
-  const tools = toolsFor(config);
+  const tools = toolsFor(config, allowWrites);
   let initialized = false;
   let ready = false;
   const reply = (id: unknown, body: object) => console.log(JSON.stringify({ jsonrpc: "2.0", id, ...body }));

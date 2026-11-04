@@ -39,11 +39,11 @@
 
 ## 规则
 
-```jsonc
+```json
 {
-  "timezone": "Asia/Shanghai",                       // 定时和“今天”用的时区，默认系统时区
-  "askFirst": ["删数据", "停服", "花钱", "对外发消息"],  // 只有这几类事 Agent 才先问你
-  "sources":  { "shop": { "name": "shop" }, "github": { "name": "GitHub", "adapter": "github" } },
+  "timezone": "Asia/Shanghai",
+  "askFirst": ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"],
+  "sources": { "shop": { "name": "shop" }, "github": { "name": "GitHub", "adapter": "github" } },
   "agents": {
     "claude": { "name": "Claude Code", "worker": "mac-mini", "use": "claude", "model": "…", "effort": "high", "access": "edit" },
     "cursor": { "name": "Cursor", "worker": "mac-mini", "use": "command", "command": ["agent", "-p", "--trust", "{prompt}"] }
@@ -51,18 +51,29 @@
   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_xxx"] } },
   "rules": [{
     "name": "处理告警",
-    "when": { "source": "shop", "types": ["alert.*"] },   // 或 { "cron": "0 9 * * *" }
+    "when": { "source": "shop", "types": ["alert.*"] },
     "to": "claude", "cwd": "~/code/shop", "skill": "run-ops", "prompt": "按其中……一节处理。",
-    "group": "ops",                                        // 同一组一次一轮，默认就是规则名
-    "parallel": 3,                                         // 写了就按对象分事项：同一对象一次一轮，这一组最多 3 轮
-    "tell": "needed",                                      // always 每次 / needed 只在有卡片时（默认）/ never 不推送
-    "emits": { "source": "shop", "types": ["pr.*"] }      // 回执里能发什么事件，不写就不能发
+    "group": "ops",
+    "parallel": 3,
+    "tell": "needed",
+    "emits": { "source": "shop", "types": ["pr.*"] }
   }],
   "elsewhere": [{ "name": "每周清理", "source": "shop", "to": "claude", "cron": "0 6 * * 0", "where": "Claude 应用的定时任务" }]
 }
+
 ```
 
-`elsewhere` 是在别处定时跑的任务：中台不启动它们，只在 `agent-autoloop status` 里列出来，它们要找你时用 `POST /v1/tell`。规则写错了，文件改动不生效，旧规则继续跑，并推一张卡片告诉你错在哪。
+- `timezone` 是定时和“今天”用的时区，不写就用系统时区。
+- `askFirst` 是只有这几类事 Agent 才先问你的清单，不写就是上面这七项。
+- `when` 二选一：`source` 配 `types`，或者 `cron`（写 `"when": { "cron": "0 9 * * *" }`）。
+- `group` 是同一组一次一轮的分组，不写就是规则名。
+- `parallel` 写了就按对象分事项，同一对象一次一轮，这一组最多跑这么多轮。
+- `tell` 是 `always` 每次都推送、`needed` 只在有卡片时（默认）、`never` 不推送。
+- `emits` 写明回执里能发什么事件，不写就不能发。
+- `sources`、`agents`、`channels` 的编号只能用小写字母、数字和 `-`，以字母开头，最多 64 字；`constructor`、`prototype`、`__proto__` 这类名字不能用。规则里的 `to`、`when.source`、`emits.source` 必须指向已登记的编号。
+- `parallel` 是 1 到 100 的整数，`timeout` 是 1 到 10080 的整数（分钟）。
+
+`elsewhere` 是在别处定时跑的任务：中台不启动它们，只在 `agent-autoloop status` 里列出来，它们要找你时用 `POST /v1/tell`。规则写错了，文件改动不生效，旧规则继续跑，并推一张卡片告诉你错在哪。删除或改名一条规则时，还没领走的排队轮次会取消，对应规则还没结束的卡片会关闭，并各发一张通知；已经领走的一轮照常跑完。之后回答这些旧卡片会返回 409，先用 `resolve` 结掉。
 
 排队和等待重试的任务在领取时一起采用最新的 Agent、目录、提示词和权限；换了 Agent 就不带旧 Agent 的会话。已经领取的任务保留领取时的 Job 配置和接单程序，重复 claim、心跳、停止和重启恢复都不随规则更新换人。事件已经归属的事项不重新拆分或合并；回执中的事件许可和通知方式仍按提交时的规则核验。
 
@@ -105,24 +116,29 @@ GET /v1/work?claim=<这次领活的编号>&wait=50&running=7,8&capacity=1    Aut
 - 响应丢了，用同一个 `claim` 再来一次，拿回的是同一份活。
 - `cancel` 是要停掉的。接单程序先向整个进程组发停止信号，10 秒后仍有进程运行就强制结束；确认组内没有活进程后才交 `outcome: "cancelled"`，这个事项才放开。停止期间重启接单程序也继续这一步。
 
-```jsonc
-// Job：一轮的全部。token 只对这一轮的这一次执行有效。
+拿到的是这一轮的全部；`token` 只对这一轮的这一次执行有效，`context` 由接单程序写成文件交给 Agent，都是资料。
+
+```json
 {
   "run": 12, "token": "…", "attempt": 1,
   "rule": { "name": "处理告警", "cwd": "~/code/shop", "skill": "run-ops", "prompt": "按其中……处理。" },
   "agent": { "id": "claude", "name": "Claude Code", "use": "claude", "model": "…", "effort": "high", "access": "edit" },
-  "session": null,       // 尽量接着的会话：重派时是上一次的，回答来了是提问那一轮的。接不上就开新的，所以它只是优化
-  "askFirst": ["删数据", "…"],
-  "context": {           // 接单程序把它写成文件交给 Agent，都是资料
-    "events":  [{ "id", "source", "sourceName", "type", "subject", "summary", "detail", "link", "receivedAt" }],
-    "answers": [{ "card", "title", "options", "choice", "text", "about", "by", "at" }],  // 这一轮要接着做的决定
-    "timers":  [{ "key", "about", "at" }],                                               // 这一轮到期的复查
-    "waiting": [{ "key", "about", "at" }],                                               // 这个事项还没到期的复查
-    "open":    [{ "card", "title", "text", "at" }],                                      // 同来源同组还没收尾的卡片
-    "decided": [{ "card", "title", "choice", "at" }]                                     // 这个事项定过的事，只对当时那件事有效
+  "session": null,
+  "askFirst": ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"],
+  "context": {
+    "events": [{ "id": "12", "source": "shop", "sourceName": "shop", "type": "alert.new", "subject": "db-1", "summary": "…", "detail": "…", "link": "https://…", "receivedAt": "2026-11-04T09:12:00+08:00" }],
+    "answers": [{ "card": 56, "title": "…", "options": ["重试", "跳过"], "choice": 0, "text": null, "about": "db-1", "by": "本人", "at": "2026-11-04T09:20:00+08:00" }],
+    "timers": [{ "key": "复查-1", "about": "db-1", "at": "2026-11-04T18:00:00+08:00" }],
+    "waiting": [{ "key": "等运维", "about": "db-1", "at": "2026-11-05T09:00:00+08:00" }],
+    "open": [{ "card": 57, "title": "…", "text": "…", "at": "2026-11-04T09:30:00+08:00" }],
+    "decided": [{ "card": 55, "title": "…", "choice": 1, "at": "2026-11-04T08:00:00+08:00" }]
   }
 }
+
 ```
+
+- `session` 是尽量接着的会话：重派时是上一次的，回答来了是提问那一轮的。接不上就开新的，所以它只是优化。
+- `context` 里都是资料：`events` 是这次要处理的事件，`answers` 是这一轮要接着做的决定，`timers` 是这一轮到期的复查，`waiting` 是这个事项还没到期的复查，`open` 是同来源同组还没收尾的卡片，`decided` 是这个事项定过的事（只对当时那件事有效）。
 
 ```
 POST /v1/runs/12/started   Authorization: Bearer <token>   { "session": "…", "link": "claude://…" }
@@ -130,21 +146,26 @@ POST /v1/runs/12/result    Authorization: Bearer <token>   Result
 → 200 { "rejected": [{ "card": 9, "reason": "不在本轮核对范围" }] }
 ```
 
-```jsonc
-// Result
+交回的是回执，写了的在一个事务里一起生效；下面是一个例子。
+
+```json
 {
-  "outcome": "done" | "nothing" | "failed" | "cancelled",
-  "summary": "一句话", "error": "没跑成的原因", "session": "…",
-  "usage": { "input": 0, "output": 0, "cached": 0, "cost": 0 },
-  // 下面就是回执，一个事务里一次生效
-  "ask":     [{ "title", "text", "options": ["…", "…"], "recommend": 0, "about": "留给接着干的自己", "key": "这件事的固定名字" }],
-  "notice":  [{ "title", "text", "key" }],
+  "outcome": "done",
+  "summary": "改完并核实了",
+  "session": "…",
+  "usage": { "input": 12000, "output": 800, "cached": 4000, "cost": 0.12 },
+  "ask": [{ "title": "…", "text": "…", "options": ["重试", "跳过"], "recommend": 0, "about": "db-1", "key": "这件事的固定名字" }],
+  "notice": [{ "title": "…", "text": "…", "key": "…" }],
   "resolve": [{ "card": 3, "reason": "在哪核实了已解决" }],
-  "later":   [{ "key": "…", "at": "2026-11-05T09:00:00+08:00", "about": "到时候查什么" }, { "key": "…", "cancel": true }],
-  "events":  [{ "id", "type", "subject", "summary", "detail", "link" }]
+  "later": [{ "key": "复查-1", "at": "2026-11-05T09:00:00+08:00", "about": "到时候查什么" }],
+  "events": [{ "id": "12:done", "type": "pr.opened", "subject": "db-1", "summary": "…", "detail": "…", "link": "https://…" }]
 }
+
 ```
 
+- `outcome` 只能是 `done`（做完了）、`nothing`（看了不用做）、`failed`（没跑成，中台会重派，这时写 `error`）、`cancelled`（被停掉）。
+- `usage` 有就报，用来统计用量；`session` 是这一轮用的会话。
+- `ask`、`notice`、`resolve`、`later`、`events` 是回执，一个事务里一次生效；`later` 里写 `{ "key": "复查-1", "cancel": true }` 是取消这个复查。
 - 结果可以重放：响应丢了，同一个 token 再交一次同样的内容，得到同样的确认；内容不同返回 409。
 - `failed` 会重派，所以它只带 `notice`，其余的不生效。
 - 需要本人恢复连接、登录或身份验证时，用 `done` 结束本轮并交 `ask`，不交 `failed`。`done` 表示本轮结束，未完成的事项由卡片继续跟进，不代表网页已经验收。同一阻塞已有 `open` 卡片时不重复提问，不用 `later` 定时重试；`waiting` 里同一阻塞已有的复查用 `cancel` 取消。保留已完成业务，`about` 写清恢复后只做哪些剩余步骤。
@@ -206,11 +227,12 @@ GET /v1/cards/next?wait=50    Authorization: Bearer <通道的密钥>
   "choice": null, "answer": null, "result": null, "link": null }
 ```
 
+- 通道必须先在 `rules.json` 的 `channels` 里登记。密钥有效但名字没登记，`GET /v1/cards/next` 返回 404，不会进入长轮询。
 - `ref` 是空的就发一条新的；不是空的就把那条改成现在的样子，改不了就直接报告。
 - 发完报告：`POST /v1/cards/56/delivered { "version": 2, "ref": "om_xxx" }`。没报告的过一分钟会再给你。**支持幂等键的平台，发新消息只用卡片编号，不带版本**。平台不支持时无法保证去重，Webhook 模板可能在报告丢失后重发。
 - 发不出去：`POST /v1/cards/56/failed { "version": 2, "error": "…" }`。第一次发送隔得越来越久地重试，一小时后放弃（卡片还开着，`agent-autoloop status` 看得到）；通道一直没来领不算在内。
 - 还没送达就已经解决的卡片不再打扰你。
-- 你点了：`POST /v1/cards/56/answer { "choice": 1, "by": "ou_xxx", "ref": "om_xxx" }`。只有第一次算数，`by` 要在这个通道的 `answerers` 里，`ref` 要和送达的那条一致。不带选项的通知有一个“已处理”按钮，点了就结案。
+- 你点了：`POST /v1/cards/56/answer { "choice": 1, "by": "ou_xxx", "ref": "om_xxx" }`。只有第一次算数，`ref` 要和送达的那条一致。通道必须在 `rules.json` 的 `channels` 里登记；`answerers` 里要有这个 `by`，缺失或为空表示谁都不能通过这个通道回答，写 `["*"]` 才表示任何有名字的人都能答。不带选项的通知有一个“已处理”按钮，点了就结案。
 
 最小的通道只要十几行：领卡片、发文字和 `link`、报告。`link` 只给配了 `"links": true` 的通道，其他通道这里是 `null`。它打开一个不跑脚本的普通表单页，这张卡片的文字和按钮都在上面，谁拿到链接谁就能答，有效期 7 天，适合只会发文字的群机器人、邮件。能发按钮、能收回调的通道（比如飞书）用按钮，身份由平台核验，更安全。一台电脑上用时 `link` 是本机地址，手机打不开，要手机批请把中台放到有公网地址的机器上，并配好 `publicUrl`。
 
@@ -250,6 +272,7 @@ POST /v1/runs/12/cancel     {}
 | 你点了两次，或者两边同时点 | 只算第一次 |
 | 提问之后问题自己好了 | 后面的 Agent 核实后在 `resolve` 里结掉，卡片自动改成“不用决定了” |
 | 规则写错了 | 旧规则继续跑，告诉你错在哪 |
+| 规则被删除或改名 | 没领走的轮次取消，相关卡片关闭，各发一张通知 |
 
 这是“至少一次”的系统：Agent 可能被叫两次，所以 Skill 里有副作用的动作要先核实当前状态。
 
@@ -302,7 +325,7 @@ Node 请求转换层保持在 50 行内；文件、SQLite 连接、监听和定�
 
 权限只选一次性的选项：`read` 允许结构化的读和搜索，`edit` 再允许工作目录内的编辑（核对符号链接），`full` 允许其他操作。未提供相应选项就取消。权限依赖 Agent 遵守 ACP，不提供额外的系统隔离。核对依据：[初始化](https://agentclientprotocol.com/protocol/v1/initialization)、[会话](https://agentclientprotocol.com/protocol/v1/session-setup)、[工具权限](https://agentclientprotocol.com/protocol/v1/tool-calls)。
 
-`agent-autoloop mcp` 提供 stdio MCP，固定支持 [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 版，不支持 2026-07-28 的无握手协议。工具为 `status`、`why`、`answer`、`resolve`、`stop`、`emit`、`tell`；按本机已有的本人或来源密钥展示工具。它调用同样的 HTTP 接口，不直接改数据库；密钥留在本机 `config.json`。MCP 客户端把程序设为 `node`，参数设为引擎的绝对路径 `bin/agent-autoloop.ts` 和 `mcp`，环境里指定 `AGENT_AUTOLOOP_HOME`。标准输出只写 JSON-RPC。
+`agent-autoloop mcp` 提供 stdio MCP，固定支持 [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 版，不支持 2026-07-28 的无握手协议。默认只提供只读的 `status`、`why`；启动参数加 `--allow-writes`（或环境变量 `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`）才另外提供 `answer`、`resolve`、`stop`、`emit`、`tell`。按本机已有的本人或来源密钥展示工具。它调用同样的 HTTP 接口，不直接改数据库；密钥留在本机 `config.json`。MCP 客户端把程序设为 `node`，参数设为引擎的绝对路径 `bin/agent-autoloop.ts` 和 `mcp`，环境里指定 `AGENT_AUTOLOOP_HOME`。标准输出只写 JSON-RPC。
 
 ### 通道模板与命令行示例
 

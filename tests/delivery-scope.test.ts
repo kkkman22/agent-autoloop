@@ -1,13 +1,14 @@
 // Failure modes: runtime Markdown, executable/symlink documents, renames, an unknown/divergent live
 // commit or an earlier unreleased code change suppresses Ship; PR settings replace main's settings; HTTP health escapes
-// the explicit localhost-only test switch. Git objects are read without a checkout, hooks, filters or project imports.
+// the explicit localhost-only test switch; a protected path that points outside the repo; a change set whose history is
+// unknown. Git objects are read without a checkout, hooks, filters or project imports.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { settings, matches, releaseRequired, readMainSettings, liveRelease } from "../plugins/delivery/project.ts";
+import { settings, matches, changedFiles, releaseRequired, readMainSettings, liveRelease } from "../plugins/delivery/project.ts";
 const root = mkdtempSync(join(tmpdir(), "agent-autoloop-delivery-scope-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 const git = (...args: string[]) =>
@@ -110,4 +111,32 @@ test("unhealthy, redirected or malformed health cannot authorize skipping a rele
     new Response(null, { status: 302, headers: { location: "http://127.0.0.1" } }),
   ])
     assert.equal(await liveRelease(s, async () => response), null);
+});
+
+test("protected paths default to what decides CI and delivery, and projects can override them", () => {
+  assert.deepEqual(settings(config).protected, [
+    ".github/**/*",
+    "scripts/**/*",
+    "tests/**/*",
+    "package.json",
+    "package-lock.json",
+    "ops/delivery.json",
+  ]);
+  assert.ok(matches(".github/workflows/check.yml", settings(config).protected));
+  assert.ok(matches("tests/delivery.test.ts", settings(config).protected));
+  assert.ok(!matches("src/app.ts", settings(config).protected));
+  assert.deepEqual(settings({ ...config, protected: ["deploy/**/*"] }).protected, ["deploy/**/*"]);
+  assert.deepEqual(settings({ ...config, protected: [] }).protected, []);
+  assert.throws(() => settings({ ...config, protected: "/etc" }));
+  assert.throws(() => settings({ ...config, protected: ["../x"] }));
+  assert.throws(() => settings({ ...config, protected: [1] }));
+});
+test("changed files come from the two commits' own trees; unknown history needs a person", () => {
+  git("reset", "--hard", base);
+  write("app.ts", "one");
+  write("docs/a.md", "one");
+  const head = commit();
+  assert.deepEqual(changedFiles(root, base, head)!.sort(), ["app.ts", "docs/a.md"]);
+  assert.deepEqual(changedFiles(root, head, head), []);
+  assert.equal(changedFiles(root, "0".repeat(40), head), null);
 });

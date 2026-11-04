@@ -1,7 +1,7 @@
 // The hub on this machine: its database, the view kept from the log, the rules file, and one way to apply an input.
 // Importing this opens them all, which is why the checks that must survive a bad rules file import it late.
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { HOME, RULES_FILE } from "./home.ts";
@@ -19,16 +19,26 @@ import type { Rejected } from "../protocol/validate.ts";
 
 mkdirSync(HOME, { recursive: true, mode: 0o700 });
 chmodSync(HOME, 0o700);
+// Files the hub writes hold keys and card text: keep them private even when this process later creates them.
+process.umask(0o077);
 const masterKeyFile = join(HOME, "master.key");
+if (existsSync(masterKeyFile) && lstatSync(masterKeyFile).isSymbolicLink()) {
+  throw new Error("master.key 不能是符号链接");
+}
 if (!existsSync(masterKeyFile)) {
   writeFileSync(masterKeyFile, randomBytes(32).toString("base64url"), { mode: 0o600, flag: "wx" });
 }
+chmodSync(masterKeyFile, 0o600);
+const configFile = join(HOME, "config.json");
+if (existsSync(configFile)) chmodSync(configFile, 0o600);
 export const environment = {
   secret: readFileSync(masterKeyFile, "utf8").trim(),
   publicUrl: process.env.AGENT_AUTOLOOP_PUBLIC_URL ?? "",
 };
 
-export const db = new DatabaseSync(join(HOME, "hub.db"));
+const dbFile = join(HOME, "hub.db");
+export const db = new DatabaseSync(dbFile);
+chmodSync(dbFile, 0o600);
 db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
 if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").get()) {
   throw new Error("这是旧版数据库；本轮未提供导入工具，请使用新的 AGENT_AUTOLOOP_HOME");

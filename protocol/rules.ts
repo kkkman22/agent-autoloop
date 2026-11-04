@@ -14,11 +14,14 @@ export class RulesError extends Error {
 
 const ACCESS = ["read", "edit", "full"];
 const TELLS = ["always", "needed", "never"];
-const ID = /^[a-z][a-z0-9-]*$/;
+const ID = /^[a-z][a-z0-9-]{0,63}$/;
+const MAX_PARALLEL = 100;
+const MAX_TIMEOUT = 7 * 24 * 60;
+const RESERVED = new Set(["__proto__", "constructor", "prototype", "toString", "hasOwnProperty"]);
 const TYPE_PATTERN = /^(\*|[a-z][a-z0-9_.-]{0,63}(\.\*)?)$/;
 const ASK_FIRST = ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"];
 const NOT_EMPTY = "不能为空";
-const ID_WORDS = "只能用小写字母、数字和 -";
+const ID_WORDS = "只能用小写字母、数字和 -，最多 64 字";
 
 type Check = (value: unknown) => boolean;
 type Field = [name: string, check: Check, problem: string, optional?: boolean];
@@ -28,13 +31,18 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const isWords: Check = (value) => Array.isArray(value) && value.every(isText);
 const isSomeWords: Check = (value) => isWords(value) && (value as string[]).length > 0;
-const isId: Check = (value) => typeof value === "string" && ID.test(value);
+const isName = (value: unknown): value is string => typeof value === "string" && ID.test(value) && !RESERVED.has(value);
+const isId = isName as Check;
 const isCount: Check = (value) => Number.isInteger(value) && (value as number) > 0;
+const atMost =
+  (max: number): Check =>
+  (value) =>
+    isCount(value) && (value as number) <= max;
 const isTypes: Check = (value) => isSomeWords(value) && (value as string[]).every((type) => TYPE_PATTERN.test(type));
 const isCron: Check = (value) => typeof value === "string" && parseCron(value) !== null;
 
 function isKeyOf(table: object): Check {
-  return (value) => typeof value === "string" && value in table;
+  return (value) => typeof value === "string" && Object.hasOwn(table, value);
 }
 
 function isZone(zone: unknown) {
@@ -75,7 +83,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
     ["group", isText, NOT_EMPTY, true],
-    ["parallel", isCount, "要是正整数", true],
+    ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["emits", isObject, "要是一个对象", true],
   ]);
@@ -131,7 +139,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
   rules.elsewhere ??= [];
   if (SCHEDULE in rules.sources) issues.push(`来源 ${SCHEDULE} 是保留的，定时用规则的 cron`);
   for (const [id, source] of Object.entries(rules.sources)) {
-    if (!ID.test(id)) issues.push(`来源的编号${ID_WORDS}：${id}`);
+    if (!isName(id)) issues.push(`来源的编号${ID_WORDS}：${id}`);
     checkFields(issues, `来源 ${id} `, source, [
       ["name", isText, NOT_EMPTY],
       ["adapter", isText, NOT_EMPTY, true],
@@ -139,7 +147,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
   }
   rules.sources[SCHEDULE] = { name: "定时" };
   for (const [id, channel] of Object.entries(rules.channels)) {
-    if (!ID.test(id)) issues.push(`通道的编号${ID_WORDS}：${id}`);
+    if (!isName(id)) issues.push(`通道的编号${ID_WORDS}：${id}`);
     checkFields(issues, `通道 ${id} `, channel, [
       ["name", isText, NOT_EMPTY],
       ["answerers", isWords, "要是文字的列表", true],
@@ -147,7 +155,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
     ]);
   }
   for (const [id, agent] of Object.entries(rules.agents)) {
-    if (!ID.test(id)) issues.push(`Agent 的编号${ID_WORDS}：${id}`);
+    if (!isName(id)) issues.push(`Agent 的编号${ID_WORDS}：${id}`);
     checkFields(issues, `Agent ${id} `, agent, [
       ["name", isText, NOT_EMPTY],
       ["worker", isId, ID_WORDS],
@@ -156,7 +164,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["effort", isText, NOT_EMPTY, true],
       ["access", (value) => ACCESS.includes(value as string), `只能是 ${ACCESS.join("、")}`, true],
       ["command", isSomeWords, "要是命令行的列表", !isObject(agent) || agent.use !== "command"],
-      ["timeout", isCount, "要是正整数（分钟）", true],
+      ["timeout", atMost(MAX_TIMEOUT), `要是 1 到 ${MAX_TIMEOUT} 的整数（分钟）`, true],
     ]);
     if (isObject(agent)) agent.access ??= "edit";
   }

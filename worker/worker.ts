@@ -63,6 +63,8 @@ type Entry = {
   stopping?: number;
   why?: "cancel" | "timeout" | "finished";
   result?: Result;
+  refusals?: number;
+  retryAt?: number;
 };
 export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
 export type WorkerOptions = {
@@ -406,11 +408,26 @@ export function createWorker({
   /** Hands in what has ended. One the hub can't take now waits for next time; one it refuses is dropped and said so. */
   async function settle(entry: Entry) {
     if (!entry.result) return;
+    if (entry.retryAt !== undefined && now() < entry.retryAt) return;
     try {
       const answer = await hub.result(entry.run, entry.token, entry.result);
       for (const item of answer?.rejected ?? []) log(`run ${entry.run}: not applied: ${JSON.stringify(item)}`);
       log(`run ${entry.run}: ${entry.result.outcome}`);
+      entry.refusals = undefined;
+      entry.retryAt = undefined;
+      save(entry);
     } catch (error) {
+      if (error instanceof HubError && (error.status === 401 || error.status === 403)) {
+        // A rotated or revoked key refuses the token for now; the finished work must not be thrown away.
+        entry.refusals = (entry.refusals ?? 0) + 1;
+        const wait = Math.min(5 * 60_000 * 2 ** (entry.refusals - 1), 60 * 60_000);
+        entry.retryAt = now() + wait;
+        save(entry);
+        log(
+          `run ${entry.run}: the hub didn't accept its token (${error.status}); keeping the result, retrying in ${Math.round(wait / 60_000)} minutes`,
+        );
+        return;
+      }
       if (!(error instanceof HubError) || error.status >= 500) {
         return log(`run ${entry.run}: couldn't hand in the result: ${error}`);
       }

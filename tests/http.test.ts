@@ -5,7 +5,8 @@
 // to anyone; a worker tells as a task that isn't its own, or one matter twice; a channel answers without being on the list;
 // a cookie or a sign-in opens anything; someone other than the owner reads everything, answers, resolves or stops; looking
 // at a card's link answers it; a card's words run as markup or the page loads a script; Enter in the text box picks the first
-// option; a card link answers more than its card; a webhook with a bad signature is taken, or one without an adapter; a
+// option; a card link answers more than its card, or one older than a week still answers; a webhook with a bad signature
+// is taken, or one without an adapter; a
 // webhook's secret leaks into anything it returns; the owner's key opens the worker's door; a page other than a card's exists.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
@@ -40,6 +41,7 @@ const keys = {
   w2: addKey("worker", "w2"),
   chat: addKey("channel", "chat"),
   plain: addKey("channel", "plain"),
+  ghost: addKey("channel", "ghost"),
   owner: addKey("owner", "owner"),
 };
 const server = serve(0, "127.0.0.1", { commit: "abc123" });
@@ -91,6 +93,11 @@ test("each door takes its own kind of key and no other", async () => {
   assert.equal((await call("/v1/work?claim=x&wait=0", { key: keys.app })).status, 401);
   assert.equal((await call("/v1/work?claim=x&wait=0", { key: keys.owner })).status, 401);
   assert.equal((await call("/v1/cards/next?wait=0", { key: keys.w1 })).status, 401);
+  assert.equal(
+    (await call("/v1/cards/next?wait=0", { key: keys.ghost })).status,
+    404,
+    "a channel key that rules.json never registered gets no cards",
+  );
   assert.equal((await call("/v1/state", { key: keys.w1 })).status, 401);
   assert.equal((await call("/v1/state", { key: keys.owner })).status, 200);
   const taken = await call("/v1/events", { key: keys.app, body: note(1) });
@@ -170,6 +177,12 @@ test("a source tells under its own name, once per key; a worker only as its own 
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "Bad Key", text: "x" } })).status, 400);
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: " " } })).status, 400);
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: "x", oops: 1 } })).status, 400);
+  assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: "x".repeat(2001) } })).status, 400);
+  assert.equal(
+    (await call("/v1/tell", { key: keys.app, body: { key: "long", text: "😀".repeat(2000) } })).status,
+    200,
+    "2000 characters is fine, however many bytes they take",
+  );
   assert.equal((await call("/v1/tell", { body: { key: "k", text: "x" } })).status, 401);
   const task = await call("/v1/tell", { key: keys.w1, body: { task: "每周清理", key: "m", text: "要你看一眼" } });
   assert.equal(task.status, 200);
@@ -205,6 +218,17 @@ test("a channel comes for cards, reports them, and passes on who answered; the l
   const ask = seen.find((c) => c.kind === "ask");
   assert.deepEqual(ask.options, ["甲", "乙"]);
   const url = `/v1/cards/${ask.id}/answer`;
+  const plainView = await call("/v1/cards/next?wait=0", { key: keys.plain });
+  assert.equal(plainView.json.card.id, ask.id);
+  await call(`/v1/cards/${ask.id}/delivered`, {
+    key: keys.plain,
+    body: { version: plainView.json.card.version, ref: "p_ask" },
+  });
+  assert.equal(
+    (await call(url, { key: keys.plain, body: { choice: 0, by: "me", ref: "p_ask" } })).status,
+    401,
+    "a channel without answerers lets nobody answer",
+  );
   assert.equal((await call(url, { key: keys.w1, body: { choice: 0, by: "me", ref: `om_${ask.id}` } })).status, 401);
   assert.equal(
     (await call(url, { key: keys.chat, body: { choice: 0, by: "stranger", ref: `om_${ask.id}` } })).status,
@@ -368,4 +392,29 @@ test("someone else's webhook goes through its source's adapter: signed, or not t
 test("there's no other page: what's going on is read through the doors", async () => {
   for (const path of ["/", "/index.html", "/app.js", "/style.css", "/../package.json"])
     assert.equal((await call(path)).status, 404, path);
+});
+
+test("a week-old card link is gone: 410 for looking and for pressing", async () => {
+  const runtime = await import("../host/runtime.ts");
+  const old = Date.now() - 8 * 86_400_000;
+  runtime.ingest("app", { id: "old:1", type: "feedback.new", subject: "#700" }, old);
+  const job = runtime.claimNext("w1", "cold-1", old)!;
+  runtime.finish(
+    job.run,
+    job.token,
+    { outcome: "done", ask: [{ title: "旧的", text: "过期了", options: ["甲", "乙"], key: "old" }] },
+    old,
+  );
+  const row = one<{ id: number; token: string; answer: string | null }>(
+    "SELECT id, token, answer FROM cards WHERE run_id = ?",
+    [job.run],
+  )!;
+  const path = `/c/${row.token}`;
+  const looked = await call(path);
+  assert.equal(looked.status, 410);
+  assert.match(looked.text, /过期/);
+  assert.match(looked.text, /agent-autoloop answer/);
+  assert.equal((await form(path, "choice=0")).status, 410, "the form is closed too");
+  assert.equal(stored(row.id).state, "open", "nothing was answered");
+  assert.equal(one<{ answer: string | null }>("SELECT answer FROM cards WHERE id = ?", [row.id])!.answer, null);
 });

@@ -15,13 +15,15 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 ## 改规则
 
-改 `rules.json`，运行 `agent-autoloop check`。几秒内生效；写错了旧规则继续跑，并推一张卡片说错在哪。尚未领取的任务在领活时一起更新 Agent、目录和权限；已领取任务的 Job 配置与接单程序保留到这次执行结束。
+改 `rules.json`，运行 `agent-autoloop check`。几秒内生效；写错了旧规则继续跑，并推一张卡片说错在哪。尚未领取的任务在领活时一起更新 Agent、目录和权限；已领取任务的 Job 配置与接单程序保留到这次执行结束。删掉或改名一条规则会取消还没领走的排队轮次、关闭对应卡片并各发一张通知；回答这些旧卡片会被拒绝，要先 `resolve` 结掉。
 
 每条规则回答五个问题：什么事件（`when`），交给谁（`to`），在哪（`cwd`），照什么做（`skill`、`prompt`），要不要告诉用户（`tell`，默认只在有卡片时）。
 
 ```json
-{ "name": "处理 issue", "when": { "source": "github", "types": ["issues.opened"] }, "to": "claude", "cwd": "~/code/app", "skill": "handle-issue", "parallel": 3 }
-{ "name": "早报", "when": { "cron": "0 9 * * *" }, "to": "codex", "cwd": "~/notes", "prompt": "写今天的早报。" }
+[
+  { "name": "处理 issue", "when": { "source": "github", "types": ["issues.opened"] }, "to": "claude", "cwd": "~/code/app", "skill": "handle-issue", "parallel": 3 },
+  { "name": "早报", "when": { "cron": "0 9 * * *" }, "to": "codex", "cwd": "~/notes", "prompt": "写今天的早报。" }
+]
 ```
 
 - 同一个对象的事件要分开处理、互不等待，就写 `parallel`。
@@ -51,7 +53,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 任何能打印最后一条消息的命令，在 `rules.json` 的 `agents` 写一行：
 
 ```json
-"hermes": { "name": "Hermes", "worker": "my-mac", "use": "command", "command": ["hermes", "chat", "-Q", "-q", "{prompt}"] }
+{ "agents": { "hermes": { "name": "Hermes", "worker": "my-mac", "use": "command", "command": ["hermes", "chat", "-Q", "-q", "{prompt}"] } } }
 ```
 
 退出码不是 0 算没跑成。要会话接续、打开会话的链接和用量统计，在 `~/.agent-autoloop/plugins/<名字>/agent.ts` 写一个插件（照 `plugins/codex/agent.ts`）：`command` 给命令行，`read` 从输出读最后一条消息和会话，`link` 给链接。
@@ -68,17 +70,20 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 ## 接一个通道
 
-配置在两处：`rules.json` 的 `channels` 登记（`answerers` 是谁能回答），`config.json` 的 `channels` 写密钥和选项。`agent-autoloop key new channel <名字>` 拿密钥（先问用户）。改了 `config.json` 要 `agent-autoloop service install` 重启。
+配置在两处：`rules.json` 的 `channels` 登记（`answerers` 是谁能回答），`config.json` 的 `channels` 写密钥和选项。`answerers` 缺失或为空表示这个通道只能发通知，谁都不能回答；只有显式 `["*"]` 才允许任何有名字的人。没在 `rules.json` 登记的通道拿不到卡片。`agent-autoloop key new channel <名字>` 拿密钥（先问用户）。改了 `config.json` 要 `agent-autoloop service install` 重启。
 
 **桌面通知**：新装的中台默认开着（`plugins/desktop/channel.ts`），两处各有一个 `desktop`。卡片第一次发送时，macOS 用 `osascript`、Linux 用 `notify-send` 弹一条通知，标题为“Agent 问你一个问题”，正文是卡片标题和“运行 agent-autoloop status 查看”，不能在通知上回答。没有图形会话时安静跳过，问题仍在；通知命令失败时报告失败，不会让中台退出。接了别的通道可以留着它；不想要就把两处的 `desktop` 都删掉，再重启。以前装的中台不会自动加上它。
 
 **飞书**：用官方的 `lark-cli`。`npm i -g @larksuite/cli`，`lark-cli config init --new` 建一个应用（用户扫码），在开发者后台给应用开机器人能力，并订阅卡片回传交互（长连接）。然后：
 
+`rules.json` 的 `channels` 里登记，`config.json` 的 `channels` 里写密钥：
+
 ```json
-// rules.json
-"channels": { "feishu": { "name": "飞书", "answerers": ["ou_用户的 open_id"] } }
-// config.json
-"channels": { "feishu": { "key": "…", "user": "ou_用户的 open_id" } }
+{ "channels": { "feishu": { "name": "飞书", "answerers": ["ou_用户的 open_id"] } } }
+```
+
+```json
+{ "channels": { "feishu": { "key": "…", "user": "ou_用户的 open_id" } } }
 ```
 
 同一个飞书应用的卡片点击只能有一个监听，只在一台电脑上跑。
@@ -102,6 +107,8 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 }
 ```
 
+PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json` 或 `ops/delivery.json`（设置里的 `protected` 可以替换这份清单）时不会自动合并，要有人在 PR 上打 `deliver-attended` 表示确认过，或者人工合并；跑过的检查工作流文件和 main 的版本不一致时同样如此。Ship 用合并前 main 的设置判定这次发布，读不到就交人工。LLM 审查是建议，不是安全门禁。
+
 `AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}`；没问题交空列表。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
 
 规则示例（把绝对路径、接单电脑和仓库改成自己的）：
@@ -121,7 +128,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 }
 ```
 
-轮询无需配置新的 Webhook 或密钥，事件编号由标签记录与 PR 提交组成，重复读取不会重新派发；也可以直接接现有 GitHub 来源。事项按 `owner/repo#编号` 分开，`parallel` 控制并发。打 `deliver` 进入流程；同时打 `deliver-review` 只审查，在等待检查期间加上也会阻止合并；`deliver-attended` 表示有人盯着，发现问题只写回执、不另发通知。普通 issue 打 `ask-owner` 会变成一张问题卡片，回答后去掉标签；不替你在 GitHub 发评论。
+轮询无需配置新的 Webhook 或密钥，事件编号由标签记录与 PR 提交组成，重复读取不会重新派发；也可以直接接现有 GitHub 来源。事项按 `owner/repo#编号` 分开，`parallel` 控制并发。打 `deliver` 进入流程；同时打 `deliver-review` 只审查，在等待检查期间加上也会阻止合并；`deliver-attended` 表示有人盯着：受保护路径和检查定义的改动要靠它放行，发现问题只写回执、不另发通知。普通 issue 打 `ask-owner` 会变成一张问题卡片，回答后去掉标签；不替你在 GitHub 发评论。
 
 项目 Ship 只在 main 的 push 上运行，检出完整历史（checkout 的 `fetch-depth: 0`），然后调用这个仓库的 Action。把下面的占位提交换成发布后核实的完整 SHA：
 
@@ -136,7 +143,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 ## MCP 与密钥撤销
 
-MCP 客户端的启动程序填 `node`，参数为本机引擎绝对路径 `bin/agent-autoloop.ts`、`mcp`，环境里传 `AGENT_AUTOLOOP_HOME`。支持 stdio 2025-11-25 版，使用本机 `config.json` 已有密钥，不把密钥写进客户端参数。工具按已有身份显示；不自动创建权限。
+MCP 客户端的启动程序填 `node`，参数为本机引擎绝对路径 `bin/agent-autoloop.ts`、`mcp`，环境里传 `AGENT_AUTOLOOP_HOME`。支持 stdio 2025-11-25 版，使用本机 `config.json` 已有密钥，不把密钥写进客户端参数。默认只显示只读的 `status`、`why`；要让它回答、结案、停止或发事件，启动参数再加 `--allow-writes`（或在环境里设 `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`）。工具按已有身份显示；不自动创建权限。
 
 `agent-autoloop key remove <source|worker|channel|owner> <名字>` 立即收回对应密钥，长轮询和日志订阅也立即失效；已经领到的活仍可用这一轮的独立 token 交结果。
 

@@ -27,7 +27,18 @@ jobs:
       - id: scope
         env:
           BEFORE: ${{ github.event.before }}
-        run: sh scripts/ci-scope.sh >> "$GITHUB_OUTPUT"
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            if git show "$BASE_SHA:scripts/ci-scope.sh" > "$RUNNER_TEMP/ci-scope.sh"; then
+              sh "$RUNNER_TEMP/ci-scope.sh" >> "$GITHUB_OUTPUT"
+            else
+              echo "scope=full" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            sh scripts/ci-scope.sh >> "$GITHUB_OUTPUT"
+          fi
       - if: steps.scope.outputs.scope != 'docs'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import type { DeliveryIO } from "./delivery.ts";
-import { git, liveRelease, releaseRequired } from "./project.ts";
+import { changedFiles, git, liveRelease, releaseRequired } from "./project.ts";
 import { reviewSnapshot } from "./review.ts";
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -91,6 +91,15 @@ export function createIO(repo: string, folder: string): DeliveryIO {
         return true;
       }
       return releaseRequired(bare, base, head, patterns);
+    },
+    async changedFiles(base, head) {
+      if (base === head) return [];
+      try {
+        fetchObjects(base, head);
+      } catch {
+        return null;
+      }
+      return changedFiles(bare, base, head);
     },
     live: liveRelease,
     async wait() {

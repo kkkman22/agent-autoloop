@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 export type Settings = {
   repo: string;
   internal: string[];
+  protected: string[];
   admin_merge: string[];
   check: { workflow: string; job: string };
   ship: { workflow: string };
@@ -13,7 +14,16 @@ export type Settings = {
 };
 export type Live = { sha: string; release: string };
 
-const SETTINGS_KEYS = ["repo", "internal", "admin_merge", "check", "ship", "review", "health"];
+const SETTINGS_KEYS = ["repo", "internal", "protected", "admin_merge", "check", "ship", "review", "health"];
+/** What a pull request must not change by itself: it decides what CI and delivery run, so it changes by hand. */
+export const PROTECTED = [
+  ".github/**/*",
+  "scripts/**/*",
+  "tests/**/*",
+  "package.json",
+  "package-lock.json",
+  "ops/delivery.json",
+];
 const isWords = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((word) => typeof word === "string" && word.length > 0);
 const isPaths = (value: unknown) =>
@@ -32,6 +42,7 @@ export function settings(value: any, testLocalHealth = false): Settings {
   if (review.command !== undefined && (!isWords(review.command) || !review.command.length)) bad();
   if (review.status !== undefined && (typeof review.status !== "string" || !review.status.trim())) bad();
   if (value.admin_merge !== undefined && !isWords(value.admin_merge)) bad();
+  if (value.protected !== undefined && !isPaths(value.protected)) bad();
   for (const workflow of [value.check?.workflow, value.ship?.workflow]) {
     if (workflow !== undefined && !/^[\w.-]+\.ya?ml$/.test(workflow)) bad();
   }
@@ -49,6 +60,7 @@ export function settings(value: any, testLocalHealth = false): Settings {
   }
   return {
     ...value,
+    protected: value.protected ?? PROTECTED,
     admin_merge: value.admin_merge ?? [],
     check: { workflow: "check.yml", job: "check", ...value.check },
     ship: { workflow: "ship.yml", ...value.ship },
@@ -104,6 +116,16 @@ export function releaseRequired(root: string, base: string, head: string, patter
     if (!plainFile || !matches(records[index + 1], patterns)) return true;
   }
   return false;
+}
+
+/** The paths that differ between two commits, or null when one doesn't descend from the other. */
+export function changedFiles(root: string, base: string, head: string) {
+  if (base === head) return [];
+  const isAncestor = spawnSync("git", ["merge-base", "--is-ancestor", base, head], { cwd: root, stdio: "ignore" });
+  if (isAncestor.status !== 0) return null;
+  return git(root, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", base, head, "--")
+    .split("\0")
+    .filter(Boolean);
 }
 
 export async function liveRelease(config: Settings, request: typeof fetch = fetch): Promise<Live | null> {

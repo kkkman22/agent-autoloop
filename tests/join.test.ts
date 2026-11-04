@@ -7,10 +7,10 @@ import path from "node:path";
 import { test } from "node:test";
 
 const program = path.join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
-const join = (home: string) =>
+const join = (home: string, url = "https://hub.example") =>
   spawnSync(
     process.execPath,
-    [program, "join", "https://hub.example", "--worker", "remote", "--key", "new-key", "--no-service"],
+    [program, "join", url, "--worker", "remote", "--key", "new-key", "--no-service"],
     {
       env: { ...process.env, AGENT_AUTOLOOP_HOME: home },
       encoding: "utf8",
@@ -46,3 +46,20 @@ for (const [name, config] of [
     assert.ok(existsSync(file));
   });
 }
+
+test("joining over plain http is only for the loopback address", (t) => {
+  const home = mkdtempSync(path.join(tmpdir(), "agent-autoloop-join-http-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  for (const url of ["http://hub.example", "http://hub.example:3350", "http://192.168.1.5"]) {
+    const refused = join(home, url);
+    assert.equal(refused.status, 1, url);
+    assert.match(refused.stderr, /https/, url);
+    assert.ok(!existsSync(path.join(home, "config.json")), url);
+  }
+  for (const url of ["http://127.0.0.1:3350", "http://localhost:3350", "http://[::1]:3350"]) {
+    const result = join(home, url);
+    assert.equal(result.status, 0, `${url}: ${result.stderr}`);
+    assert.equal(JSON.parse(readFileSync(path.join(home, "config.json"), "utf8")).url, url);
+    rmSync(path.join(home, "config.json"));
+  }
+});

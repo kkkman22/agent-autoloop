@@ -366,7 +366,7 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 20000,
+          "maxLength": 2000,
           "minLength": 1,
           "pattern": "\\S"
         }
@@ -383,7 +383,7 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 20000,
+          "maxLength": 2000,
           "minLength": 1,
           "pattern": "\\S"
         },

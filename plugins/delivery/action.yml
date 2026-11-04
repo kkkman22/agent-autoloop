@@ -1,5 +1,5 @@
 name: 判断这次是否发布
-description: 对比健康版本和目标提交，保留尚未发布的代码变化
+description: 对比健康版本和目标提交，保留尚未发布的代码变化；设置取合并前的 main，读不到就交人工发布
 inputs:
   target:
     description: 要发布的完整提交编号，默认 github.sha

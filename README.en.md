@@ -92,7 +92,7 @@ External events work the same way once the source is connected. To hand new GitH
 }
 ```
 
-Changes take effect within seconds of saving. Run `agent-autoloop check` to validate. If you make a mistake, the hub keeps running the previous valid rules and sends you a card pointing out the error.
+Changes take effect within seconds of saving. Run `agent-autoloop check` to validate. If you make a mistake, the hub keeps running the previous valid rules and sends you a card pointing out the error. Deleting or renaming a rule cancels queued runs that were not picked up yet and closes its unfinished cards, with one notice for each; a run already claimed finishes. Answering those old cards is refused until you resolve them.
 
 ### How agents talk back to the hub
 
@@ -146,7 +146,7 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 | **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个通道) |
 | **Delivery**: CI/CD as a plugin | [`delivery`](plugins/delivery/delivery.ts) | [Guide](skills/agent-autoloop/SKILL.md#交付流水线) |
 
-**What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer.
+**What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer. A channel that takes button answers must be registered under `channels` in `rules.json` and list its answerers in `answerers`; a missing or empty list means it can deliver notifications but nobody can answer through it, and only an explicit `["*"]` lets anyone with a name answer. An unregistered channel gets no cards.
 
 **Other CLI agents connect in one line.** Set `use: "command"` and pass a command array; `{prompt}` is a single argument, never evaluated as shell code. These commands come from each tool's official docs, and we have not run each of them yet:
 
@@ -159,9 +159,9 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
 
-**Delivery pipeline.** Add the `deliver` label to a GitHub PR and it follows through to release: **review → wait for CI → merge → wait for deploy → verify the live version**. Settings are read only from `main`, and PR code is never checked out or run on the worker machine. Queueing, concurrency, and retries come from the kernel.
+**Delivery pipeline.** Add the `deliver` label to a GitHub PR and it follows through to release: **review → wait for CI → merge → wait for deploy → verify the live version**. Settings are read only from `main`, and PR code is never checked out or run on the worker machine. Queueing, concurrency, and retries come from the kernel. A PR that changes the CI workflows, `scripts/`, `tests/`, `package.json`, `package-lock.json`, or `ops/delivery.json` is not merged on its own: someone marks it `deliver-attended` to say they looked. Ship judges a release with main's settings from before the merge. Review is advice, not a security gate.
 
-**Write your own.** Start from the runnable [agent](examples/plugins/hello-agent/agent.ts), [channel](examples/plugins/hello-channel/channel.ts), and [event](examples/plugins/hello-source/source.ts) templates and the [plugin guide](docs/plugins.md). For web tasks, read [browser access](docs/plugins.md#浏览器接入) first. The CLI and [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销) can also inspect and answer cards.
+**Write your own.** Start from the runnable [agent](examples/plugins/hello-agent/agent.ts), [channel](examples/plugins/hello-channel/channel.ts), and [event](examples/plugins/hello-source/source.ts) templates and the [plugin guide](docs/plugins.md). For web tasks, read [browser access](docs/plugins.md#浏览器接入) first. The CLI and [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销) (read-only by default) can also inspect and answer cards.
 
 ## Four kernel mechanisms
 
@@ -213,6 +213,16 @@ As history grows, the status summary slows down and the log and indexes keep usi
 The hub invokes command-line tools you have already installed and signed into on your machine; it never reads or exports their credentials. Model usage is billed to your own account under each provider's terms.
 
 For automated workloads, providers generally recommend using API keys rather than personal subscription quotas (which are designed around interactive personal use — see [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) and [OpenAI](https://learn.chatgpt.com/docs/auth)). Use API keys if you are running services for others. This project is independent and is not affiliated with or endorsed by those providers.
+
+## What changed in this round
+
+- **Channels need an answerer list.** A channel in `rules.json` without `answerers` (or with an empty list) can only send notifications, and any answer is refused. Only an explicit `["*"]` lets anyone answer. A channel that isn't listed in `rules.json` gets no cards at all.
+- **A remote hub needs https.** `agent-autoloop join` accepts `https://` addresses; `http://` is allowed only for loopback: `127.0.0.1`, `localhost`, `::1`.
+- **MCP is read-only by default.** `agent-autoloop mcp` offers `status` and `why` only; add `--allow-writes` (or set `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`) to answer a card, resolve one, stop a run or emit events.
+- **`POST /v1/tell` takes at most 2000 characters** of `text`; more is a 400.
+- **Card links expire after a week.** Opening or submitting a `/c/...` link then returns 410; the card stays open and `agent-autoloop answer <card> <option>` still answers it. `agent-autoloop why` and `status` strip control characters out of text written elsewhere; add `--raw` to see it as it was.
+- **Deleting or renaming a rule** cancels runs it hadn't handed out yet, closes its open cards with a notice each, and answering those old cards returns 409; resolve them first.
+- **Delivery.** A PR that changes a protected path (`.github/**`, `scripts/**`, `tests/**`, `package.json`, `package-lock.json`, `ops/delivery.json`, replaceable in settings under `protected`) or makes the checked workflow file differ from main's never auto-merges; a person adds `deliver-attended` or merges it by hand. Ship decides a release with main's settings from before the merge, and hands it to a person when it can't read them.
 
 ## Documentation
 

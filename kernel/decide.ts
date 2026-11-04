@@ -269,6 +269,23 @@ function retryLater(draft: Draft, run: Row, result: Result) {
     for (const _ of result[what] ?? []) rejected.push({ what, reason: "没跑成的一轮只能发通知" });
   }
   for (const notice of result.notice ?? []) cardFromReceipt(draft, run, "notice", notice);
+  if (!ruleNamed(draft, run.rule)) {
+    // The rule was deleted while this run was in hand: requeueing it would leave it unclaimable for ever.
+    put(draft, "runs", id, {
+      state: "cancelled",
+      finished_at: draft.at,
+      summary: "规则已删除，不再重试",
+      attempts,
+      error,
+      ...unclaimed,
+    });
+    notify(draft, `run:${id}:rule-gone`, run.rule, `规则「${run.rule}」已删除，这一轮不再重试。`, { once: true });
+    const answers = new Set(eventsOf(draft.view, id).map((event) => event.id));
+    for (const card of rows(draft.view, "cards", { state: "decided" })) {
+      if (card.answer_event !== null && answers.has(card.answer_event)) closeOrphan(draft, card);
+    }
+    return rejected;
+  }
   if (attempts >= MAX_ATTEMPTS) {
     // Runs queued for this thread stay apart: they came in since, and get their own count and their own go.
     const summary = `连续 ${MAX_ATTEMPTS} 次没跑成，不再自动重试`;
@@ -384,9 +401,13 @@ function answer(draft: Draft, id: number, given: Row) {
   const card = draft.view.get("cards", id);
   if (!card) throw new NotFound("没有这张卡片");
   if (given.channel !== undefined) {
-    const allowed = draft.rules.channels[given.channel]?.answerers;
-    if (allowed && !allowed.includes(given.by ?? "")) throw new AuthError("这个人不能回答这张卡片");
-    const delivery = draft.view.get("deliveries", `${id}:${given.channel}`);
+    const channel = typeof given.channel === "string" ? given.channel : "";
+    const registered = Object.hasOwn(draft.rules.channels, channel) ? draft.rules.channels[channel] : undefined;
+    if (!registered) throw new AuthError("这个通道没有在 rules.json 里登记");
+    if (typeof given.by !== "string" || !given.by.trim()) throw new AuthError("这个通道没有说是谁回答的");
+    const answerers = registered.answerers ?? [];
+    if (!answerers.includes("*") && !answerers.includes(given.by)) throw new AuthError("这个人不能回答这张卡片");
+    const delivery = draft.view.get("deliveries", `${id}:${channel}`);
     if (!delivery?.ref || delivery.ref !== given.ref) throw new AuthError("不是发出去的那条消息");
   }
   if (card.state !== "open") return { changed: false, state: card.state };
@@ -400,6 +421,7 @@ function answer(draft: Draft, id: number, given: Row) {
   const inRange = Number.isInteger(given.choice) && given.choice >= 0 && given.choice < optionCount;
   if (given.choice === undefined ? !text : !inRange) throw new InputError("没有这个选项");
   const rule = card.rule ? ruleNamed(draft, card.rule) : undefined;
+  if (card.rule && !rule) throw new Conflict("这条卡片的规则已经删除，先用 resolve 关掉它");
   const { lane: subject, title: summary, hops = 0 } = card;
   const event = { id: `card:${id}`, type: "card.answered", subject, summary, hops };
   const eventId = recordEvent(draft, card.source ?? SCHEDULE, event, rule ? [rule.name] : []);
@@ -410,6 +432,7 @@ function answer(draft: Draft, id: number, given: Row) {
 }
 
 function nextCard(draft: Draft, channel: string) {
+  if (!Object.hasOwn(draft.rules.channels, channel)) return null;
   const { now } = draft;
   for (const card of draft.view.deliveryCandidates(channel, now)) {
     const key = `${card.id}:${channel}`;
@@ -463,11 +486,48 @@ function tick(draft: Draft) {
   sweep(draft);
 }
 
+/** A card whose rule is gone can't be carried out: it is closed, and the owner is told once. */
+function closeOrphan(draft: Draft, card: Row) {
+  closeCard(draft, card, "对应规则已删除");
+  notify(draft, `card:${card.id}:rule-gone`, card.rule, `规则「${card.rule}」已删除，这张卡片不用再回答。`, {
+    once: true,
+  });
+}
+
+/** Queued work and cards whose rule was deleted or renamed are stopped here instead of waiting for ever. */
+function dropRules(draft: Draft, rules: Rules) {
+  const names = new Set(rules.rules.map((rule) => rule.name));
+  const gone = (name: string | null) => name !== null && !names.has(name);
+  for (const run of rows(draft.view, "runs", { state: "queued" })) {
+    if (!gone(run.rule)) continue;
+    put(draft, "runs", run.id, {
+      state: "cancelled",
+      finished_at: draft.at,
+      summary: "规则已删除，这一轮不再执行",
+    });
+    notify(draft, `run:${run.id}:rule-gone`, run.rule, `规则「${run.rule}」已删除，这一轮不再执行。`, { once: true });
+  }
+  // A decided answer is only left alone while a queued or claimed run will still carry it out.
+  const carriedOut = (card: Row) =>
+    card.answer_event !== null &&
+    rows(draft.view, "run_events", { event_id: card.answer_event }).some((link) => {
+      const run = draft.view.get("runs", link.run_id);
+      return run?.state === "queued" || run?.state === "claimed";
+    });
+  for (const card of rows(draft.view, "cards", { state: "decided" })) {
+    if (gone(card.rule) && !carriedOut(card)) closeOrphan(draft, card);
+  }
+  for (const card of rows(draft.view, "cards", { state: "open" })) {
+    if (gone(card.rule)) closeOrphan(draft, card);
+  }
+}
+
 /** Every input there is, each with its arguments named. What one returns is what the caller is told. */
 const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   rules(draft, rules) {
     put(draft, "config", "rules", { value: rules, version: draft.seq });
     for (const run of rows(draft.view, "runs", { state: "queued" })) assignQueued(draft, run);
+    dropRules(draft, rules);
     closeOpen(draft, (key) => key.startsWith("rules:"), "改好了");
   },
   rulesError: (draft, problem) => notify(draft, `rules:${digest(problem)}`, "rules.json 写错了，还在用旧规则", problem),
@@ -534,7 +594,11 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
   answer,
   nextCard,
   delivered(draft, channel, id, version, ref) {
-    if (!draft.view.get("cards", id)) throw new NotFound("没有这张卡片");
+    const card = draft.view.get("cards", id);
+    if (!card) throw new NotFound("没有这张卡片");
+    if (!Number.isSafeInteger(version) || version < 1 || version > card.version) {
+      throw new InputError("送达的版本不能超过卡片当前版本");
+    }
     const delivery = draft.view.get("deliveries", `${id}:${channel}`) ?? NOT_DELIVERED;
     const sent = { version: Math.max(delivery.version, version), ref: delivery.ref ?? ref };
     put(draft, "deliveries", `${id}:${channel}`, { card_id: id, channel, ...sent, ...NOT_TRYING, error: null });

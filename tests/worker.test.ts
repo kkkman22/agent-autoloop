@@ -2,7 +2,7 @@
 // what matters is what happens across their lives. Failure cases: a job starts anywhere but its rule's folder, or without
 // the prompt and the context file, or with the hub's secrets in its environment; a bad exit code or no last message counts
 // as work done; a finished run's result is lost when the hub can't be reached just then, sent again after the hub took it,
-// or a refused one is retried for ever; a run still going after the worker restarts is reported as finished or forgotten; a
+// or a refused one is retried for ever, or one refused for a revoked key thrown away instead of kept; a run still going after the worker restarts is reported as finished or forgotten; a
 // job lost to a stop before it launched isn't launched; a missing folder or an agent with no adapter isn't reported as
 // failed; a run over its time or told to stop goes on, or leaves its children behind; the hub is told it stopped before it
 // has; more than capacity at once are taken; a claim is thrown away before its job has arrived; a receipt that can't be read
@@ -94,7 +94,7 @@ function fakeHub() {
     starts: [] as any[],
     claims: [] as any[],
     failResults: 0,
-    refuseResults: false,
+    refuseStatus: 0,
     down: false,
     async work(query: any) {
       if (hub.down) throw new Error("connect ECONNREFUSED");
@@ -108,7 +108,7 @@ function fakeHub() {
       return { ok: true };
     },
     async result(run: number, token: string, body: any) {
-      if (hub.refuseResults) throw new HubError(401, "这件活不归这个令牌");
+      if (hub.refuseStatus) throw new HubError(hub.refuseStatus, "这件活不归这个令牌");
       if (hub.failResults > 0) {
         hub.failResults -= 1;
         throw new Error("network down");
@@ -202,12 +202,30 @@ test("a result waits for the hub and goes once; one it refuses is dropped, and s
   assert.equal(hub.results.length, 1);
 
   const refusing = fakeHub();
-  refusing.refuseResults = true;
+  refusing.refuseStatus = 400;
   refusing.jobs.push(job());
   const lines: string[] = [];
   const r = worker(refusing, { log: (line: string) => lines.push(line) });
   await until(r, () => lines.some((l) => l.includes("refused")));
   assert.equal(r.entries().length, 0);
+});
+
+test("a result refused for a revoked key is kept and handed in later, not dropped", async () => {
+  const hub = fakeHub();
+  hub.refuseStatus = 401;
+  hub.jobs.push(job());
+  const lines: string[] = [];
+  let clock = Date.now();
+  const w = worker(hub, { log: (line: string) => lines.push(line), now: () => clock });
+  await until(w, () => lines.some((line) => line.includes("retrying in 5 minutes")));
+  assert.equal(hub.results.length, 0);
+  assert.equal(w.entries().length, 1, "the finished work stays until the hub takes it");
+  await w.tick();
+  assert.equal(hub.results.length, 0, "it waits out the back-off instead of trying every round");
+  hub.refuseStatus = 0;
+  clock += 5 * 60_000 + 1;
+  await until(w, () => hub.results.length === 1);
+  assert.equal(w.entries().length, 0, "handed in and let go");
 });
 
 test("a run still going after the worker restarts stays, and its result still comes", async () => {

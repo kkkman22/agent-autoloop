@@ -54,7 +54,8 @@ test("published text limits count Unicode characters, including astral code poin
   const event = { id: "x", type: "one", summary: "😀".repeat(200) };
   assert.deepEqual(checkSchema("event", event), []);
   assert.equal(parseEvent(event).summary, event.summary);
-  assert.deepEqual(checkSchema("tell-source", { key: "unicode", text: "😀".repeat(20000) }), []);
+  assert.deepEqual(checkSchema("tell-source", { key: "unicode", text: "😀".repeat(2000) }), []);
+  assert.ok(checkSchema("tell-source", { key: "unicode", text: "😀".repeat(2001) }).length);
   const receipt = { outcome: "done", summary: "😀".repeat(500) };
   assert.deepEqual(checkSchema("result", receipt), []);
   assert.equal(parseResult(receipt).summary, receipt.summary);

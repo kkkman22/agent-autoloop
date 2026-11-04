@@ -19,12 +19,14 @@ fi
 scope=docs
 while IFS= read -r file; do
   case "$file" in
-    # tests/example-plugins.test.ts runs the commands in this tutorial.
-    docs/plugins.md) kind=normal ;;
-    README.md | README.en.md | INSTALL.md | SECURITY.md | CONTRIBUTING.md | AGENTS.md | LICENSE) kind=docs ;;
+    # These paths can weaken the checks themselves, so a change to any of them runs everything.
+    .github/workflows/* | scripts/* | tests/* | package.json | package-lock.json | ops/delivery.json) kind=full ;;
+    # Tests read these pages: tests/example-plugins.test.ts runs this tutorial's commands, and tests/docs-json.test.ts
+    # parses the examples in them, so a change to one gets the unit tests.
+    docs/protocol.md | docs/plugins.md | README.md | README.en.md) kind=normal ;;
+    INSTALL.md | SECURITY.md | CONTRIBUTING.md | AGENTS.md | LICENSE) kind=docs ;;
     docs/* | .github/ISSUE_TEMPLATE/* | .github/pull_request_template.md) kind=docs ;;
-    tests/simulation.test.ts) kind=full ;;
-    plugins/* | examples/* | skills/* | worker/* | host/* | cli/* | bin/* | scripts/* | tests/* | install.sh) kind=normal ;;
+    plugins/* | examples/* | skills/* | worker/* | host/* | cli/* | bin/* | install.sh) kind=normal ;;
     *) kind=full ;;
   esac
   case "$kind" in

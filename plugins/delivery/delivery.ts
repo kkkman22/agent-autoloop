@@ -1,6 +1,6 @@
 // One pull request from label to live: review, full check, merge, Ship, health. Every step reads GitHub's state back
 // rather than trusting its own last response, and a failure is left for the hub's retry to pick up where it stands.
-import { settings, type Live, type Settings } from "./project.ts";
+import { matches, settings, type Live, type Settings } from "./project.ts";
 import type { Finding } from "./review.ts";
 
 export type DeliveryIO = {
@@ -10,6 +10,7 @@ export type DeliveryIO = {
   disableAuto(number: number): Promise<void>;
   contains(base: string, head: string): Promise<boolean>;
   releaseRequired(base: string, head: string, patterns: string[]): Promise<boolean>;
+  changedFiles(base: string, head: string): Promise<string[] | null>;
   live(config: Settings): Promise<Live | null>;
   wait(): Promise<void>;
 };
@@ -81,6 +82,18 @@ export async function waitLive(merged: string, config: Settings, io: DeliveryIO)
   }
 }
 
+async function sameCheckDefinition(main: string, head: string, config: Settings, io: DeliveryIO) {
+  const shaAt = async (ref: string) => {
+    try {
+      return (await io.api(`contents/.github/workflows/${config.check.workflow}?ref=${ref}`)).sha ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const atMain = await shaAt(main);
+  return atMain !== null && atMain === (await shaAt(head));
+}
+
 async function clearLabels(number: number, pr: any, io: DeliveryIO) {
   for (const label of ["deliver", "deliver-attended", "deliver-review"]) {
     if (!labels(pr).has(label)) continue;
@@ -120,6 +133,16 @@ export async function deliver(
       await io.api(`pulls/${number}/update-branch`, { expected_head_sha: head }, "PUT");
       throw new Error("已请求同步 main，稍后重新审查同步后的提交");
     }
+    // What CI and delivery run on lives in main; a PR that changes any of it is delivered only when a person has said
+    // so on the PR with deliver-attended.
+    const files = await io.changedFiles(main, head);
+    const guarded = files === null || files.some((file) => matches(file, config.protected));
+    if (guarded && !labels(pr).has("deliver-attended")) {
+      const summary = files === null ? "看不清这次改了什么，等人工交付" : "改动涉及受保护路径，等人工确认交付";
+      await status(io, head, "delivery", "failure", summary);
+      await clearLabels(number, pr, io);
+      return { summary, reviewOnly: true };
+    }
     const findings = await io.review(pr, config, main);
     const current = await io.api(`pulls/${number}`);
     if (current.head.sha !== head) throw new Error("审查期间提交变了，等待重新交付");
@@ -144,7 +167,16 @@ export async function deliver(
       if ((await io.api("git/ref/heads/main")).object.sha !== main) throw new Error("main 已前进，稍后重新同步和检查");
       if (!labels(pr).has("deliver")) return { summary: "交付标记已撤回" };
       if (labels(pr).has("deliver-review")) return reviewOnly(pr);
-      await status(io, head, config.review.status, "success", "此提交审查通过，完整检查通过");
+      // GitHub runs the pull_request workflow from the PR's own copy of it: when that copy differs from main's, the run
+      // that passed is not main's definition until a person says deliver-attended.
+      if (!(await sameCheckDefinition(main, head, config, io)) && !labels(pr).has("deliver-attended")) {
+        const summary = "检查的定义与 main 不一致，等人工交付";
+        await status(io, head, "delivery", "failure", summary);
+        await clearLabels(number, pr, io);
+        return { summary, reviewOnly: true };
+      }
+      const note = guarded ? "；改了受保护路径，由 deliver-attended 人工确认" : "";
+      await status(io, head, config.review.status, "success", `此提交审查通过，完整检查通过${note}`);
       try {
         await io.merge(pr, config);
       } catch (error) {

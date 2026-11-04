@@ -24,6 +24,8 @@
 4. 提交前运行 `npm test`、`npm run typecheck`、`npm run format:check`。涉及日志、到期表或并发时，再运行 `npm run test:nightly`。CI 在 Linux 和 macOS 上检查，并用已提交的代码运行安装到卸载的冒烟验证；只改文档时跳过这些检查，没动 `kernel/`、`protocol/`、`sim/` 时跳过耗时的模拟，合并后再跑完整检查。
 5. 向 `main` 提交 PR，说明问题、改后的行为、验证结果和兼容影响。未完成的工作使用草稿；合并前确认当前提交的两项系统检查通过。Fork 的 CI 跑在 GitHub 的机器上，自动运行；GitHub 新注册账号的首次 PR 要维护者批准后才运行。
 
+受保护路径是 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json` 和 `ops/delivery.json`。改动这些路径的 PR 一律跑完整检查，不能自动合并，要维护者人工批准。PR 的检查范围用 base 提交里的 `scripts/ci-scope.sh` 决定，PR 自己改脚本不能让必需检查空转；分支保护、必需检查和自动合并关闭由仓库管理员配置。
+
 测试使用临时 `AGENT_AUTOLOOP_HOME`、随机端口、本地假 HTTP 和假通知命令。不要连接真实业务数据库、发送消息，或给已在线的飞书应用再开事件监听。真实交付脚本会创建和删除指定测试仓库，只在用户明确要求时运行。
 
 不要提交密钥、带权限的卡片链接、完整配置、数据库、运行输出或同事资料。问题中的日志和截图也要先脱敏。代码按 [MIT 许可证](LICENSE) 提交。

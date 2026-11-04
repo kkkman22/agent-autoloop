@@ -1,5 +1,6 @@
 // One run's timeline, told from the facts in the log: what set it off, who took it, what it asked and what came of it.
 import type { Fact, Row } from "../kernel/evolve.ts";
+import { printable } from "./plain-text.ts";
 
 function time(value: string | number) {
   const date = new Date(value);
@@ -8,7 +9,7 @@ function time(value: string | number) {
 }
 const eventText = (event: Row) => `来源 ${event.source} · 类型 ${event.type} · 对象 ${event.subject || "无"}`;
 
-export function formatWhy(id: number, facts: Fact[]) {
+export function formatWhy(id: number, facts: Fact[], raw = false) {
   const allChanges = facts.flatMap((fact) => fact.changes);
   const relations = new Map<string, Row>();
   for (const { table, key, row } of allChanges) {
@@ -101,5 +102,6 @@ export function formatWhy(id: number, facts: Fact[]) {
       else previous.delete(changed);
     }
   }
-  return lines.join("\n");
+  const text = lines.join("\n");
+  return raw ? text : printable(text);
 }

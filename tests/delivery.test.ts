@@ -2,7 +2,8 @@
 // during review or main advancing after checks gets an unreviewed attestation; a dropped merge is repeated; auto-merge
 // survives a refusal; health hides a failed/unfinished Ship; a later release changes an already completed handoff;
 // a successful label deletion with a lost response turns a completed deployment into a false failure;
-// switching to review-only while checks run still merges the PR.
+// switching to review-only while checks run still merges the PR; a PR that changes the workflow, scripts, tests or
+// package files merges itself; the check definition that ran isn't main's; a change list nobody can read passes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { deliver, fullCheck, waitLive, disableAuto, type DeliveryIO } from "../plugins/delivery/delivery.ts";
@@ -47,6 +48,8 @@ function fixture() {
     statuses: [] as any[],
     writes: [] as string[],
     checks: 0,
+    changed: [] as string[] | null,
+    workflow: {} as Record<string, string>,
   };
   const io: DeliveryIO = {
     async api(path, body, method) {
@@ -61,6 +64,10 @@ function fixture() {
       if (path === "git/ref/heads/main") return { object: { sha: state.main } };
       if (path.startsWith("contents/ops/delivery.json"))
         return { content: Buffer.from(JSON.stringify(config)).toString("base64") };
+      if (path.startsWith("contents/.github/workflows/")) {
+        const ref = new URLSearchParams(path.split("?")[1]).get("ref")!;
+        return { sha: state.workflow[ref] ?? "definition" };
+      }
       if (path.startsWith("actions/workflows/check.yml")) {
         state.checks++;
         return { workflow_runs: [{ ...run(1, "head"), event: "pull_request" }] };
@@ -88,6 +95,9 @@ function fixture() {
     },
     async releaseRequired() {
       return true;
+    },
+    async changedFiles() {
+      return structuredClone(state.changed);
     },
     async live() {
       return { sha: "merged", release: "merged" };
@@ -306,4 +316,51 @@ test("a completed delivery ignores later queued/failed releases; a successor nee
   await assert.rejects(() => waitLive("merged", config, io), /waiting/);
   io.live = async () => ({ sha: "later", release: "later" });
   await waitLive("merged", config, io);
+});
+test("a PR that changes what CI and delivery run on waits for a person", async () => {
+  for (const file of [
+    ".github/workflows/check.yml",
+    "scripts/ci-scope.sh",
+    "tests/delivery.test.ts",
+    "package.json",
+    "package-lock.json",
+    "ops/delivery.json",
+  ]) {
+    const { io, state } = fixture();
+    state.changed = [file];
+    const result = await deliver("example/app", 1, io);
+    assert.equal(result.reviewOnly, true, file);
+    assert.match(result.summary, /受保护/, file);
+    assert.equal(state.reviewed, 0, file);
+    assert.equal(state.merges, 0, file);
+    assert.ok(
+      state.statuses.some((s: any) => s.context === "delivery" && s.state === "failure"),
+      file,
+    );
+  }
+  const { io } = fixture();
+  io.changedFiles = async () => null;
+  assert.equal((await deliver("example/app", 1, io)).reviewOnly, true, "看不清改了什么也要人来看");
+});
+test("deliver-attended carries protected changes through and the attestation says why", async () => {
+  const { io, state } = fixture();
+  state.changed = ["tests/delivery.test.ts"];
+  state.pr.labels.push({ name: "deliver-attended" });
+  assert.equal((await deliver("example/app", 1, io)).merged, "merged");
+  assert.equal(state.merges, 1);
+  assert.ok(
+    state.statuses.some((s: any) => s.context === "my-review" && s.state === "success" && /人工确认/.test(s.description)),
+  );
+});
+test("a check workflow that isn't main's definition waits for a person, unless one is watching", async () => {
+  const { io, state } = fixture();
+  state.workflow = { head: "someone-elses" };
+  const result = await deliver("example/app", 1, io);
+  assert.equal(result.reviewOnly, true);
+  assert.match(result.summary, /检查的定义/);
+  assert.equal(state.merges, 0);
+  const attended = fixture();
+  attended.state.workflow = { head: "someone-elses" };
+  attended.state.pr.labels.push({ name: "deliver-attended" });
+  assert.equal((await deliver("example/app", 1, attended.io)).merged, "merged");
 });

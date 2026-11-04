@@ -1,7 +1,7 @@
 // The doors: every request the hub takes, which key it asks for, and which input it becomes. Nothing is decided here.
 import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
 import { whose, type Environment } from "./credentials.ts";
-import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
+import { AuthError, Conflict, Gone, InputError, NotFound } from "./errors.ts";
 import type { Row, View } from "./evolve.ts";
 import { agentsOf, cancels, cardView, configuration } from "./query.ts";
 
@@ -39,6 +39,8 @@ async function readText(request: Request) {
     if (done) break;
     size += value.length;
     if (size <= MAX_BODY) chunks.push(value);
+    // Keep draining a while past the limit: answering while the sender is still writing resets the socket, and the
+    // reset takes down whatever request that client sends next on the same connection.
     if (size > 8 * MAX_BODY) throw new TooLarge();
   }
   if (size > MAX_BODY) throw new TooLarge();
@@ -61,6 +63,7 @@ function statusOf(error: unknown) {
   if (error instanceof AuthError) return 401;
   if (error instanceof Conflict) return 409;
   if (error instanceof NotFound) return 404;
+  if (error instanceof Gone) return 410;
   return 500;
 }
 
@@ -100,10 +103,10 @@ async function cardAtLink(call: Call, linkToken: string) {
   const card = call.services.card(linkToken);
   const linksInUse = Object.values(rules.channels).some((channel) => channel.links);
   if (!card || !linksInUse) throw new NotFound("没有这张卡片");
-  if (request.method === "GET") return new Response(cardPage(cardView(card, environment)), { headers: PAGE_HEADERS });
   if (call.now - Date.parse(card.created_at) > LINK_LIFETIME) {
-    throw new AuthError(`这个链接过期了。在装它的电脑上运行 agent-autoloop answer ${card.id} 回答`);
+    throw new Gone(`这个链接过期了。在装它的电脑上运行 agent-autoloop answer ${card.id} 回答`);
   }
+  if (request.method === "GET") return new Response(cardPage(cardView(card, environment)), { headers: PAGE_HEADERS });
   const form = new URLSearchParams(await readText(request));
   const choice = form.has("choice") && { choice: Number(form.get("choice")) };
   act(call, "answer", card.id, { ...choice, text: form.get("text") ?? undefined, by: "链接" });
@@ -126,8 +129,8 @@ async function tell(call: Call) {
   const hasExpected = input && typeof input === "object" && Object.keys(input).sort().join() === expected.join();
   const keyIsValid = typeof input?.key === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(input.key);
   const text = typeof input?.text === "string" ? input.text.trim() : "";
-  if (!hasExpected || !keyIsValid || !text || [...text].length > 20_000) {
-    throw new InputError("要有正确的 key 和 text，接单程序还要写 task，text 最多 20000 字");
+  if (!hasExpected || !keyIsValid || !text || [...text].length > 2_000) {
+    throw new InputError("要有正确的 key 和 text，接单程序还要写 task，text 最多 2000 字");
   }
   if (source) {
     return json(act(call, "tell", `source:${source}:${input.key}`, rules.sources[source]?.name ?? source, text));
@@ -158,6 +161,7 @@ async function work(call: Call) {
 async function nextCard(call: Call) {
   const { services, request, token } = call;
   const channel = requireKey(call, "channel");
+  if (!Object.hasOwn(call.rules.channels, channel)) throw new NotFound("这个通道没有在 rules.json 里登记");
   const until = waitUntil(call);
   act(call, "channelSeen", channel);
   for (;;) {

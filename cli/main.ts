@@ -10,6 +10,7 @@ import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/confi
 import { HOME, RULES_FILE } from "../host/home.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
+import { printer } from "./plain-text.ts";
 import { spendLine } from "./spend.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
 
@@ -21,10 +22,11 @@ const HELP = `Agent 自动化中台
   agent-autoloop init [--agent claude|codex] [--command '某个命令 {prompt}'] [--port 3350] [--no-service]
                                     在这台电脑上装好：一个人一台电脑就够
   agent-autoloop try                     用你的 Agent 跑一遍完整流程
-  agent-autoloop why <第几轮> [--json]  查看时间线；--json 输出原始事实
+  agent-autoloop why <第几轮> [--json] [--raw]
+                                    查看时间线；--json 输出原始事实，--raw 不过滤文字里的控制字符
   agent-autoloop conformance <地址> --config <测试凭据文件>
                                     在测试中台上检查协议
-  agent-autoloop status                  现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少
+  agent-autoloop status [--raw]          现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少
   agent-autoloop answer <卡片> [序号] [--text 别的想法]
                                     回答一张卡片；通知不用写序号
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
@@ -40,7 +42,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop key list                有哪些密钥
   agent-autoloop key remove <种类> <名字>  立即收回一把密钥
   agent-autoloop add <git 地址>           安装插件，不自动更新
-  agent-autoloop mcp                      用标准输入输出连接 MCP 客户端
+  agent-autoloop mcp [--allow-writes]     用标准输入输出连接 MCP 客户端；默认只读
   agent-autoloop join <中台地址> --worker <名字> --key <密钥>
                                     另一台电脑只接活时用
   agent-autoloop update                  更新到最新版
@@ -200,6 +202,16 @@ async function join(args: string[]) {
   const name = text(named.worker);
   const key = text(named.key);
   if (!url || !name || !key) return fail("用法：agent-autoloop join <中台地址> --worker <名字> --key <密钥>");
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return fail(`中台地址要是完整的网址：${url}`);
+  }
+  const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(target.hostname);
+  if (target.protocol !== "https:" && !(target.protocol === "http:" && local)) {
+    return fail("远程中台要用 https；http 只允许本机回环地址，其他情况请走 SSH 隧道");
+  }
   // Joining another hub must not silently replace this machine's existing hub, worker or owner keys.
   if (existsSync(CONFIG_FILE)) {
     return fail(`已经配置过了：${CONFIG_FILE}。为防止覆盖现有设置，请先备份并手动修改配置。`);
@@ -213,12 +225,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type Card = { id: number; kind: string; title: string; text: string; options: string[]; recommend: number | null };
 
-function showCard(card: Card) {
-  console.log(`\n【${card.kind === "ask" ? "等你决定" : "要你留意"}】#${card.id} ${card.title}`);
-  if (card.text) console.log(card.text);
+function showCard(card: Card, say: (...words: unknown[]) => void = console.log) {
+  say(`\n【${card.kind === "ask" ? "等你决定" : "要你留意"}】#${card.id} ${card.title}`);
+  if (card.text) say(card.text);
   if (card.kind !== "ask") return;
   card.options.forEach((option, index) => {
-    console.log(`  ${index + 1}. ${option}${index === card.recommend ? "（推荐）" : ""}`);
+    say(`  ${index + 1}. ${option}${index === card.recommend ? "（推荐）" : ""}`);
   });
 }
 
@@ -234,6 +246,7 @@ async function chooseAt(terminal: ReturnType<typeof createInterface>, card: Card
 }
 
 async function tryIt() {
+  const say = printer();
   const config = readConfig();
   if (!config.source) return fail("这台电脑上没有来源的密钥。");
   const owner = ownerClient(config);
@@ -248,8 +261,8 @@ async function tryIt() {
   if (retrying) {
     const clock = { timeZone: before.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
     const time = new Date(retrying.notBefore).toLocaleString("zh-CN", clock);
-    console.log(`上一次没跑成（${retrying.error}），${time} 会自动再试，这次的事件会一起处理。`);
-  } else console.log("事件发出去了，Agent 开始干活……");
+    say(`上一次没跑成（${retrying.error}），${time} 会自动再试，这次的事件会一起处理。`);
+  } else say("事件发出去了，Agent 开始干活……");
   let asked: number | null = null;
   for (let i = 0; i < 300; i++) {
     await sleep(1000);
@@ -263,24 +276,24 @@ async function tryIt() {
       );
       if (!card) continue;
       asked = card.id;
-      console.log("\nAgent 结束了这一轮，问了你一个问题。它现在不占进程、不花 Token。");
-      showCard(card);
+      say("\nAgent 结束了这一轮，问了你一个问题。它现在不占进程、不花 Token。");
+      showCard(card, say);
       if (!process.stdin.isTTY) {
-        console.log(`${howToAnswer(card)}\n答完运行 agent-autoloop status，能看到它接着把活干完。`);
+        say(`${howToAnswer(card)}\n答完运行 agent-autoloop status，能看到它接着把活干完。`);
         return;
       }
       const terminal = createInterface({ input: process.stdin, output: process.stdout });
       const choice = await chooseAt(terminal, card);
       terminal.close();
       await owner.answer(card.id, { choice });
-      console.log("收到，Agent 接着干……");
+      say("收到，Agent 接着干……");
       continue;
     }
     const done = state.recentCards.find(
       (card: { id: number; state: string }) => card.id === asked && card.state === "done",
     );
     if (done) {
-      console.log(
+      say(
         `它把活干完了：${done.result}\n\n通了。接下来把 ${RULES_FILE} 改成你自己的规则，或者跟你的 Agent 说一句。`,
       );
       return;
@@ -298,41 +311,42 @@ const RUN_STATES: Record<string, string> = {
   cancelled: "停了",
 };
 
-async function status() {
+async function status(raw = false) {
   const owner = ownerClient();
+  const say = printer(raw);
   const state = await owner.state();
   const { totals } = state;
   const clock = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
   const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { timeZone: state.timezone, ...clock });
-  console.log(
+  say(
     `在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`,
   );
-  console.log(`${spendLine(state.spending)}\n`);
-  for (const agent of state.agents) console.log(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
-  for (const channel of state.channels) console.log(`${channel.online ? "●" : "○"} ${channel.name}`);
+  say(`${spendLine(state.spending)}\n`);
+  for (const agent of state.agents) say(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
+  for (const channel of state.channels) say(`${channel.online ? "●" : "○"} ${channel.name}`);
   for (const card of state.cards) {
-    showCard(card);
-    console.log(howToAnswer(card));
+    showCard(card, say);
+    say(howToAnswer(card));
   }
   const timed = [...state.lines.filter((line: { every: string | null }) => line.every), ...state.elsewhere];
-  if (timed.length) console.log("\n定时");
+  if (timed.length) say("\n定时");
   for (const { name, where, every, next } of timed) {
-    console.log(`  ${name}${where ? `（在别处：${where}）` : ""}：${every}，下次 ${at(next)}`);
+    say(`  ${name}${where ? `（在别处：${where}）` : ""}：${every}，下次 ${at(next)}`);
   }
-  if (state.recentCards.length) console.log("\n最近的卡片");
+  if (state.recentCards.length) say("\n最近的卡片");
   for (const card of state.recentCards.slice(0, 5)) {
     const chosen = card.choice !== null ? card.options[card.choice] : card.answer;
-    console.log(`  #${card.id} ${card.title}：${[chosen, card.result].filter(Boolean).join("。") || card.text}`);
+    say(`  #${card.id} ${card.title}：${[chosen, card.result].filter(Boolean).join("。") || card.text}`);
   }
-  if (state.runs.length) console.log("\n最近几轮");
+  if (state.runs.length) say("\n最近几轮");
   for (const run of state.runs.slice(0, 8)) {
     const shown = run.state === "queued" && run.attempts > 0 ? "等重派" : (RUN_STATES[run.state] ?? run.state);
     const outcome = run.summary || run.error;
-    console.log(`  #${run.id} ${run.rule} ${shown}${outcome ? `：${outcome}` : ""}`);
+    say(`  #${run.id} ${run.rule} ${shown}${outcome ? `：${outcome}` : ""}`);
   }
-  if (state.unrouted.length) console.log("\n没有规则接的事件");
+  if (state.unrouted.length) say("\n没有规则接的事件");
   for (const { source, type, subject, summary } of state.unrouted.slice(0, 5)) {
-    console.log(`  ${source} ${type} ${subject}${summary ? `：${summary}` : ""}`);
+    say(`  ${source} ${type} ${subject}${summary ? `：${summary}` : ""}`);
   }
 }
 
@@ -487,7 +501,7 @@ async function why(args: string[]) {
   const facts = await ownerClient().why(id);
   if (args.includes("--json")) return console.log(JSON.stringify(facts, null, 2));
   const { formatWhy } = await import("./why.ts");
-  console.log(formatWhy(id, facts));
+  console.log(formatWhy(id, facts, args.includes("--raw")));
 }
 
 async function checkConformance(args: string[]) {
@@ -541,13 +555,16 @@ async function askAtTerminal(question: string) {
 
 const [command, ...args] = process.argv.slice(2);
 const commands: Record<string, () => unknown> = {
-  mcp: async () => (await import("./mcp.ts")).mcp(),
+  mcp: async () =>
+    (await import("./mcp.ts")).mcp(
+      flags(args).named["allow-writes"] !== undefined || process.env.AGENT_AUTOLOOP_MCP_ALLOW_WRITES === "1",
+    ),
   add: () => addPlugin(args),
   init: () => init(args),
   join: () => join(args),
   up: async () => (await import("../host/up.ts")).up(),
   try: tryIt,
-  status,
+  status: () => status(args.includes("--raw")),
   why: () => why(args),
   conformance: () => checkConformance(args),
   answer: () => answer(args),

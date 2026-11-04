@@ -90,7 +90,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 }
 ```
 
-保存后几秒内自动生效，可以运行 `agent-autoloop check` 检查。就算改错了，系统也会继续按旧规则跑，并发卡片提醒你哪里写错了。
+保存后几秒内自动生效，可以运行 `agent-autoloop check` 检查。就算改错了，系统也会继续按旧规则跑，并发卡片提醒你哪里写错了。删掉或改名一条规则时，还没领走的排队任务会取消，对应规则还没结束的卡片会关闭，并各发一张通知；已经领取的任务会跑完。回答这些旧卡片会被拒绝，先用 `agent-autoloop resolve` 结掉。
 
 ### Agent 怎么跟中台配合？
 
@@ -144,7 +144,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | **通道**：去哪找你拍板 | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个通道) |
 | **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts) | [说明](skills/agent-autoloop/SKILL.md#交付流水线) |
 
-**实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；飞书跑通了发送、按钮回调和卡片更新；四种 Webhook 模板只在本地模拟服务上验证过。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。
+**实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；飞书跑通了发送、按钮回调和卡片更新；四种 Webhook 模板只在本地模拟服务上验证过。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。有按钮的通道要在 `rules.json` 里登记，并把回答人写进 `answerers`；名单缺失或为空表示它只能收通知，谁都不能通过它回答，只有显式 `["*"]` 才允许任何有名字的人。没登记的通道拿不到卡片。
 
 **其他命令行 Agent 一行接入。** 设置 `use: "command"` 并传入命令数组，`{prompt}` 作为独立参数传递，不会被当成 shell 代码执行。下面的命令整理自各家官方文档，我们还没有逐个跑过：
 
@@ -157,9 +157,9 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
 
-**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。
+**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。PR 改动 CI 工作流、`scripts/`、`tests/`、`package.json`、`package-lock.json` 或 `ops/delivery.json` 时不会自动合并，要在 PR 上打 `deliver-attended` 确认；Ship 用合并前 main 的设置判定发布。审查是建议，不是安全门禁。
 
-**写自己的插件。** 从 [Agent](examples/plugins/hello-agent/agent.ts)、[通道](examples/plugins/hello-channel/channel.ts)、[事件](examples/plugins/hello-source/source.ts) 三个可运行的最小模板开始，见[插件开发说明](docs/plugins.md)。要让 Agent 操作网页，先看[浏览器接入](docs/plugins.md#浏览器接入)。命令行和 [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销) 也能查看和回答卡片。
+**写自己的插件。** 从 [Agent](examples/plugins/hello-agent/agent.ts)、[通道](examples/plugins/hello-channel/channel.ts)、[事件](examples/plugins/hello-source/source.ts) 三个可运行的最小模板开始，见[插件开发说明](docs/plugins.md)。要让 Agent 操作网页，先看[浏览器接入](docs/plugins.md#浏览器接入)。命令行和 [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销)（默认只读）也能查看和回答卡片。
 
 ## 内核的四个机制
 
@@ -211,6 +211,16 @@ Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应
 中台直接调用你本机已经安装并登录好的命令行工具，不会读取或转存你的账号凭据。模型调用消耗算在你自己的账号名下，额度和使用范围遵循各家模型厂商的服务条款。
 
 在高频自动化场景下，各家厂商通常更建议使用 API Key（个人订阅额度主要是为日常人工交互设计的，详见 [Anthropic](https://code.claude.com/docs/en/legal-and-compliance) 与 [OpenAI](https://learn.chatgpt.com/docs/auth) 的官方说明）。如果你用它对外提供服务，请使用 API Key。本项目为独立开源项目，与上述厂商无隶属或背书关系。
+
+## 这次改了什么（可能影响已有配置）
+
+- **通道要有回答者名单。** `rules.json` 里的通道没写 `answerers`（或者写成空的）就只能发通知，谁回答都会被拒绝；只有显式写 `["*"]` 才允许任何人回答。没在 `rules.json` 登记的通道拿不到卡片，也回答不了。
+- **远程中台用 https。** `agent-autoloop join` 只接受 `https://` 的地址；`http://` 只允许本机回环的 `127.0.0.1`、`localhost`、`::1`。
+- **MCP 默认只读。** `agent-autoloop mcp` 默认只提供 `status` 和 `why`；要回答卡片、结案、停止一轮或发事件，启动时加 `--allow-writes`（或设 `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`）。
+- **`POST /v1/tell` 的 `text` 最多 2000 字**，再多返回 400。
+- **卡片链接一周后失效。** 之后打开链接和提交回答都返回 410，卡片还开着，用 `agent-autoloop answer <卡片> <序号>` 回答。`agent-autoloop why` 和 `status` 显示别人写的文字时会去掉控制字符，想原样看就加 `--raw`。
+- **删掉或改名一条规则**：还没领走的排队轮次会取消，这条规则还没收尾的卡片会关闭并各发一张通知；回答这些旧卡片返回 409，先用 `resolve` 结掉。
+- **交付**：PR 改了受保护路径（`.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json`、`ops/delivery.json`，可在设置的 `protected` 里替换），或者把跑过的检查工作流文件改得和 main 不一致，都不会自动合并，要有人打 `deliver-attended` 或人工合并。Ship 用合并前 main 的设置判定发布，读不到就交人工。
 
 ## 更多文档
 

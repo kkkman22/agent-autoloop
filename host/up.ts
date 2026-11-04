@@ -1,7 +1,7 @@
 // Everything this machine does, in one process: the hub, the worker and its channels, whichever config.json says. They
 // speak the same protocol to each other here as they would across the world. A stop leaves agents running: they're
 // detached, and the worker finds them again when it's back.
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadChannel } from "./channels.ts";
 import { parseListen, readConfig, type ChannelConfig } from "./config.ts";
@@ -27,9 +27,12 @@ function lock() {
 }
 
 /** secrets.env: what an adapter needs to check a webhook, kept out of rules.json. */
-function loadSecrets() {
+export function loadSecrets() {
   const file = path.join(HOME, "secrets.env");
-  if (existsSync(file)) process.loadEnvFile(file);
+  if (!existsSync(file)) return;
+  if (lstatSync(file).isSymbolicLink()) throw new Error("secrets.env 不能是符号链接");
+  chmodSync(file, 0o600);
+  process.loadEnvFile(file);
 }
 
 /** A channel that stops for any reason is started again. */

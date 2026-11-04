@@ -5,7 +5,8 @@
 // lost because its run was merged, or doesn't carry the session and what the asker left for itself; the card doesn't show
 // what was done once its run finishes; a run resolves a card outside what it was given to check, or a bad id spoils its own
 // result; resolving wakes nobody. Delivery: a channel gets a card it has, gets none it should, loses a report and sends a second
-// message (the ref sticks, and a stale report doesn't undo a newer one); a stale failure delays a newer version; a failed
+// message (the ref sticks, and a stale report doesn't undo a newer one); a report of a version the card never had counts;
+// a stale failure delays a newer version; a failed
 // send retries at once, or for ever; a channel that never came counts as having failed; a card solved before it was sent
 // bothers the owner; two channels don't each get their own copy; an answer in one channel doesn't update the other.
 import assert from "node:assert/strict";
@@ -351,4 +352,67 @@ test("a card's link answers only when its channel allows it, only that card, onl
   assert.throws(() => answerByLink(token, { choice: 0 }, at(8 * 24 * 60)), AuthError, "too old");
   assert.equal(answerByLink(token, { choice: 0 }, at(2)).changed, true);
   assert.equal(card(id).by, "链接");
+});
+
+test("a channel answer needs a registered channel and a named answerer, and a channel with no list lets nobody answer", () => {
+  clean();
+  const { id } = asked(1);
+  const shown = nextCard("plain", at(1))!;
+  delivered("plain", id, shown.version, "p_1", at(1));
+  assert.throws(
+    () => answer(id, { choice: 0, by: "anyone", channel: "plain", ref: "p_1" }, at(2)),
+    AuthError,
+    "a channel without answerers is not an open door",
+  );
+  assert.equal(card(id).state, "open");
+  assert.throws(
+    () => answer(id, { choice: 0, channel: "chat", ref: "om_1" }, at(2)),
+    AuthError,
+    "a channel must say who answered",
+  );
+  assert.throws(
+    () => answer(id, { choice: 0, by: "", channel: "chat", ref: "om_1" }, at(2)),
+    AuthError,
+    "an empty name is not a name",
+  );
+  assert.throws(
+    () => answer(id, { choice: 0, by: "me", channel: "ghost", ref: "g_1" }, at(2)),
+    AuthError,
+    "a channel that isn't in rules.json can't answer",
+  );
+  assert.equal(card(id).state, "open");
+});
+
+test("a wildcard answerer lets any named person answer, and an empty list still lets nobody", async () => {
+  clean();
+  const hub = await import("../host/runtime.ts");
+  const before = structuredClone(hub.getView().get("config", "rules")!.value);
+  const next = structuredClone(before);
+  next.channels.any = { name: "任何人", answerers: ["*"] };
+  next.channels.mute = { name: "静默", answerers: [] };
+  try {
+    hub.execute("rules", [next], at(0));
+    const askedOne = asked(1);
+    const open = nextCard("any", at(1))!;
+    delivered("any", askedOne.id, open.version, "a_1", at(1));
+    assert.throws(() => answer(askedOne.id, { choice: 0, by: " ", channel: "any", ref: "a_1" }, at(2)), AuthError);
+    assert.equal(answer(askedOne.id, { choice: 0, by: "stranger", channel: "any", ref: "a_1" }, at(2)).changed, true);
+    const askedTwo = asked(2, at(3));
+    const muted = nextCard("mute", at(4))!;
+    delivered("mute", askedTwo.id, muted.version, "m_1", at(4));
+    assert.throws(() => answer(askedTwo.id, { choice: 0, by: "me", channel: "mute", ref: "m_1" }, at(5)), AuthError);
+  } finally {
+    hub.execute("rules", [before], at(6));
+  }
+});
+
+test("a channel can't report a version the card never had", () => {
+  clean();
+  const { id } = asked(1);
+  const shown = nextCard("chat", at(1))!;
+  assert.throws(() => delivered("chat", id, shown.version + 1, "om_future", at(1)), InputError);
+  assert.throws(() => delivered("chat", id, 0, "om_zero", at(1)), InputError);
+  assert.throws(() => delivered("chat", id, 1.5, "om_half", at(1)), InputError);
+  delivered("chat", id, shown.version, "om_1", at(1));
+  assert.equal(nextCard("chat", at(10)), null, "the true version still counts");
 });

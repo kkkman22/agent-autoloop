@@ -41,6 +41,15 @@ test("the fixture loads, with defaults filled in", () => {
   assert.equal(r.agents.a2.access, "full");
 });
 
+test("the default askFirst is the list docs/protocol.md shows", () => {
+  const page = readFileSync(join(import.meta.dirname, "../docs/protocol.md"), "utf8");
+  const shown = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(page)![1]).askFirst;
+  const bare = good();
+  delete bare.askFirst;
+  assert.deepEqual(parseRules(JSON.stringify(bare)).askFirst, shown, "协议里的规则示例");
+  assert.deepEqual(shown, ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"]);
+});
+
 test("a mistake says which rule and what is wrong", () => {
   problem((r) => {
     r.rules[0].to = "nobody";
@@ -184,4 +193,50 @@ test("a good file changing on disk takes effect; a bad one leaves the old rules 
   assert.equal(answer.changed, false);
   assert.match(answer.problem!, /nobody/);
   assert.equal(ruleNamed("意见")!.prompt, "新的说法。", "the old rules keep running");
+});
+
+test("targets and ids are own names with clear limits, not anything a JavaScript object inherits", () => {
+  for (const name of ["constructor", "toString", "hasOwnProperty"]) {
+    problem((r) => {
+      r.rules[0].to = name;
+    }, /规则「意见」.*不是已登记的 Agent/);
+    problem((r) => {
+      r.sources[name] = { name: "x" };
+    }, /来源的编号/);
+    problem((r) => {
+      r.channels[name] = { name: "x" };
+    }, /通道的编号/);
+    problem((r) => {
+      r.agents[name] = { name: "x", worker: "w1", use: "command", command: ["true"] };
+    }, /Agent 的编号/);
+  }
+  problem((r) => {
+    r.sources = JSON.parse('{"__proto__":{"name":"x"}}');
+  }, /来源的编号/);
+  problem((r) => {
+    r.rules[0].emits = { source: "constructor", types: ["x"] };
+  }, /规则「意见」.*emits/);
+  for (const id of ["Bad", "a b", "a/b", "a".repeat(65), "-a"]) {
+    problem((r) => {
+      r.sources[id] = { name: "x" };
+    }, /来源的编号/);
+    problem((r) => {
+      r.channels[id] = { name: "x" };
+    }, /通道的编号/);
+  }
+  problem((r) => {
+    r.sources["*"] = { name: "x" };
+  }, /来源的编号/);
+  problem((r) => {
+    r.rules[0].parallel = 101;
+  }, /规则「意见」.*parallel/);
+  problem((r) => {
+    r.agents.a1.timeout = 0;
+  }, /Agent a1.*timeout/);
+  problem((r) => {
+    r.agents.a1.timeout = 10081;
+  }, /Agent a1.*timeout/);
+  problem((r) => {
+    r.channels.chat.answerers = [""];
+  }, /通道 chat.*answerers/);
 });

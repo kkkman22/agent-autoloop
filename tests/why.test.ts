@@ -1,6 +1,7 @@
 // Failure modes: why dumps rules or JSON by default; related runs/events leak into the timeline; a question loses its
 // answer or continuation; receipt actions disappear; retry uses the wrong rules version; --json changes the raw facts;
-// local time is replaced by UTC or a year, columns drift; a provisional session link is presented after the agent has supplied its real session.
+// local time is replaced by UTC or a year, columns drift; another's words drive the terminal, or --raw can't keep them;
+// a provisional session link is presented after the agent has supplied its real session.
 import assert from "node:assert/strict";
 import { rows } from "../kernel/evolve.ts";
 import { execFile } from "node:child_process";
@@ -120,4 +121,23 @@ test("why retains failed attempts and uses each attempt's rules version without 
   assert.ok(output.includes(`规则版本 #${before}`));
   assert.ok(output.includes(`规则版本 #${afterVersion}`));
   assert.ok(!output.includes("private-instructions"));
+});
+
+test("text from elsewhere reaches the terminal as words, and --raw keeps what it was", async () => {
+  const noisy = "\u001b[31m红色\u001b[0m\u001b]0;偷偷设标题\u0007正常";
+  hub.ingest("shop", { id: "noisy", type: "order.created", subject: "noisy" }, start + 20000);
+  const job = hub.claimNext("mac-mini", "noisy-1", start + 21000)!;
+  hub.finish(
+    job.run,
+    job.token,
+    { outcome: "done", ask: [{ title: `标题${noisy}`, text: noisy, options: ["甲", "乙"], key: "noisy" }] },
+    start + 22000,
+  );
+  const shown = await cli("why", String(job.run));
+  assert.ok(shown.includes("红色") && shown.includes("正常"), shown);
+  assert.ok(!shown.includes("\u001b"), shown);
+  assert.ok((await cli("why", String(job.run), "--raw")).includes(noisy));
+  const state = await cli("status");
+  assert.ok(state.includes("红色"), state);
+  assert.ok(!state.includes("\u001b"), state);
 });
