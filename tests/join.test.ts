@@ -8,15 +8,11 @@ import { test } from "node:test";
 
 const program = path.join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
 const join = (home: string, url = "https://hub.example") =>
-  spawnSync(
-    process.execPath,
-    [program, "join", url, "--worker", "remote", "--key", "new-key", "--no-service"],
-    {
-      env: { ...process.env, AGENT_AUTOLOOP_HOME: home },
-      encoding: "utf8",
-      timeout: 20_000,
-    },
-  );
+  spawnSync(process.execPath, [program, "join", url, "--worker", "remote", "--key", "new-key", "--no-service"], {
+    env: { ...process.env, AGENT_AUTOLOOP_HOME: home },
+    encoding: "utf8",
+    timeout: 20_000,
+  });
 
 test("join creates a worker configuration on a fresh machine", (t) => {
   const home = mkdtempSync(path.join(tmpdir(), "agent-autoloop-join-new-"));

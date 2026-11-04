@@ -1,0 +1,52 @@
+{
+  "timezone": "Asia/Shanghai",
+  "sources": {
+    "jira": {
+      "name": "Jira"
+    }
+  },
+  "agents": {
+    "jira-watcher": {
+      "name": "Jira 轮询",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/watch.ts", "{cwd}/jira.json"]
+    },
+    "jira-notifier": {
+      "name": "钉钉通知",
+      "worker": "my-computer",
+      "use": "command",
+      "command": ["node", "{cwd}/notify.ts", "{cwd}/users.json"]
+    }
+  },
+  "rules": [
+    {
+      "name": "看 Jira 更新",
+      "when": {
+        "cron": "*/15 * * * *"
+      },
+      "to": "jira-watcher",
+      "cwd": "~/.agent-autoloop/work/jira-watch",
+      "tell": "never",
+      "emits": {
+        "source": "jira",
+        "types": ["jira.updated"]
+      }
+    },
+    {
+      "name": "通知钉钉群",
+      "when": {
+        "source": "jira",
+        "types": ["jira.updated"]
+      },
+      "to": "jira-notifier",
+      "cwd": "~/.agent-autoloop/work/jira-watch",
+      "parallel": 5
+    }
+  ],
+  "channels": {
+    "dingtalk": {
+      "name": "钉钉群"
+    }
+  }
+}

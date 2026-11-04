@@ -349,7 +349,9 @@ test("deliver-attended carries protected changes through and the attestation say
   assert.equal((await deliver("example/app", 1, io)).merged, "merged");
   assert.equal(state.merges, 1);
   assert.ok(
-    state.statuses.some((s: any) => s.context === "my-review" && s.state === "success" && /人工确认/.test(s.description)),
+    state.statuses.some(
+      (s: any) => s.context === "my-review" && s.state === "success" && /人工确认/.test(s.description),
+    ),
   );
 });
 test("a check workflow that isn't main's definition waits for a person, unless one is watching", async () => {

@@ -1,8 +1,11 @@
 // Failure modes: a recipe's rules don't pass `agent-autoloop check`, or check would pass anything; a rule names a Skill the
 // recipe doesn't ship, or the README doesn't say where to put it; a README promises one access level while the rules give
-// another; the curl in ops-alerts no longer reaches its rule, or the outside system's key can set off the restart; the
-// issue watcher prints something the worker can't read (a body's line break or backslash breaking its JSON), or an event
-// the rules wouldn't let through, or asks GitHub for something else when called with one argument.
+// another, or a script-only recipe's README hides that it runs no model; the curl in ops-alerts no longer reaches its rule,
+// or the outside system's key can set off the restart; the issue watcher prints something the worker can't read (a body's
+// line break or backslash breaking its JSON), or an event the rules wouldn't let through, or asks GitHub for something else
+// when called with one argument; the jira watcher asks the MCP something other than the configured JQL, or hands back an
+// unstable id (so every poll notifies again), or loses the creator the notifier needs, or notifies someone the local map
+// never carried.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -23,6 +26,7 @@ const NAMES = [
   "website-watch",
   "feishu-brief",
   "browser-handoff",
+  "jira-watch",
 ];
 const scratch = mkdtempSync(join(tmpdir(), "agent-autoloop-recipes-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -56,6 +60,10 @@ for (const name of NAMES) {
 
   test(`${name}: every Skill a rule names is here, and the README says where it goes`, () => {
     const skills = readRules(name).rules.flatMap((rule: { skill?: string }) => rule.skill ?? []);
+    if (skills.length === 0) {
+      assert.match(readDoc(name), /不跑模型/, "a recipe that runs no model must say so where the reader looks");
+      return;
+    }
     assert.equal(skills.length, 1);
     const skill = readFileSync(join(RECIPES, name, "SKILL.md"), "utf8");
     assert.match(skill, new RegExp(`^name: ${skills[0]}$`, "m"));
@@ -66,6 +74,10 @@ for (const name of NAMES) {
   test(`${name}: the README states the access level the rules actually give`, () => {
     const { agents } = readRules(name);
     const real = Object.values<{ use: string; access: string }>(agents).filter((agent) => agent.use !== "command");
+    if (real.length === 0) {
+      assert.match(readDoc(name), /不跑模型/);
+      return;
+    }
     assert.equal(real.length, 1);
     const stated = /权限：`(read|edit|full)`/.exec(readDoc(name));
     assert.ok(stated, "README 要写明权限");
@@ -196,4 +208,143 @@ test("github-issues: the watcher's search is optional, and the rules use it to l
   assert.match(watch(["owner/repo", "created:>=2026-11-04"]).asked, /--search created:>=2026-11-04/);
   const { agents } = readRules("github-issues");
   assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
+});
+
+// Stands in for the local jira MCP: answers the stdio handshake and one jira_search, so the watcher's own client runs.
+const FAKE_MCP = `const fs = require("node:fs");
+const readline = require("node:readline");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  const say = (object) => process.stdout.write(JSON.stringify(object) + "\\n");
+  if (message.id === 1) say({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18", capabilities: {} } });
+  if (message.method === "notifications/initialized") fs.appendFileSync(process.env.MCP_LOG, "initialized\\n");
+  if (message.id === 2) {
+    fs.appendFileSync(process.env.MCP_LOG, JSON.stringify(message.params.arguments) + "\\n");
+    say({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: fs.readFileSync(process.env.MCP_ISSUES, "utf8") }] } });
+  }
+});
+`;
+
+function jiraWatch(issues: unknown[]) {
+  const dir = mkdtempSync(join(scratch, "jira-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(join(dir, "issues.json"), JSON.stringify(issues));
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      jql: "project = OPS AND updated >= '-20m'",
+      maxResults: 5,
+      timeoutSeconds: 30,
+    }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8") };
+}
+
+test("jira-watch: the watcher asks the configured JQL and hands back stable events the rules let in", () => {
+  // One issue flattened the way mcp-atlassian summarizes; one raw Jira shape with fields nested.
+  const { said, asked } = jiraWatch([
+    {
+      key: "OPS-12",
+      summary: "数据库慢查询",
+      url: "https://jira.example.com/browse/OPS-12",
+      status: { name: "In Progress" },
+      reporter: { displayName: "张三", emailAddress: "zhang.san@example.com" },
+      updated: "2026-11-04T09:30:00.000+0800",
+    },
+    {
+      key: "OPS-13",
+      fields: {
+        summary: "Release",
+        status: { name: "Done" },
+        reporter: "李四",
+        updated: "2026-11-04T10:00:00.000+0800",
+      },
+    },
+  ]);
+  const lines = asked.trim().split("\n");
+  assert.match(lines[0], /initialized/);
+  const askedMcp = JSON.parse(lines[1]);
+  assert.equal(askedMcp.jql, "project = OPS AND updated >= '-20m'");
+  assert.equal(askedMcp.max_results, 5);
+  const { result, problem } = resultFrom(readMessage(said), {});
+  assert.equal(problem, undefined);
+  const events = result.events!;
+  assert.equal(events.length, 2);
+  assert.equal(events[0].id, "OPS-12:2026-11-04T09:30:00.000+0800", "stable id: rereading the window notifies once");
+  assert.equal(events[0].subject, "OPS-12");
+  assert.equal(events[0].summary, "数据库慢查询");
+  assert.equal(events[0].link, "https://jira.example.com/browse/OPS-12");
+  assert.equal(
+    JSON.parse(events[0].detail).reporter_email,
+    "zhang.san@example.com",
+    "the notifier maps the creator from this",
+  );
+  assert.equal(events[1].summary, "Release");
+  assert.equal(JSON.parse(events[1].detail).reporter_name, "李四");
+  const rules = readRules("jira-watch").rules;
+  const watcher = rules.find((rule: { emits?: unknown }) => rule.emits);
+  const handler = rules.find((rule: { when: { source?: string } }) => rule.when.source);
+  for (const { type } of events) {
+    assert.ok(watcher.emits.types.includes(type));
+    assert.ok(handler.when.types.includes(type));
+  }
+  assert.equal(handler.when.source, watcher.emits.source);
+});
+
+test("jira-watch: the notifier mentions only creators the local map carries", () => {
+  const dir = mkdtempSync(join(scratch, "notify-"));
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({ "zhang.san@example.com": { name: "张三", mobile: "13800001111" } }),
+  );
+  const events = [
+    {
+      id: "OPS-12:t1",
+      type: "jira.updated",
+      subject: "OPS-12",
+      summary: "数据库慢查询",
+      detail: JSON.stringify({
+        reporter_email: "zhang.san@example.com",
+        reporter_name: "张三",
+        status: "In Progress",
+        updated: "2026-11-04 09:30",
+        url: "https://jira.example.com/browse/OPS-12",
+      }),
+      link: "https://jira.example.com/browse/OPS-12",
+    },
+    {
+      id: "OPS-13:t1",
+      type: "jira.updated",
+      subject: "OPS-13",
+      summary: "Release",
+      detail: JSON.stringify({ reporter_name: "李四", status: "Done" }),
+      link: "",
+    },
+  ];
+  const done = (() => {
+    const contextFile = join(dir, "context.json");
+    writeFileSync(contextFile, JSON.stringify({ events }));
+    return spawnSync(
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+      { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+    );
+  })();
+  assert.equal(done.status, 0, done.stderr);
+  const { result, problem } = resultFrom(readMessage(done.stdout), {});
+  assert.equal(problem, undefined);
+  const notice = result.notice!;
+  assert.equal(notice.length, 2);
+  assert.match(notice[0].text, /@13800001111/);
+  assert.match(notice[0].text, /张三/);
+  assert.doesNotMatch(notice[1].text, /@1[3-9]\d{9}/, "an unmapped creator is named, not pinged");
+  assert.match(notice[1].text, /李四/);
+  assert.notEqual(notice[0].key, notice[1].key);
 });

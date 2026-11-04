@@ -54,7 +54,11 @@ function mcp(args: string[] = [], env: NodeJS.ProcessEnv = {}) {
 }
 const speak = (child: any, messages: object[]) =>
   child.stdin.end(messages.map((m) => JSON.stringify({ jsonrpc: "2.0", ...m })).join("\n") + "\n");
-const hello = { id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } } };
+const hello = {
+  id: 1,
+  method: "initialize",
+  params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+};
 const list = { id: 2, method: "tools/list" };
 test("read-only by default: only status and why, and the writing tools are unknown", async () => {
   const { child, done } = mcp();
@@ -74,7 +78,10 @@ test("read-only by default: only status and why, and the writing tools are unkno
   assert.equal(responses.length, 8, "每一条要回的都回了，通知没有回");
   const get = (id: number) => responses.find((r: any) => r.id === id);
   assert.equal(get(1).result.protocolVersion, "2025-11-25");
-  assert.deepEqual(get(2).result.tools.map((t: any) => t.name), ["status", "why"]);
+  assert.deepEqual(
+    get(2).result.tools.map((t: any) => t.name),
+    ["status", "why"],
+  );
   assert.equal(get(3).result.isError, undefined);
   assert.equal(get(4).error.code, -32602);
   assert.equal(get(5).result.isError, true);
@@ -97,15 +104,10 @@ test("--allow-writes exposes the writing tools, each with the key it belongs to"
   ]);
   const { responses, calls: made } = await done;
   const get = (id: number) => responses.find((r: any) => r.id === id);
-  assert.deepEqual(get(2).result.tools.map((t: any) => t.name), [
-    "status",
-    "why",
-    "answer",
-    "resolve",
-    "stop",
-    "emit",
-    "tell",
-  ]);
+  assert.deepEqual(
+    get(2).result.tools.map((t: any) => t.name),
+    ["status", "why", "answer", "resolve", "stop", "emit", "tell"],
+  );
   assert.equal(get(3).result.isError, undefined);
   assert.equal(get(4).result.isError, undefined);
   assert.deepEqual(made, [

@@ -2,7 +2,7 @@
 // Words and a link, no buttons: pair it with "links": true in rules.json so the link itself can answer that one card.
 //   "channels": { "dingtalk": { "use": "webhook", "key": "…", "url": "https://…",
 //                               "body": { "msgtype": "text", "text": { "content": "{text}" } } } }
-import { accepted, payload } from "./templates.ts";
+import { accepted, payload, signedUrl } from "./templates.ts";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 
 function fill(template: unknown, text: string): unknown {
@@ -37,12 +37,15 @@ export default async function webhook({ hub, options, log, signal }: ChannelCont
       continue;
     }
     try {
-      const response = await fetch(options.url as string, {
+      const target = options.secret
+        ? signedUrl(options.url as string, String(options.secret))
+        : (options.url as string);
+      const response = await fetch(target, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(
           options.platform
-            ? payload(String(options.platform), words(card))
+            ? payload(String(options.platform), words(card), Array.isArray(options.at) ? options.at.map(String) : [])
             : fill(options.body ?? { text: "{text}" }, words(card)),
         ),
         signal: AbortSignal.timeout(30_000),

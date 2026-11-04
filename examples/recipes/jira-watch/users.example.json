@@ -1,0 +1,4 @@
+{
+  "zhang.san@example.com": { "name": "张三", "mobile": "13800001111" },
+  "李四": { "name": "李四", "mobile": "13900002222" }
+}
