@@ -47,6 +47,16 @@ test("DingTalk matches a mention written the way the owner allows it, Chinese na
   assert.deepEqual(group.at, { atUserIds: ["Gruby.Wang"], atMobiles: [], isAtAll: false });
 });
 
+test("DingTalk takes the client's own mention shape, a name written with its name in brackets", () => {
+  const whole: any = payload("dingtalk", "配置测试：@邹聪聪(邹聪聪)", ["邹聪聪(邹聪聪)"]);
+  assert.deepEqual(whole.at, { atUserIds: ["邹聪聪(邹聪聪)"], atMobiles: [], isAtAll: false });
+  // An allowlist entry with just the name still matches that same mention.
+  const name: any = payload("dingtalk", "@邹聪聪(邹聪聪)", ["邹聪聪"]);
+  assert.deepEqual(name.at, { atUserIds: ["邹聪聪"], atMobiles: [], isAtAll: false });
+  const other: any = payload("dingtalk", "@邹聪聪(邹聪聪)", ["宋双双"]);
+  assert.deepEqual(other.at, { atUserIds: [], atMobiles: [], isAtAll: false });
+});
+
 test("DingTalk takes a mobile written with a country code and sends it the way its docs show", () => {
   const sent: any = payload("dingtalk", "正文 @17673053536", ["+86-17673053536"]);
   assert.deepEqual(sent.at, { atUserIds: [], atMobiles: ["17673053536"], isAtAll: false });

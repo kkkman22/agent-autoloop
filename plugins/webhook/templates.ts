@@ -8,8 +8,20 @@ const mobile = (id: string) => (MOBILE.test(bare(id)) ? bare(id) : null);
 
 /** The ids the text names right after an @ that the owner allows. */
 function mentioned(text: string, allowed: readonly string[]): string[] {
-  // Everything after an @ up to the next space or punctuation is a candidate; a phone may carry a country code.
-  const said = new Set([...text.matchAll(/@([^\s@,，。！？、:：;；)\]】]+)/g)].map((hit) => bare(hit[1])));
+  // A mention is what follows an @ up to the next space. The client renders it as "@name(name)", and the
+  // owner may allow either spelling, so both the whole form and the name inside it count.
+  const said = new Set<string>();
+  for (const hit of text.matchAll(/@([^\s@]+)/g)) {
+    const whole = hit[1];
+    said.add(bare(whole));
+    const inner = whole.match(/^\(([^)]*)\)$/);
+    if (inner) said.add(bare(inner[1]));
+    const name = whole.match(/^([^()]+)\(([^)]*)\)$/);
+    if (name) {
+      said.add(bare(name[1]));
+      said.add(bare(name[2]));
+    }
+  }
   return allowed.filter((id) => said.has(id) || said.has(bare(id)));
 }
 
