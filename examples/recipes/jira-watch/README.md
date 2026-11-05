@@ -83,6 +83,23 @@ https://jira.shijidev.com/browse/CH-35476
 
 名单里没写的人照样收到通知文字，只是不会被提醒——这是刻意的：事件里的文字不该能决定 @ 谁。
 
+## 前提：这个模板需要带加签和 @ 白名单的 webhook 通道
+
+钉钉机器人用加签时，通道要按官方的规则给 URL 追加 `timestamp` 和 `sign`，并且只 @ 白名单里的人。
+这两样在 `plugins/webhook/templates.ts` 里：
+
+- `signedUrl(url, secret)` —— 加签
+- `payload(platform, text, at)` —— 正文里的 @ 与白名单取交集
+
+**装中台时要确认安装目录里是带这两样的版本**：
+
+```bash
+grep -c "signedUrl" ~/.agent-autoloop/app/plugins/webhook/templates.ts   # 应该是 1
+```
+
+是 0 就说明装的是没有加签功能的旧版本，钉钉会报「机器人发送签名不匹配」。
+从源码分支装的话，把 `plugins/webhook/` 拷进安装目录即可。
+
 ## 一、准备
 
 1. **jira MCP 能在本机用**：直接复用你给命令行工具配好的那个。本机是 `uvx mcp-atlassian==0.23.0`（stdio）。
