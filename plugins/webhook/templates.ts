@@ -6,7 +6,15 @@ const MOBILE = /^1[3-9]\d{9}$/;
 const bare = (id: string) => id.replace(/^\+?86[- ]?/, "");
 const mobile = (id: string) => (MOBILE.test(bare(id)) ? bare(id) : null);
 
-/** The ids the text names right after an @ that the owner allows. */
+/**
+ * The ids the text names right after an @ that the owner allows.
+ *
+ * DingTalk matches a mention on the id in the text against the same id in the request, so the allowlist is the
+ * only thing that decides who can be pinged. Which ids work depends on the vendor and on the group: a user's
+ * userid (the internal id like 014728255240768602), their mobile, or the name the group shows them under.
+ * An id the vendor cannot resolve is dropped silently, so an allowlist entry that never highlights means that
+ * spelling is not what the vendor matches on, not that the message failed.
+ */
 function mentioned(text: string, allowed: readonly string[]): string[] {
   // A mention is what follows an @ up to the next space. The client renders it as "@name(name)", and the
   // owner may allow either spelling, so both the whole form and the name inside it count.
