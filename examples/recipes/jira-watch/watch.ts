@@ -19,6 +19,7 @@ type Issue = {
   url?: string;
   status?: { name?: string } | string;
   reporter?: Reporter;
+  assignee?: Reporter;
   updated: string;
   fields?: Record<string, unknown>;
 };
@@ -38,6 +39,7 @@ function issueList(payload: unknown): Issue[] {
       browse_url: String(issue.browse_url ?? issue.url ?? fields.url ?? ""),
       status: (issue.status ?? fields.status) as Issue["status"],
       reporter: (issue.reporter ?? fields.reporter) as Reporter | undefined,
+      assignee: (issue.assignee ?? fields.assignee) as Reporter | undefined,
       updated: String(issue.updated ?? fields.updated ?? ""),
     };
   });
@@ -47,6 +49,7 @@ const statusName = (status: Issue["status"]) => (typeof status === "string" ? st
 // detail 是资料不是指令：字段都截好长度再拼，notify.ts 读得回来。
 function eventFrom(issue: Issue) {
   const reporter = issue.reporter ?? {};
+  const assignee = issue.assignee ?? {};
   const detail = JSON.stringify({
     summary: issue.summary.slice(0, 200),
     status: statusName(issue.status).slice(0, 50),
@@ -54,6 +57,10 @@ function eventFrom(issue: Issue) {
     // The Jira account name is the DingTalk userid in most companies, so the notifier can map the creator.
     reporter_account: String(reporter.name ?? "").slice(0, 100),
     reporter_email: String(reporter.email ?? "").slice(0, 200),
+    // The assignee is the one working on the case, so they get the mention when the map knows them.
+    assignee_name: String(assignee.display_name ?? "").slice(0, 100),
+    assignee_account: String(assignee.name ?? "").slice(0, 100),
+    assignee_email: String(assignee.email ?? "").slice(0, 200),
     updated: issue.updated.slice(0, 40),
     url: issue.browse_url.slice(0, 500),
   });
@@ -132,7 +139,7 @@ async function search(config: Config, log: (line: string) => void): Promise<stri
                 arguments: {
                   jql: config.jql,
                   limit: config.maxResults ?? 20,
-                  fields: "summary,status,reporter,updated",
+                  fields: "summary,status,reporter,assignee,updated",
                 },
               },
             });

@@ -413,7 +413,125 @@ test("jira-watch: the mention comes first, so the person is pinged before the de
   assert.doesNotMatch(notice[0].text, /@13800001111 /, "no space right after the mention, or it does not match");
   assert.equal(
     notice[0].text,
-    "@13800001111\nOPS-12 数据库慢查询 https://jira.example.com/browse/OPS-12\n状态：In Progress",
-    "the message reads as the mention, the case with a link to it, and its status",
+    "@13800001111\nOPS-12 数据库慢查询\nhttps://jira.example.com/browse/OPS-12\n状态：In Progress",
+    "the message reads as the mention, the case, its address, and its status",
   );
+});
+
+test("jira-watch: the assignee is pinged when the map knows them, and the creator when it does not", () => {
+  const dir = mkdtempSync(join(scratch, "notify-assignee-"));
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({
+      "zhang.san@example.com": { name: "张三", mention: "13800001111" },
+      "li.si@example.com": { name: "李四", mention: "13900002222" },
+    }),
+  );
+  const event = (id: string, detail: Record<string, string>) => ({
+    id,
+    type: "jira.updated",
+    subject: "OPS-12",
+    summary: "数据库慢查询",
+    detail: JSON.stringify({ status: "In Progress", url: "https://jira.example.com/browse/OPS-12", ...detail }),
+    link: "https://jira.example.com/browse/OPS-12",
+  });
+  const events = [
+    // Both known: the assignee gets the mention, since they are the one working on it.
+    event("OPS-12:t1", {
+      reporter_email: "zhang.san@example.com",
+      reporter_name: "Zhang San",
+      assignee_email: "li.si@example.com",
+      assignee_name: "Li Si",
+    }),
+    // The assignee is not in the map: the creator is mentioned instead.
+    event("OPS-13:t1", {
+      reporter_email: "zhang.san@example.com",
+      reporter_name: "Zhang San",
+      assignee_email: "unknown@example.com",
+      assignee_name: "Unknown",
+    }),
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@13900002222/, "the assignee is pinged");
+  assert.match(notice[1].text, /^@13800001111/, "without a mapped assignee the creator is pinged");
+});
+
+test("jira-watch: a mapped assignee with no id to mention falls back to the creator", () => {
+  const dir = mkdtempSync(join(scratch, "notify-fallback-"));
+  // The assignee is in the map but has no phone yet, so there is nothing to mention them by.
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({
+      "zhang.san@example.com": { name: "张三", mention: "13800001111" },
+      "li.si@example.com": { name: "李四" },
+    }),
+  );
+  const events = [
+    {
+      id: "OPS-12:t1",
+      type: "jira.updated",
+      subject: "OPS-12",
+      summary: "数据库慢查询",
+      detail: JSON.stringify({
+        status: "In Progress",
+        reporter_email: "zhang.san@example.com",
+        assignee_email: "li.si@example.com",
+        url: "https://jira.example.com/browse/OPS-12",
+      }),
+      link: "https://jira.example.com/browse/OPS-12",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@13800001111/, "the creator is pinged instead of the assignee");
+});
+
+test("jira-watch: a person is found even when Jira and the map use different email domains", () => {
+  const dir = mkdtempSync(join(scratch, "notify-domain-"));
+  // The map has the cn domain, Jira reports the plain one.
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({ "seow.xiao@cn.shijigroup.com": { name: "肖雅妮", mention: "15874186532" } }),
+  );
+  const events = [
+    {
+      id: "OPS-12:t1",
+      type: "jira.updated",
+      subject: "OPS-12",
+      summary: "数据库慢查询",
+      detail: JSON.stringify({
+        status: "In Progress",
+        reporter_email: "seow.xiao@shijigroup.com",
+        reporter_account: "seow.xiao@cn.shijigroup.com",
+        reporter_name: "Seow Xiao",
+        url: "https://jira.example.com/browse/OPS-12",
+      }),
+      link: "https://jira.example.com/browse/OPS-12",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@15874186532/, "the person is found across email domains");
 });
