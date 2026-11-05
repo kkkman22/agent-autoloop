@@ -54,6 +54,7 @@
       },
       "to": "jira-notifier",
       "cwd": "~/.agent-autoloop/work/jira-watch",
+      "tell": "always",
       "parallel": 5
     }
   ],

@@ -279,6 +279,59 @@ test("jira-watch: Jira's own complaint fails the run, but an unreachable Jira en
   assert.equal(resultFrom(readMessage(quiet.said), {}).result.outcome, "nothing");
 });
 
+test("jira-watch: the MCP and everything it started go down with the run", async () => {
+  // The server runs as a child of the launcher, so killing only the launcher leaves the server behind.
+  const dir = mkdtempSync(join(scratch, "jira-group-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(join(dir, "issues.json"), JSON.stringify({ total: 0, issues: [] }));
+  const marker = join(dir, "grandchild.pid");
+  // A launcher that starts a child of its own, the way uvx starts the MCP server.
+  writeFileSync(
+    join(dir, "launcher.cjs"),
+    `const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const child = spawn(process.execPath, [process.argv[2]], { stdio: "inherit" });
+fs.writeFileSync(process.argv[3], String(child.pid));
+process.on("SIGTERM", () => { child.kill(); process.exit(0); });
+child.on("exit", (code) => process.exit(code ?? 0));
+`,
+  );
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "launcher.cjs"), join(dir, "mcp.cjs"), marker],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      now: "2026-11-05T10:00:00+08:00",
+    }),
+  );
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-11-05": { is_holiday: 0, week: 4, name: "周四" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const grandchild = Number(readFileSync(marker, "utf8").trim());
+  assert.ok(grandchild > 0, "the launcher started a child of its own");
+  // The child may take a moment to go away; the point is that it is not left running.
+  let alive = true;
+  for (let tries = 0; tries < 20 && alive; tries++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      process.kill(grandchild, 0);
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false, "the server under the launcher is gone too");
+});
+
 test("jira-watch: the watcher asks the configured JQL and hands back stable events the rules let in", () => {
   // The shape mcp-atlassian really returns: a wrapper with total/start_at/max_results/issues, fields flattened.
   const { said, asked } = jiraWatch({
@@ -673,6 +726,7 @@ test("jira-watch: a backend case pings the reporter and the developer of its lin
         reporter_email: "zhang.san@example.com",
         reporter_name: "Zhang San",
         linked_fe_key: "OPS-11",
+        linked_fe_url: "https://jira.example.com/browse/OPS-11",
         linked_fe_assignee_email: "li.si@example.com",
         linked_fe_assignee_name: "Li Si",
         url: "https://jira.example.com/browse/OPS-12",
@@ -692,6 +746,7 @@ test("jira-watch: a backend case pings the reporter and the developer of its lin
   assert.match(notice[0].text, /^@13800001111/, "the reporter is mentioned first");
   assert.match(notice[0].text, /@13900002222/, "and the developer of the linked frontend case");
   assert.match(notice[0].text, /OPS-11/, "the message names the linked frontend case");
+  assert.match(notice[0].text, /https:\/\/jira\.example\.com\/browse\/OPS-11/, "and where that case is");
 });
 
 test("jira-watch: a frontend case pings only its reporter", () => {
@@ -749,6 +804,7 @@ test("jira-watch: someone the map does not carry is named in words, not pinged",
         components: ["API-H5"],
         reporter_email: "zhang.san@example.com",
         linked_fe_key: "OPS-11",
+        linked_fe_url: "https://jira.example.com/browse/OPS-11",
         linked_fe_assignee_email: "li.si@example.com",
         linked_fe_assignee_name: "Li Si",
         url: "https://jira.example.com/browse/OPS-12",

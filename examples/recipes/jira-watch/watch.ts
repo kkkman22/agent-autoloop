@@ -76,6 +76,7 @@ function eventFrom(issue: Issue, linked: Linked) {
     reporter_email: String(reporter.email ?? "").slice(0, 200),
     // The frontend case this one belongs to, and who works on it.
     linked_fe_key: linked.key.slice(0, 40),
+    linked_fe_url: linked.url.slice(0, 500),
     linked_fe_assignee_name: linked.assigneeName.slice(0, 100),
     linked_fe_assignee_email: linked.assigneeEmail.slice(0, 200),
     updated: issue.updated.slice(0, 40),
@@ -92,7 +93,7 @@ function eventFrom(issue: Issue, linked: Linked) {
   };
 }
 
-type Linked = { key: string; assigneeName: string; assigneeEmail: string };
+type Linked = { key: string; url: string; assigneeName: string; assigneeEmail: string };
 
 function readEnv(file?: string): Record<string, string> {
   if (!file) return {};
@@ -123,6 +124,8 @@ class Mcp {
     this.child = spawn(command[0], command.slice(1), {
       env: { ...process.env, ...env },
       stdio: ["pipe", "pipe", "pipe"],
+      // Its own group, so the whole tree goes down with it: uvx runs the server as a child of its own.
+      detached: true,
     });
     // The first run may download the MCP's own dependencies, so the clock starts when the handshake answers.
     this.timeout = timeoutSeconds * 1000;
@@ -198,7 +201,12 @@ class Mcp {
 
   stop() {
     if (this.timer) clearTimeout(this.timer);
-    this.child.kill();
+    // The whole group, not just the one process: the server under uvx would otherwise stay behind.
+    try {
+      process.kill(-this.child.pid!, "SIGTERM");
+    } catch {
+      this.child.kill();
+    }
   }
 }
 
@@ -209,7 +217,7 @@ class Mcp {
  * and steadier than reading the links off the issue: the issue's own link field is not always readable.
  */
 async function findLinkedFrontend(mcp: Mcp, issue: Issue, frontendComponent: string, reporterEmail: string) {
-  const linked: Linked = { key: "", assigneeName: "", assigneeEmail: "" };
+  const linked: Linked = { key: "", url: "", assigneeName: "", assigneeEmail: "" };
   const text = await mcp.call("jira_search", {
     jql: `issue in linkedIssues("${issue.key}")`,
     limit: 10,
@@ -220,6 +228,7 @@ async function findLinkedFrontend(mcp: Mcp, issue: Issue, frontendComponent: str
     // The tester files one case for the frontend and one for the backend, so the pair shares its reporter.
     if (reporterEmail && other.reporter?.email && other.reporter.email !== reporterEmail) continue;
     linked.key = other.key;
+    linked.url = other.browse_url;
     linked.assigneeName = String(other.assignee?.display_name ?? "");
     linked.assigneeEmail = String(other.assignee?.email ?? "");
     return linked;
@@ -265,6 +274,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const since = windowStart(lastCheckedAt, now, timezone, firstRunAt);
 
     const mcp = new Mcp(config.mcp, readEnv(config.envFile), config.timeoutSeconds ?? 120);
+    // A stop signal has to take the MCP down with it, or its server is left running on this machine.
+    const stop = () => {
+      mcp.stop();
+      process.exit(0);
+    };
+    process.on("SIGTERM", stop);
+    process.on("SIGINT", stop);
     try {
       await mcp.start();
       const project = config.project ?? "";
@@ -293,7 +309,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const events = [];
       for (const issue of issues) {
         if (!issue.key) continue;
-        let linked: Linked = { key: "", assigneeName: "", assigneeEmail: "" };
+        let linked: Linked = { key: "", url: "", assigneeName: "", assigneeEmail: "" };
         // A backend case points at the frontend case that goes with it.
         if ((issue.components ?? []).includes(backend)) {
           try {

@@ -62,8 +62,8 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
   const mentions = [...new Set([mentionOf(reporter), isBackend ? mentionOf(frontend) : ""].filter(Boolean))];
   const name = reporter?.name || text_("reporter_name") || "（没有映射）";
   const title = `[${event.subject}] ${event.summary}`.slice(0, 80);
-  // @ 写在最前面，紧贴那个人的标识；钉钉要靠正文里的这段文字认出被提醒的人。
-  // case 的地址单独一行，钉钉把纯链接认成可点的跳转。
+  // The mention is written the way the group knows the person, so the message reads as their name.
+  // Each address is on its own line: the case, and the frontend case that goes with it.
   const text = [
     mentions.join(" "),
     `${event.subject} ${event.summary}`,
@@ -74,6 +74,7 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
           text_("linked_fe_assignee_name") ? `（经办人 ${text_("linked_fe_assignee_name")}）` : ""
         }`
       : "",
+    isBackend && text_("linked_fe_url") ? text_("linked_fe_url") : "",
     isBackend && !text_("linked_fe_key") ? "关联前端 case：没有找到" : "",
   ]
     .filter(Boolean)
