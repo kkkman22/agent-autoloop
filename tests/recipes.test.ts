@@ -8,7 +8,7 @@
 // never carried.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -210,7 +210,7 @@ test("github-issues: the watcher's search is optional, and the rules use it to l
   assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
 });
 
-// Stands in for the local jira MCP: answers the stdio handshake and one jira_search, so the watcher's own client runs.
+// Stands in for the local jira MCP: answers the stdio handshake, the main jira_search, and the search for linked cases.
 const FAKE_MCP = `const fs = require("node:fs");
 const readline = require("node:readline");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
@@ -223,10 +223,20 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     if (process.env.MCP_DIES) process.exit(1);
     say({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: fs.readFileSync(process.env.MCP_ISSUES, "utf8") }] } });
   }
+  if (message.id >= 3) {
+    const argument = message.params.arguments;
+    fs.appendFileSync(process.env.MCP_LOG, JSON.stringify(argument) + "\\n");
+    const store = JSON.parse(fs.readFileSync(process.env.MCP_ISSUES, "utf8"));
+    // The search for linked cases asks for one issue by key and gets the case that goes with it.
+    const linked = /linkedIssues\\("([^"]+)"\\)/.exec(argument.jql ?? "");
+    const one = linked ? store["linked:" + linked[1]] : null;
+    const text = one ? JSON.stringify({ total: 1, issues: [one] }) : JSON.stringify({ total: 0, issues: [] });
+    say({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text }] } });
+  }
 });
 `;
 
-function jiraWatch(issues: unknown, expectFailure = false, dies = false) {
+function jiraWatch(issues: unknown, expectFailure = false, dies = false, extra: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(scratch, "jira-"));
   writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
   writeFileSync(join(dir, "issues.json"), typeof issues === "string" ? issues : JSON.stringify(issues));
@@ -234,9 +244,11 @@ function jiraWatch(issues: unknown, expectFailure = false, dies = false) {
     join(dir, "jira.json"),
     JSON.stringify({
       mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
       jql: "project = OPS AND updated >= '-20m'",
       maxResults: 5,
       timeoutSeconds: 30,
+      ...extra,
     }),
   );
   const done = spawnSync(
@@ -253,7 +265,7 @@ function jiraWatch(issues: unknown, expectFailure = false, dies = false) {
     },
   );
   assert.equal(done.status, expectFailure ? 1 : 0, done.stderr);
-  return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8") };
+  return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8"), dir };
 }
 
 test("jira-watch: Jira's own complaint fails the run, but an unreachable Jira ends quietly", () => {
@@ -301,7 +313,6 @@ test("jira-watch: the watcher asks the configured JQL and hands back stable even
   const lines = asked.trim().split("\n");
   assert.match(lines[0], /initialized/);
   const askedMcp = JSON.parse(lines[1]);
-  assert.equal(askedMcp.jql, "project = OPS AND updated >= '-20m'");
   assert.equal(askedMcp.limit, 5);
   const { result, problem } = resultFrom(readMessage(said), {});
   assert.equal(problem, undefined);
@@ -325,6 +336,116 @@ test("jira-watch: the watcher asks the configured JQL and hands back stable even
     assert.ok(handler.when.types.includes(type));
   }
   assert.equal(handler.when.source, watcher.emits.source);
+});
+
+test("jira-watch: the query asks for the cases that turned Testing in the window, and only those", () => {
+  const { asked } = jiraWatch({ total: 0, issues: [] });
+  const jql = JSON.parse(asked.trim().split("\n")[1]).jql;
+  assert.match(jql, /project = OPS/);
+  assert.match(jql, /status CHANGED TO "Testing"/);
+  assert.match(jql, /status = "Testing"/, "the current status filters out cases that moved on");
+  assert.match(jql, /sprint in openSprints\(\)/);
+  assert.match(jql, /AFTER/, "the window comes from the cursor");
+});
+
+test("jira-watch: a day off is skipped before anything is asked of Jira", () => {
+  const dir = mkdtempSync(join(scratch, "jira-off-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(join(dir, "issues.json"), JSON.stringify({ total: 0, issues: [] }));
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      holidaysUrl: "https://holiday.invalid/allyear",
+      now: "2026-11-07T10:00:00+08:00",
+    }),
+  );
+  // A Saturday in the holiday file: nobody works, so nothing is asked and nothing is sent.
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-11-07": { is_holiday: 1, week: 6, name: "周六" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  assert.equal(resultFrom(readMessage(done.stdout), {}).result.outcome, "nothing");
+  assert.equal(existsSync(join(dir, "log")), false, "Jira is not even asked on a day off");
+});
+
+test("jira-watch: a make-up workday runs even though it is a weekend", () => {
+  const dir = mkdtempSync(join(scratch, "jira-makeup-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(join(dir, "issues.json"), JSON.stringify({ total: 0, issues: [] }));
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      holidaysUrl: "https://holiday.invalid/allyear",
+      now: "2026-01-04T10:00:00+08:00",
+    }),
+  );
+  // A Sunday the calendar says is a working day: it runs.
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-01-04": { is_holiday: 0, week: 7, name: "元旦节（班）" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(readFileSync(join(dir, "log"), "utf8"), /jira_search|"jql"/, "a make-up workday asks Jira");
+});
+
+test("jira-watch: the window is what the last run reached, and the cursor moves on", () => {
+  const dir = mkdtempSync(join(scratch, "jira-cursor-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(join(dir, "issues.json"), JSON.stringify({ total: 0, issues: [] }));
+  const cursor = join(dir, "cursor.json");
+  writeFileSync(cursor, JSON.stringify({ lastCheckedAt: "2026-11-04T18:00:00+08:00" }));
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      cursorFile: cursor,
+      now: "2026-11-05T09:00:00+08:00",
+    }),
+  );
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-11-05": { is_holiday: 0, week: 4, name: "周四" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const jql = JSON.parse(readFileSync(join(dir, "log"), "utf8").trim().split("\n")[1]).jql;
+  assert.match(jql, /2026-11-04 18:00/, "the window starts where the last run stopped");
+  assert.doesNotMatch(jql, /2026-11-05 09:00/, "the window ends before this run, not at it");
+  const moved = JSON.parse(readFileSync(cursor, "utf8"));
+  assert.equal(
+    moved.lastCheckedAt,
+    new Date("2026-11-05T09:00:00+08:00").toISOString(),
+    "the cursor moves to this run",
+  );
 });
 
 test("jira-watch: the notifier mentions only creators the local map carries", () => {
@@ -378,6 +499,119 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   assert.notEqual(notice[0].key, notice[1].key);
 });
 
+test("jira-watch: a backend case finds its linked frontend case and who works on it", () => {
+  const dir = mkdtempSync(join(scratch, "jira-linked-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  // The search result and the two issues the watcher asks for by key.
+  writeFileSync(
+    join(dir, "issues.json"),
+    JSON.stringify({
+      total: 1,
+      issues: [
+        {
+          key: "OPS-12",
+          summary: "预订接口报错",
+          browse_url: "https://jira.example.com/browse/OPS-12",
+          status: { name: "Testing" },
+          components: ["API-H5"],
+          reporter: { display_name: "Zhang San", name: "zhang.san@cn.example.com", email: "zhang.san@example.com" },
+          updated: "2026-11-05 09:30:16 CST",
+        },
+      ],
+      // The frontend case that goes with it, as Jira's own linked-case search returns it.
+      "linked:OPS-12": {
+        key: "OPS-11",
+        summary: "预订页报错",
+        browse_url: "https://jira.example.com/browse/OPS-11",
+        status: { name: "待办" },
+        components: ["H5"],
+        reporter: { display_name: "Zhang San", name: "zhang.san@cn.example.com", email: "zhang.san@example.com" },
+        assignee: { display_name: "Li Si", name: "li.si@cn.example.com", email: "li.si@example.com" },
+        updated: "2026-11-05 09:00:00 CST",
+      },
+    }),
+  );
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      now: "2026-11-05T10:00:00+08:00",
+    }),
+  );
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-11-05": { is_holiday: 0, week: 4, name: "周四" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const events = resultFrom(readMessage(done.stdout), {}).result.events!;
+  assert.equal(events.length, 1);
+  const detail = JSON.parse(events[0].detail);
+  assert.deepEqual(detail.components, ["API-H5"]);
+  assert.equal(detail.linked_fe_key, "OPS-11", "the linked frontend case is found");
+  assert.equal(detail.linked_fe_assignee_email, "li.si@example.com", "and who works on it");
+});
+
+test("jira-watch: a backend case with no linked frontend case says so instead of guessing", () => {
+  const dir = mkdtempSync(join(scratch, "jira-unlinked-"));
+  writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
+  writeFileSync(
+    join(dir, "issues.json"),
+    JSON.stringify({
+      total: 1,
+      issues: [
+        {
+          key: "OPS-12",
+          summary: "预订接口报错",
+          browse_url: "https://jira.example.com/browse/OPS-12",
+          status: { name: "Testing" },
+          components: ["API-H5"],
+          reporter: { display_name: "Zhang San", name: "zhang.san@cn.example.com", email: "zhang.san@example.com" },
+          updated: "2026-11-05 09:30:16 CST",
+        },
+      ],
+      "OPS-12": {
+        key: "OPS-12",
+        components: ["API-H5"],
+        status: { name: "Testing" },
+        reporter: { display_name: "Zhang San", name: "zhang.san@cn.example.com", email: "zhang.san@example.com" },
+        updated: "2026-11-05 09:30:16 CST",
+      },
+    }),
+  );
+  writeFileSync(
+    join(dir, "jira.json"),
+    JSON.stringify({
+      mcp: [process.execPath, join(dir, "mcp.cjs")],
+      project: "OPS",
+      maxResults: 5,
+      timeoutSeconds: 30,
+      holidaysFile: join(dir, "holidays.json"),
+      now: "2026-11-05T10:00:00+08:00",
+    }),
+  );
+  writeFileSync(
+    join(dir, "holidays.json"),
+    JSON.stringify({ 2026: { "2026-11-05": { is_holiday: 0, week: 4, name: "周四" } } }),
+  );
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
+    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const detail = JSON.parse(resultFrom(readMessage(done.stdout), {}).result.events![0].detail);
+  assert.equal(detail.linked_fe_key, "", "no linked frontend case, so nobody is named");
+});
+
 test("jira-watch: the mention comes first, so the person is pinged before the details", () => {
   const dir = mkdtempSync(join(scratch, "notify-first-"));
   writeFileSync(
@@ -418,8 +652,8 @@ test("jira-watch: the mention comes first, so the person is pinged before the de
   );
 });
 
-test("jira-watch: the assignee is pinged when the map knows them, and the creator when it does not", () => {
-  const dir = mkdtempSync(join(scratch, "notify-assignee-"));
+test("jira-watch: a backend case pings the reporter and the developer of its linked frontend case", () => {
+  const dir = mkdtempSync(join(scratch, "notify-backend-"));
   writeFileSync(
     join(dir, "users.json"),
     JSON.stringify({
@@ -427,63 +661,20 @@ test("jira-watch: the assignee is pinged when the map knows them, and the creato
       "li.si@example.com": { name: "李四", mention: "13900002222" },
     }),
   );
-  const event = (id: string, detail: Record<string, string>) => ({
-    id,
-    type: "jira.updated",
-    subject: "OPS-12",
-    summary: "数据库慢查询",
-    detail: JSON.stringify({ status: "In Progress", url: "https://jira.example.com/browse/OPS-12", ...detail }),
-    link: "https://jira.example.com/browse/OPS-12",
-  });
-  const events = [
-    // Both known: the assignee gets the mention, since they are the one working on it.
-    event("OPS-12:t1", {
-      reporter_email: "zhang.san@example.com",
-      reporter_name: "Zhang San",
-      assignee_email: "li.si@example.com",
-      assignee_name: "Li Si",
-    }),
-    // The assignee is not in the map: the creator is mentioned instead.
-    event("OPS-13:t1", {
-      reporter_email: "zhang.san@example.com",
-      reporter_name: "Zhang San",
-      assignee_email: "unknown@example.com",
-      assignee_name: "Unknown",
-    }),
-  ];
-  const contextFile = join(dir, "context.json");
-  writeFileSync(contextFile, JSON.stringify({ events }));
-  const done = spawnSync(
-    process.execPath,
-    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
-    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
-  );
-  assert.equal(done.status, 0, done.stderr);
-  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
-  assert.match(notice[0].text, /^@13900002222/, "the assignee is pinged");
-  assert.match(notice[1].text, /^@13800001111/, "without a mapped assignee the creator is pinged");
-});
-
-test("jira-watch: a mapped assignee with no id to mention falls back to the creator", () => {
-  const dir = mkdtempSync(join(scratch, "notify-fallback-"));
-  // The assignee is in the map but has no phone yet, so there is nothing to mention them by.
-  writeFileSync(
-    join(dir, "users.json"),
-    JSON.stringify({
-      "zhang.san@example.com": { name: "张三", mention: "13800001111" },
-      "li.si@example.com": { name: "李四" },
-    }),
-  );
   const events = [
     {
       id: "OPS-12:t1",
       type: "jira.updated",
       subject: "OPS-12",
-      summary: "数据库慢查询",
+      summary: "预订接口报错",
       detail: JSON.stringify({
-        status: "In Progress",
+        status: "Testing",
+        components: ["API-H5"],
         reporter_email: "zhang.san@example.com",
-        assignee_email: "li.si@example.com",
+        reporter_name: "Zhang San",
+        linked_fe_key: "OPS-11",
+        linked_fe_assignee_email: "li.si@example.com",
+        linked_fe_assignee_name: "Li Si",
         url: "https://jira.example.com/browse/OPS-12",
       }),
       link: "https://jira.example.com/browse/OPS-12",
@@ -498,7 +689,85 @@ test("jira-watch: a mapped assignee with no id to mention falls back to the crea
   );
   assert.equal(done.status, 0, done.stderr);
   const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
-  assert.match(notice[0].text, /^@13800001111/, "the creator is pinged instead of the assignee");
+  assert.match(notice[0].text, /^@13800001111/, "the reporter is mentioned first");
+  assert.match(notice[0].text, /@13900002222/, "and the developer of the linked frontend case");
+  assert.match(notice[0].text, /OPS-11/, "the message names the linked frontend case");
+});
+
+test("jira-watch: a frontend case pings only its reporter", () => {
+  const dir = mkdtempSync(join(scratch, "notify-frontend-"));
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({
+      "zhang.san@example.com": { name: "张三", mention: "13800001111" },
+      "li.si@example.com": { name: "李四", mention: "13900002222" },
+    }),
+  );
+  const events = [
+    {
+      id: "OPS-11:t1",
+      type: "jira.updated",
+      subject: "OPS-11",
+      summary: "预订页报错",
+      detail: JSON.stringify({
+        status: "Testing",
+        components: ["H5"],
+        reporter_email: "zhang.san@example.com",
+        reporter_name: "Zhang San",
+        url: "https://jira.example.com/browse/OPS-11",
+      }),
+      link: "https://jira.example.com/browse/OPS-11",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@13800001111/);
+  assert.doesNotMatch(notice[0].text, /@13900002222/, "a frontend case does not reach for the backend developer");
+});
+
+test("jira-watch: someone the map does not carry is named in words, not pinged", () => {
+  const dir = mkdtempSync(join(scratch, "notify-unmapped-"));
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({ "zhang.san@example.com": { name: "张三", mention: "13800001111" } }),
+  );
+  const events = [
+    {
+      id: "OPS-12:t1",
+      type: "jira.updated",
+      subject: "OPS-12",
+      summary: "预订接口报错",
+      detail: JSON.stringify({
+        status: "Testing",
+        components: ["API-H5"],
+        reporter_email: "zhang.san@example.com",
+        linked_fe_key: "OPS-11",
+        linked_fe_assignee_email: "li.si@example.com",
+        linked_fe_assignee_name: "Li Si",
+        url: "https://jira.example.com/browse/OPS-12",
+      }),
+      link: "https://jira.example.com/browse/OPS-12",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@13800001111/, "the reporter is pinged");
+  assert.doesNotMatch(notice[0].text, /@13900002222/, "the unmapped developer is not pinged");
+  assert.match(notice[0].text, /Li Si/, "but they are named so the reader knows who it is");
 });
 
 test("jira-watch: a person is found even when Jira and the map use different email domains", () => {

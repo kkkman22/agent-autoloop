@@ -1,7 +1,14 @@
 {
   "mcp": ["uvx", "mcp-atlassian==0.23.0"],
-  "jql": "project = DEMO AND updated >= '-20m' ORDER BY updated DESC",
+  "project": "CH",
+  "status": "Testing",
   "envFile": "jira.env",
-  "maxResults": 20,
-  "timeoutSeconds": 120
+  "maxResults": 50,
+  "timeoutSeconds": 120,
+  "timezone": "Asia/Shanghai",
+  "holidaysFile": "holidays.json",
+  "holidaysUrl": "https://holiday.ailcc.com/api/holiday/allyear",
+  "cursorFile": "cursor.json",
+  "componentFrontend": "H5",
+  "componentBackend": "API-H5"
 }

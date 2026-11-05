@@ -1,78 +1,103 @@
 {
   "king.zou@shijigroup.com": {
     "name": "邹聪聪",
-    "mention": "邹聪聪"
+    "role": "pm",
+    "mention": "15074982069"
   },
   "quinn.qiu@cn.shijigroup.com": {
     "name": "邱耀光",
-    "mention": "邱耀光"
+    "role": "fe",
+    "mention": "15802570451"
   },
   "peek.lin@shijigroup.com": {
     "name": "林登锋",
-    "mention": "林登锋"
+    "role": "fe",
+    "mention": "15200902252"
   },
   "jensen.qin@cn.shijigroup.com": {
     "name": "覃建成",
-    "mention": "覃建成"
+    "role": "fe",
+    "mention": "18273623911"
   },
   "alvin.long@cn.shijigroup.com": {
     "name": "龙涛",
-    "mention": "龙涛"
+    "role": "fe",
+    "mention": "18229481148"
   },
   "nolan.li@shijigroup.com": {
     "name": "李骆",
-    "mention": "李骆"
+    "role": "fe",
+    "mention": "18508432164"
   },
   "lucy.jiang@cn.shijigroup.com": {
     "name": "江向花",
-    "mention": "江向花"
+    "role": "fe",
+    "mention": "15096083904"
   },
   "jerremy.su@shijigroup.com": {
     "name": "苏旭道",
-    "mention": "苏旭道"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "potter.zhong@shijigroup.com": {
     "name": "钟舒钦",
-    "mention": "钟舒钦"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "spring.li@cn.shijigroup.com": {
     "name": "李世春",
-    "mention": "李世春"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "zack.liu@cn.shijigroup.com": {
     "name": "刘劲",
-    "mention": "刘劲"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "ryder.lai@cn.shijigroup.com": {
     "name": "赖永林",
-    "mention": "赖永林"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "chaney.liu@shijigroup.com": {
     "name": "刘存礼",
-    "mention": "刘存礼"
+    "role": "be",
+    "mention": "",
+    "confirmed": false
   },
   "seow.xiao@cn.shijigroup.com": {
     "name": "肖雅妮",
-    "mention": "肖雅妮"
+    "role": "tester",
+    "mention": "15874186532"
   },
   "abby.song@shijigroup.com": {
     "name": "宋双双",
-    "mention": "宋双双"
+    "role": "tester",
+    "mention": "19252626394"
   },
   "lain.zhu@cn.shijigroup.com": {
     "name": "朱江",
-    "mention": "朱江"
+    "role": "tester",
+    "mention": "17388915626"
   },
   "jane.long@cn.shijigroup.com": {
     "name": "龙玉清",
-    "mention": "龙玉清"
+    "role": "tester",
+    "mention": "15727576786"
   },
   "blake.tan@shijigroup.com": {
     "name": "谭艳波",
-    "mention": "谭艳波"
+    "role": "tester",
+    "mention": "15573285640"
   },
   "gruby.wang@cn.shijigroup.com": {
     "name": "王亮",
-    "mention": "Gruby.Wang"
+    "role": "dev",
+    "mention": "17673053536"
   }
 }

@@ -21,9 +21,22 @@
   },
   "rules": [
     {
-      "name": "看 Jira 更新",
+      "name": "看 Jira 上午的更新",
       "when": {
-        "cron": "*/15 * * * *"
+        "cron": "0 9-12 * * *"
+      },
+      "to": "jira-watcher",
+      "cwd": "~/.agent-autoloop/work/jira-watch",
+      "tell": "never",
+      "emits": {
+        "source": "jira",
+        "types": ["jira.updated"]
+      }
+    },
+    {
+      "name": "看 Jira 下午的更新",
+      "when": {
+        "cron": "30 13-17 * * *"
       },
       "to": "jira-watcher",
       "cwd": "~/.agent-autoloop/work/jira-watch",
