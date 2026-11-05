@@ -413,7 +413,7 @@ test("jira-watch: the mention comes first, so the person is pinged before the de
   assert.doesNotMatch(notice[0].text, /@13800001111 /, "no space right after the mention, or it does not match");
   assert.equal(
     notice[0].text,
-    "@13800001111\nOPS-12 数据库慢查询\n状态：In Progress",
-    "the message reads as the mention, the case, and its status",
+    "@13800001111\nOPS-12 数据库慢查询 https://jira.example.com/browse/OPS-12\n状态：In Progress",
+    "the message reads as the mention, the case with a link to it, and its status",
   );
 });

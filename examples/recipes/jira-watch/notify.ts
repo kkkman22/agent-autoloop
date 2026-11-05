@@ -54,8 +54,14 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
   const who = findUser(detail, users);
   const mention = mentionOf(who);
   const title = `[${event.subject}] ${event.summary}`.slice(0, 80);
+  const link = detail.url || event.link || "";
   // @ 写在最前面，紧贴那个人的标识；钉钉要靠正文里的这段文字认出被提醒的人。
-  const text = [mention, `${event.subject} ${event.summary}`, `状态：${detail.status || "未知"}`]
+  // case 后面跟着它的地址，钉钉把纯链接认成可点的跳转。
+  const text = [
+    mention,
+    `${event.subject} ${event.summary}${link ? ` ${link}` : ""}`,
+    `状态：${detail.status || "未知"}`,
+  ]
     .filter(Boolean)
     .join("\n");
   return { key: `jira-${event.id}`.slice(0, 200), title, text };
