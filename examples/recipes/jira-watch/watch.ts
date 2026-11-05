@@ -339,10 +339,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
-    // The MCP answered but Jira complained (bad JQL, dead token): the owner has to fix it, so the run fails and shows.
-    // The MCP never answered (it didn't start, crashed, timed out): transient, so the run ends quietly and the next
-    // cron tick tries again — failing here would send the hub into a retry storm over what the cron re-checks anyway.
-    if (why.startsWith("Jira 说：")) {
+    // A wrong JQL or a dead token is the owner's to fix: the run fails and shows, so it is not missed.
+    // Everything else — the server's own hiccup, the MCP not starting, a timeout — is transient: the run ends
+    // quietly and the next cron tick tries again, because failing would send the hub into a retry storm.
+    const mine = /does not exist|Unauthorized|Forbidden|401|403|token|凭据|令牌|密钥/i.test(why);
+    if (why.startsWith("Jira 说：") && mine) {
       console.log(`没跑成：${why}`);
       console.error(why);
       process.exit(1);

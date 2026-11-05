@@ -70,7 +70,7 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
     `${event.subject} ${event.summary}`,
     text_("url") || event.link || "",
     `状态：${text_("status") || "未知"}`,
-    isBackend && text_("linked_fe_key") ? "———" : "",
+    isBackend && text_("linked_fe_key") ? "———————————————" : "",
     isBackend && text_("linked_fe_key")
       ? `关联前端 case：${text_("linked_fe_key")}${
           text_("linked_fe_assignee_name") ? `（经办人 ${text_("linked_fe_assignee_name")}）` : ""

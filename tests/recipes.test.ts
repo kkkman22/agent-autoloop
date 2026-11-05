@@ -279,6 +279,15 @@ test("jira-watch: Jira's own complaint fails the run, but an unreachable Jira en
   assert.equal(resultFrom(readMessage(quiet.said), {}).result.outcome, "nothing");
 });
 
+test("jira-watch: a Jira server that drops the connection is a hiccup, not a broken setup", () => {
+  // The server's own TLS hiccup says nothing about the setup, so it must not fail the run.
+  const hiccup = jiraWatch(
+    "Error calling tool 'search': Error searching issues: _PinnedHTTPSConnectionPool(host='jira.example.com', port=443): Max retries exceeded (Caused by SSLError(8, 'UNEXPECTED_EOF_WHILE_READING'))",
+  );
+  assert.equal(resultFrom(readMessage(hiccup.said), {}).result.outcome, "nothing");
+  assert.match(hiccup.said, /没事可做/);
+});
+
 test("jira-watch: the MCP and everything it started go down with the run", async () => {
   // The server runs as a child of the launcher, so killing only the launcher leaves the server behind.
   const dir = mkdtempSync(join(scratch, "jira-group-"));
@@ -748,7 +757,7 @@ test("jira-watch: a backend case pings the reporter and the developer of its lin
   assert.match(notice[0].text, /@13900002222/, "and the developer of the linked frontend case");
   assert.match(notice[0].text, /OPS-11/, "the message names the linked frontend case");
   assert.match(notice[0].text, /https:\/\/jira\.example\.com\/browse\/OPS-11/, "and where that case is");
-  assert.match(notice[0].text, /———/, "a line separates the two cases");
+  assert.match(notice[0].text, /———————————————/, "a line separates the two cases");
   assert.match(notice[0].text, /状态：待办/, "the linked case carries its own status");
 });
 
