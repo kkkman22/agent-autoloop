@@ -1,21 +1,93 @@
 {
-  "king.zou@shijigroup.com": { "name": "邹聪聪", "userid": "king.zou" },
-  "quinn.qiu@cn.shijigroup.com": { "name": "邱耀光", "userid": "quinn.qiu" },
-  "peek.lin@shijigroup.com": { "name": "林登锋", "userid": "peek.lin" },
-  "jensen.qin@cn.shijigroup.com": { "name": "覃建成", "userid": "jensen.qin" },
-  "alvin.long@cn.shijigroup.com": { "name": "龙涛", "userid": "alvin.long" },
-  "nolan.li@shijigroup.com": { "name": "李骆", "userid": "nolan.li" },
-  "lucy.jiang@cn.shijigroup.com": { "name": "江向花", "userid": "lucy.jiang" },
-  "jerremy.su@shijigroup.com": { "name": "苏旭道", "userid": "jerremy.su" },
-  "potter.zhong@shijigroup.com": { "name": "钟舒钦", "userid": "potter.zhong" },
-  "spring.li@cn.shijigroup.com": { "name": "李世春", "userid": "spring.li" },
-  "zack.liu@cn.shijigroup.com": { "name": "刘劲", "userid": "zack.liu" },
-  "ryder.lai@cn.shijigroup.com": { "name": "赖永林", "userid": "ryder.lai" },
-  "chaney.liu@shijigroup.com": { "name": "刘存礼", "userid": "chaney.liu" },
-  "seow.xiao@cn.shijigroup.com": { "name": "肖雅妮", "userid": "seow.xiao" },
-  "abby.song@shijigroup.com": { "name": "宋双双", "userid": "abby.song" },
-  "lain.zhu@cn.shijigroup.com": { "name": "朱江", "userid": "lain.zhu" },
-  "jane.long@cn.shijigroup.com": { "name": "龙玉清", "userid": "jane.long" },
-  "blake.tan@shijigroup.com": { "name": "谭艳波", "userid": "blake.tan" },
-  "gruby.wang@cn.shijigroup.com": { "name": "王亮", "userid": "gruby.wang" }
+  "king.zou@shijigroup.com": {
+    "name": "邹聪聪",
+    "userid": "drgn12n"
+  },
+  "quinn.qiu@cn.shijigroup.com": {
+    "name": "邱耀光",
+    "userid": "quinn.qiu",
+    "confirmed": false
+  },
+  "peek.lin@shijigroup.com": {
+    "name": "林登锋",
+    "userid": "rycxnw4"
+  },
+  "jensen.qin@cn.shijigroup.com": {
+    "name": "覃建成",
+    "userid": "jensen.qin",
+    "confirmed": false
+  },
+  "alvin.long@cn.shijigroup.com": {
+    "name": "龙涛",
+    "userid": "alvin.long",
+    "confirmed": false
+  },
+  "nolan.li@shijigroup.com": {
+    "name": "李骆",
+    "userid": "nolan.li",
+    "confirmed": false
+  },
+  "lucy.jiang@cn.shijigroup.com": {
+    "name": "江向花",
+    "userid": "lucy.jiang",
+    "confirmed": false
+  },
+  "jerremy.su@shijigroup.com": {
+    "name": "苏旭道",
+    "userid": "jerremy.su",
+    "confirmed": false
+  },
+  "potter.zhong@shijigroup.com": {
+    "name": "钟舒钦",
+    "userid": "potter.zhong",
+    "confirmed": false
+  },
+  "spring.li@cn.shijigroup.com": {
+    "name": "李世春",
+    "userid": "spring.li",
+    "confirmed": false
+  },
+  "zack.liu@cn.shijigroup.com": {
+    "name": "刘劲",
+    "userid": "zack.liu",
+    "confirmed": false
+  },
+  "ryder.lai@cn.shijigroup.com": {
+    "name": "赖永林",
+    "userid": "ryder.lai",
+    "confirmed": false
+  },
+  "chaney.liu@shijigroup.com": {
+    "name": "刘存礼",
+    "userid": "chaney.liu",
+    "confirmed": false
+  },
+  "seow.xiao@cn.shijigroup.com": {
+    "name": "肖雅妮",
+    "userid": "seow.xiao",
+    "confirmed": false
+  },
+  "abby.song@shijigroup.com": {
+    "name": "宋双双",
+    "userid": "ssdouble"
+  },
+  "lain.zhu@cn.shijigroup.com": {
+    "name": "朱江",
+    "userid": "lain.zhu",
+    "confirmed": false
+  },
+  "jane.long@cn.shijigroup.com": {
+    "name": "龙玉清",
+    "userid": "jane.long",
+    "confirmed": false
+  },
+  "blake.tan@shijigroup.com": {
+    "name": "谭艳波",
+    "userid": "blake.tan",
+    "confirmed": false
+  },
+  "gruby.wang@cn.shijigroup.com": {
+    "name": "王亮",
+    "userid": "vivawl"
+  }
 }

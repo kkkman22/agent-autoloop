@@ -103,7 +103,8 @@ chmod 600 jira.env
 
 - 同一人的邮箱可能有两个域（`@shijigroup.com` 和 `@cn.shijigroup.com`），脚本两个都会试，映射表写哪个都行。
 - 没有 `userid` 只有 `mobile` 时走手机号 @；两个都没有就只发文字、不 @ 人。
-- 本目录的 `users.example.json` 是一份按公司名单填好的样例，照它改。
+- 本目录的 `users.example.json` 是按公司名单填好的样例：`confirmed` 为 `true` 或没有这个字段的是核对过的号；
+  `confirmed: false` 的 `userid` 只是按英文名占位、@ 不生效，拿到真号再改。
 
 ### 4. 规则和通道 —— 合入 `~/.agent-autoloop/rules.json` 与 `~/.agent-autoloop/config.json`
 
