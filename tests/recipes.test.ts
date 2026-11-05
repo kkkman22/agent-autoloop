@@ -220,15 +220,16 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (message.method === "notifications/initialized") fs.appendFileSync(process.env.MCP_LOG, "initialized\\n");
   if (message.id === 2) {
     fs.appendFileSync(process.env.MCP_LOG, JSON.stringify(message.params.arguments) + "\\n");
+    if (process.env.MCP_DIES) process.exit(1);
     say({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: fs.readFileSync(process.env.MCP_ISSUES, "utf8") }] } });
   }
 });
 `;
 
-function jiraWatch(issues: unknown[]) {
+function jiraWatch(issues: unknown, expectFailure = false, dies = false) {
   const dir = mkdtempSync(join(scratch, "jira-"));
   writeFileSync(join(dir, "mcp.cjs"), FAKE_MCP);
-  writeFileSync(join(dir, "issues.json"), JSON.stringify(issues));
+  writeFileSync(join(dir, "issues.json"), typeof issues === "string" ? issues : JSON.stringify(issues));
   writeFileSync(
     join(dir, "jira.json"),
     JSON.stringify({
@@ -241,51 +242,79 @@ function jiraWatch(issues: unknown[]) {
   const done = spawnSync(
     process.execPath,
     ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "watch.ts"), join(dir, "jira.json")],
-    { env: { ...cleanEnv(), MCP_LOG: join(dir, "log"), MCP_ISSUES: join(dir, "issues.json") }, encoding: "utf8" },
+    {
+      env: {
+        ...cleanEnv(),
+        MCP_LOG: join(dir, "log"),
+        MCP_ISSUES: join(dir, "issues.json"),
+        ...(dies ? { MCP_DIES: "1" } : {}),
+      },
+      encoding: "utf8",
+    },
   );
-  assert.equal(done.status, 0, done.stderr);
+  assert.equal(done.status, expectFailure ? 1 : 0, done.stderr);
   return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8") };
 }
 
+test("jira-watch: Jira's own complaint fails the run, but an unreachable Jira ends quietly", () => {
+  // A wrong JQL or a dead token is the owner's to fix: it must not look like "nothing to report".
+  const wrong = jiraWatch("Error calling tool 'search': The value 'OPS' does not exist for the field 'project'.", true);
+  assert.match(wrong.said, /没跑成/);
+  assert.equal(resultFrom(readMessage(wrong.said), {}).result.outcome, "failed");
+
+  // The MCP never answers: the cron ticks again, so the run ends as "nothing" rather than failing.
+  const quiet = jiraWatch("", false, true);
+  assert.equal(resultFrom(readMessage(quiet.said), {}).result.outcome, "nothing");
+});
+
 test("jira-watch: the watcher asks the configured JQL and hands back stable events the rules let in", () => {
-  // One issue flattened the way mcp-atlassian summarizes; one raw Jira shape with fields nested.
-  const { said, asked } = jiraWatch([
-    {
-      key: "OPS-12",
-      summary: "数据库慢查询",
-      url: "https://jira.example.com/browse/OPS-12",
-      status: { name: "In Progress" },
-      reporter: { displayName: "张三", emailAddress: "zhang.san@example.com" },
-      updated: "2026-11-04T09:30:00.000+0800",
-    },
-    {
-      key: "OPS-13",
-      fields: {
-        summary: "Release",
-        status: { name: "Done" },
-        reporter: "李四",
-        updated: "2026-11-04T10:00:00.000+0800",
+  // The shape mcp-atlassian really returns: a wrapper with total/start_at/max_results/issues, fields flattened.
+  const { said, asked } = jiraWatch({
+    total: 2,
+    start_at: 0,
+    max_results: 5,
+    issues: [
+      {
+        key: "OPS-12",
+        summary: "数据库慢查询",
+        browse_url: "https://jira.example.com/browse/OPS-12",
+        status: { name: "In Progress", category: "进行中" },
+        reporter: {
+          account_id: null,
+          display_name: "Zhang San",
+          name: "zhang.san@cn.example.com",
+          email: "zhang.san@example.com",
+          key: "JIRAUSER21153",
+        },
+        updated: "2026-11-04 09:30:16 CST",
       },
-    },
-  ]);
+      {
+        key: "OPS-13",
+        summary: "Release",
+        browse_url: "https://jira.example.com/browse/OPS-13",
+        status: { name: "Done" },
+        reporter: { display_name: "李四", name: "li.si@cn.example.com", email: "li.si@example.com" },
+        updated: "2026-11-04 10:00:00 CST",
+      },
+    ],
+  });
   const lines = asked.trim().split("\n");
   assert.match(lines[0], /initialized/);
   const askedMcp = JSON.parse(lines[1]);
   assert.equal(askedMcp.jql, "project = OPS AND updated >= '-20m'");
-  assert.equal(askedMcp.max_results, 5);
+  assert.equal(askedMcp.limit, 5);
   const { result, problem } = resultFrom(readMessage(said), {});
   assert.equal(problem, undefined);
   const events = result.events!;
   assert.equal(events.length, 2);
-  assert.equal(events[0].id, "OPS-12:2026-11-04T09:30:00.000+0800", "stable id: rereading the window notifies once");
+  assert.equal(events[0].id, "OPS-12:2026-11-04 09:30:16 CST", "stable id: rereading the window notifies once");
   assert.equal(events[0].subject, "OPS-12");
   assert.equal(events[0].summary, "数据库慢查询");
   assert.equal(events[0].link, "https://jira.example.com/browse/OPS-12");
-  assert.equal(
-    JSON.parse(events[0].detail).reporter_email,
-    "zhang.san@example.com",
-    "the notifier maps the creator from this",
-  );
+  const detail = JSON.parse(events[0].detail);
+  assert.equal(detail.reporter_email, "zhang.san@example.com", "the notifier maps the creator from this");
+  assert.equal(detail.reporter_account, "zhang.san@cn.example.com");
+  assert.equal(detail.status, "In Progress");
   assert.equal(events[1].summary, "Release");
   assert.equal(JSON.parse(events[1].detail).reporter_name, "李四");
   const rules = readRules("jira-watch").rules;
@@ -302,7 +331,7 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   const dir = mkdtempSync(join(scratch, "notify-"));
   writeFileSync(
     join(dir, "users.json"),
-    JSON.stringify({ "zhang.san@example.com": { name: "张三", mobile: "13800001111" } }),
+    JSON.stringify({ "zhang.san@example.com": { name: "张三", userid: "zhang.san" } }),
   );
   const events = [
     {
@@ -312,7 +341,8 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
       summary: "数据库慢查询",
       detail: JSON.stringify({
         reporter_email: "zhang.san@example.com",
-        reporter_name: "张三",
+        reporter_account: "zhang.san@cn.example.com",
+        reporter_name: "Zhang San",
         status: "In Progress",
         updated: "2026-11-04 09:30",
         url: "https://jira.example.com/browse/OPS-12",
@@ -342,9 +372,9 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   assert.equal(problem, undefined);
   const notice = result.notice!;
   assert.equal(notice.length, 2);
-  assert.match(notice[0].text, /@13800001111/);
+  assert.match(notice[0].text, /@zhang\.san\b/, "DingTalk pings by userid, so the id goes in the text");
   assert.match(notice[0].text, /张三/);
-  assert.doesNotMatch(notice[1].text, /@1[3-9]\d{9}/, "an unmapped creator is named, not pinged");
+  assert.doesNotMatch(notice[1].text, /@/, "an unmapped creator is named, not pinged");
   assert.match(notice[1].text, /李四/);
   assert.notEqual(notice[0].key, notice[1].key);
 });

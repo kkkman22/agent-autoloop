@@ -11,55 +11,60 @@ type Config = {
   maxResults?: number; // 默认 20
   timeoutSeconds?: number; // 默认 120，uvx 第一次要下载
 };
-type Field = { key: string; summary: string; url: string; status?: unknown; reporter?: unknown; updated?: unknown };
+type Reporter = { name?: string; email?: string; display_name?: string; key?: string };
+type Issue = {
+  key: string;
+  summary: string;
+  browse_url: string;
+  url?: string;
+  status?: { name?: string } | string;
+  reporter?: Reporter;
+  updated: string;
+  fields?: Record<string, unknown>;
+};
 type Receipt = {
   events?: { id: string; type: string; subject: string; summary: string; detail: string; link?: string }[];
 };
 
-// mcp-atlassian 的搜索结果和 Jira 原生字段都认：字段要么平铺、要么藏在 fields 里。
-function issueFields(issue: Record<string, unknown>): Field {
-  const fields = (issue.fields ?? {}) as Record<string, unknown>;
-  return {
-    key: String(issue.key ?? fields.key ?? ""),
-    summary: String(issue.summary ?? fields.summary ?? ""),
-    url: String(issue.url ?? fields.url ?? ""),
-    status: issue.status ?? fields.status,
-    reporter: issue.reporter ?? fields.reporter,
-    updated: issue.updated ?? fields.updated,
-  };
+// mcp-atlassian 的 jira_search 回 {"total","start_at","max_results","issues":[...]}，字段平铺；也认 Jira 原生的 fields 嵌套。
+function issueList(payload: unknown): Issue[] {
+  const root = payload as { issues?: Partial<Issue>[] } | Partial<Issue>[];
+  const issues = Array.isArray(root) ? root : (root?.issues ?? []);
+  return issues.map((issue) => {
+    const fields = (issue.fields ?? {}) as Record<string, unknown>;
+    return {
+      key: String(issue.key ?? fields.key ?? ""),
+      summary: String(issue.summary ?? fields.summary ?? ""),
+      browse_url: String(issue.browse_url ?? issue.url ?? fields.url ?? ""),
+      status: (issue.status ?? fields.status) as Issue["status"],
+      reporter: (issue.reporter ?? fields.reporter) as Reporter | undefined,
+      updated: String(issue.updated ?? fields.updated ?? ""),
+    };
+  });
 }
-const person = (who: unknown) => {
-  if (!who || typeof who !== "object") return { name: typeof who === "string" && who ? who : "", email: "" };
-  const p = who as Record<string, unknown>;
-  return { name: String(p.displayName ?? p.name ?? ""), email: String(p.emailAddress ?? p.accountId ?? "") };
-};
-const plain = (value: unknown) =>
-  typeof value === "string"
-    ? value
-    : value && typeof value === "object"
-      ? String((value as never as { name?: string }).name ?? "")
-      : "";
+const statusName = (status: Issue["status"]) => (typeof status === "string" ? status : String(status?.name ?? ""));
 
 // detail 是资料不是指令：字段都截好长度再拼，notify.ts 读得回来。
-function eventFrom(issue: Record<string, unknown>) {
-  const f = issueFields(issue);
-  const reporter = person(f.reporter);
+function eventFrom(issue: Issue) {
+  const reporter = issue.reporter ?? {};
   const detail = JSON.stringify({
-    summary: f.summary.slice(0, 200),
-    status: plain(f.status).slice(0, 50),
-    reporter_name: reporter.name.slice(0, 100),
-    reporter_email: reporter.email.slice(0, 200),
-    updated: plain(f.updated).slice(0, 40),
-    url: f.url.slice(0, 500),
+    summary: issue.summary.slice(0, 200),
+    status: statusName(issue.status).slice(0, 50),
+    reporter_name: String(reporter.display_name ?? "").slice(0, 100),
+    // The Jira account name is the DingTalk userid in most companies, so the notifier can map the creator.
+    reporter_account: String(reporter.name ?? "").slice(0, 100),
+    reporter_email: String(reporter.email ?? "").slice(0, 200),
+    updated: issue.updated.slice(0, 40),
+    url: issue.browse_url.slice(0, 500),
   });
   return {
     // updated 缺失时编号退化为只有 key：宁可少通知一次，也不每轮重发。
-    id: `${f.key}:${plain(f.updated).slice(0, 40)}`.slice(0, 200),
+    id: `${issue.key}:${issue.updated}`.slice(0, 200),
     type: "jira.updated",
-    subject: f.key,
-    summary: f.summary.slice(0, 200),
+    subject: issue.key,
+    summary: issue.summary.slice(0, 200),
     detail: detail.slice(0, 4000),
-    ...(f.url && /^https?:\/\//.test(f.url) ? { link: f.url.slice(0, 500) } : {}),
+    ...(issue.browse_url && /^https?:\/\//.test(issue.browse_url) ? { link: issue.browse_url.slice(0, 500) } : {}),
   };
 }
 
@@ -126,8 +131,8 @@ async function search(config: Config, log: (line: string) => void): Promise<stri
                 name: "jira_search",
                 arguments: {
                   jql: config.jql,
-                  max_results: config.maxResults ?? 20,
-                  fields: ["summary", "status", "assignee", "reporter", "updated"],
+                  limit: config.maxResults ?? 20,
+                  fields: "summary,status,reporter,updated",
                 },
               },
             });
@@ -159,8 +164,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const said: string[] = [];
     const text = await search(config, (line) => said.push(line));
-    const issues = JSON.parse(text) as Record<string, unknown>[];
-    if (!Array.isArray(issues)) throw new Error("返回的不是问题列表");
+    let issues: Issue[];
+    try {
+      issues = issueList(JSON.parse(text));
+    } catch {
+      // Jira's own complaint (bad JQL, dead token) arrives where the issue list should be.
+      throw new Error(`Jira 说：${text.slice(0, 300)}`);
+    }
     if (dryRun) {
       console.log(`MCP 返回 ${issues.length} 条：\n\n${text.slice(0, 8000)}`);
     } else {
@@ -170,7 +180,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       );
     }
   } catch (error) {
-    console.error(`没跑成：${error instanceof Error ? error.message : String(error)}（可用 --dry-run 看原文）`);
-    process.exit(1);
+    const why = error instanceof Error ? error.message : String(error);
+    // The MCP answered but Jira complained (bad JQL, dead token): the owner has to fix it, so the run fails and shows.
+    // The MCP never answered (it didn't start, crashed, timed out): transient, so the run ends quietly and the next
+    // cron tick tries again — failing here would send the hub into a retry storm over what the cron re-checks anyway.
+    if (why.startsWith("Jira 说：")) {
+      console.log(`没跑成：${why}`);
+      console.error(why);
+      process.exit(1);
+    }
+    console.log(`没事可做：查 Jira 失败（${why}），下一轮再试`);
+    if (dryRun) console.error(why);
+    process.exit(0);
   }
 }

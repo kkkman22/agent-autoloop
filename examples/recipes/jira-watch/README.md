@@ -1,15 +1,42 @@
 # Jira 更新通知钉钉群（@创建人）
 
-定时用你本地已装好的 jira MCP 按自定义 JQL 查 case 更新，把更新发到钉钉群，并 @创建人（一般映射到创建人的手机号）。
+定时用你本地已装好的 jira MCP 按自定义 JQL 查 case 更新，把更新发到钉钉群，并 @创建人。
 
 全程只跑脚本，**不跑模型、不花 Token**：
 
 ```
 每 15 分钟 ──▶ watch.ts（调本地 jira MCP 查你的 JQL）──▶ 事件（按「case + 更新时间」编号，重复读只记一次）
-      ──▶ notify.ts（拼通知文字 + @手机号）──▶ 通知卡片 ──▶ 钉钉群机器人（加签）──▶ @创建人
+      ──▶ notify.ts（拼通知文字 + @创建人）──▶ 通知卡片 ──▶ 钉钉群机器人（加签）──▶ @创建人
 ```
 
 换检查频率改规则里的 cron；查什么改 `jira.json` 里的 JQL；@谁改 `users.json` 的映射。
+
+## 钉钉 @ 的规矩（先看这段，不然 @ 不出来）
+
+钉钉的 @ 认两种标识，**不认名字**：
+
+| 写法                                                            | 效果                           |
+| --------------------------------------------------------------- | ------------------------------ |
+| 文字里写 `@张三`                                                | 只是普通文字，**没有提醒效果** |
+| 文字里写 `@jane.long`（钉钉 userId） + 通道的 `at` 白名单里有它 | 真的 @ 到人                    |
+| 文字里写 `@13800001111`（手机号） + 通道的 `at` 白名单里有它    | 真的 @ 到人                    |
+
+官方说明：消息正文里要带上「@手机号」或「@userId」，并与请求里的 `atMobiles` / `atUserIds` 对应，才有 @ 效果。
+
+所以这套要做两件事：
+
+1. `users.json` 把 Jira 账号映射到**钉钉 userId**（`userid` 字段）。
+2. `config.json` 的通道项写 `at` 白名单，列出允许被 @ 的 userId。
+
+名单里没写的人照样收到通知文字，只是不会被提醒——这是刻意的：事件里的文字不该能决定 @ 谁。
+
+**userId 从哪来**：钉钉里 userId 通常就是公司英文名（如 `jane.long`），但各家不一，要实测确认。三个办法：
+
+- 让同事在群里 @ 一次这个机器人，从消息里的 userId 看（最省事）。
+- 钉钉客户端 → 个人资料 → 看到「钉钉号」，那就是 userId。
+- 企业内部应用的通讯录接口（要 AppKey/AppSecret，本模板用不上）。
+
+确认后在 `users.json` 里写 `userid`；填手机号也行，填 `mobile` 就走手机号 @。
 
 ## 一、准备
 
@@ -28,8 +55,8 @@ cp watch.ts notify.ts ~/.agent-autoloop/work/jira-watch/
 2. 安全设置选**加签**（推荐）。配好后得到两样东西，记下来：
    - **Webhook 地址**：形如 `https://oapi.dingtalk.com/robot/send?access_token=xxxx`
    - **加签密钥**：形如 `SECxxxxxxxx`
-   - （用「自定义关键词」也行：关键词填 `Jira`，通知标题里都带 `[case编号]`… 关键词得出现在消息里，填你通知文字里一定有的词即可；家里宽带没有固定 IP，别用 IP 白名单。）
-3. **@人的白名单**：机器人只能 @ 手机号在白名单里的人。把要 @ 的同事手机号都列上（见下面 `config.json` 的 `at`）。这是安全边界：万一哪条事件文字里混了 `@手机号`，也 @ 不到白名单以外的人。
+   - （用「自定义关键词」也行：关键词填 `CH`，通知标题里都带 `[CH-xxx]`，关键词一定出现在消息里；家里宽带没有固定 IP，别用 IP 白名单。）
+3. **@白名单**：把允许被 @ 的 userId 抄进 `config.json` 的 `at` 数组（见第三节）。
 
 ## 三、配四个文件（都在 `~/.agent-autoloop/` 下）
 
@@ -38,7 +65,7 @@ cp watch.ts notify.ts ~/.agent-autoloop/work/jira-watch/
 ```json
 {
   "mcp": ["uvx", "mcp-atlassian==0.23.0"],
-  "jql": "project = DEMO AND updated >= '-20m' ORDER BY updated DESC",
+  "jql": "project = CH AND updated >= '-20m' ORDER BY updated DESC",
   "envFile": "jira.env",
   "maxResults": 20,
   "timeoutSeconds": 120
@@ -63,18 +90,20 @@ EOF
 chmod 600 jira.env
 ```
 
-### 3. `work/jira-watch/users.json` —— @谁（jira 创建人 → 手机号）
+### 3. `work/jira-watch/users.json` —— @谁（Jira 创建人 → 钉钉 userId）
 
-键写 jira 账号的**邮箱**（优先）或**显示名**，值是要 @ 的手机号：
+键写 Jira 账号的**邮箱**（优先）或**英文名**；值里的 `userid` 是要 @ 的钉钉 userId：
 
 ```json
 {
-  "zhang.san@example.com": { "name": "张三", "mobile": "13800001111" },
-  "李四": { "name": "李四", "mobile": "13900002222" }
+  "zhang.san@shijigroup.com": { "name": "张三", "userid": "zhang.san" },
+  "li.si@shijigroup.com": { "name": "李四", "userid": "li.si", "mobile": "13900002222" }
 }
 ```
 
-没映射到的创建人照样收到通知文字，只是不 @。**这个手机号必须同时出现在钉钉机器人的 `at` 白名单里才会真的 @。**
+- 同一人的邮箱可能有两个域（`@shijigroup.com` 和 `@cn.shijigroup.com`），脚本两个都会试，映射表写哪个都行。
+- 没有 `userid` 只有 `mobile` 时走手机号 @；两个都没有就只发文字、不 @ 人。
+- 本目录的 `users.example.json` 是一份按公司名单填好的样例，照它改。
 
 ### 4. 规则和通道 —— 合入 `~/.agent-autoloop/rules.json` 与 `~/.agent-autoloop/config.json`
 
@@ -97,14 +126,14 @@ agent-autoloop key new channel dingtalk
       "platform": "dingtalk",
       "url": "https://oapi.dingtalk.com/robot/send?access_token=xxxx",
       "secret": "SECxxxxxxxx",
-      "at": ["13800001111", "13900002222"]
+      "at": ["zhang.san", "li.si"]
     }
   }
 }
 ```
 
 - 用「自定义关键词」方式的机器人：删掉 `secret` 那行即可。
-- `at`：@白名单，手机号数组。
+- `at`：允许被 @ 的 userId（和 `users.json` 里的 `userid` 对应）。
 - 改完 config.json 要重启中台（`agent-autoloop up`）。
 
 ## 四、验证
@@ -129,9 +158,9 @@ agent-autoloop why <轮次号>   # 能查到这条更新的来龙去脉
 ## 常见问题
 
 - **第一次跑超时**：uvx 要下载 mcp-atlassian，先手动 `uvx mcp-atlassian==0.23.0 --help` 预热一次。
-- **通知发了但没 @ 到**：手机号要**三处一致**——users.json 的映射、config.json 的 `at` 白名单、通知文字里的 `@手机号`（前两处配对，文字是脚本自动拼的）。还 @ 不到就是该手机号没绑定钉钉账号。
+- **通知发了但没 @ 到人**：三处要对上——`users.json` 的 `userid`、`config.json` 的 `at` 白名单、正文里的 `@userid`（前两处配对，正文是脚本自动拼的）。还 @ 不到，多半是 userId 填错了（不是英文名）。
 - **JQL 命中 0 条**：`--dry-run` 看返回；`updated >= '-20m'` 的窗口内确实没改动。
 - **令牌过期**：`jira.env` 里的 `JIRA_PERSONAL_TOKEN` 换新值，不用动别的。
 - **想让通知更像人话**：把规则「通知钉钉群」的 `to` 换成你的模型 Agent（`use: "codex"` 等），给它写个 Skill 读事件资料写通知——那就开始花 Token 了，本模板默认不用。
 
-样例数据都是虚构的；脚本只用本地假 MCP 和假 HTTP 验证过，没在真实 Jira 和真实钉钉群上跑过完整链路，首次启用请按上面第四节先验证。
+样例数据都是虚构的；脚本只用本地假 MCP 和假 HTTP 验证过，没在真实钉钉群上跑过完整链路，首次启用请按上面第四节先验证。
