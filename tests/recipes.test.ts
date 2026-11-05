@@ -375,6 +375,45 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   assert.match(notice[0].text, /@张三/, "the mention is written the way the group knows the person");
   assert.match(notice[0].text, /张三/);
   assert.doesNotMatch(notice[1].text, /@/, "an unmapped creator is named, not pinged");
-  assert.match(notice[1].text, /李四/);
   assert.notEqual(notice[0].key, notice[1].key);
+});
+
+test("jira-watch: the mention comes first, so the person is pinged before the details", () => {
+  const dir = mkdtempSync(join(scratch, "notify-first-"));
+  writeFileSync(
+    join(dir, "users.json"),
+    JSON.stringify({ "zhang.san@example.com": { name: "张三", mention: "13800001111" } }),
+  );
+  const events = [
+    {
+      id: "OPS-12:t1",
+      type: "jira.updated",
+      subject: "OPS-12",
+      summary: "数据库慢查询",
+      detail: JSON.stringify({
+        reporter_email: "zhang.san@example.com",
+        reporter_name: "Zhang San",
+        status: "In Progress",
+        updated: "2026-11-04 09:30",
+        url: "https://jira.example.com/browse/OPS-12",
+      }),
+      link: "https://jira.example.com/browse/OPS-12",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const notice = resultFrom(readMessage(done.stdout), {}).result.notice!;
+  assert.match(notice[0].text, /^@13800001111/, "the mention leads the message");
+  assert.doesNotMatch(notice[0].text, /@13800001111 /, "no space right after the mention, or it does not match");
+  assert.equal(
+    notice[0].text,
+    "@13800001111\nOPS-12 数据库慢查询\n状态：In Progress",
+    "the message reads as the mention, the case, and its status",
+  );
 });

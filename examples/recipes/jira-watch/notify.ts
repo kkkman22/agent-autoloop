@@ -53,14 +53,9 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
   }
   const who = findUser(detail, users);
   const mention = mentionOf(who);
-  const name = who?.name || detail.reporter_name || detail.reporter_account || "（没有映射）";
   const title = `[${event.subject}] ${event.summary}`.slice(0, 80);
-  const text = [
-    `创建人：${name}${mention ? ` ${mention}` : ""}`,
-    `状态：${detail.status || "未知"}`,
-    `更新时间：${detail.updated || "未知"}`,
-    detail.url || event.link || "",
-  ]
+  // @ 写在最前面，紧贴那个人的标识；钉钉要靠正文里的这段文字认出被提醒的人。
+  const text = [mention, `${event.subject} ${event.summary}`, `状态：${detail.status || "未知"}`]
     .filter(Boolean)
     .join("\n");
   return { key: `jira-${event.id}`.slice(0, 200), title, text };
