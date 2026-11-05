@@ -2,8 +2,12 @@
 import { createHmac } from "node:crypto";
 
 const MOBILE = /^1[3-9]\d{9}$/;
-// DingTalk matches a mention by the id the text names: a userid like "zhang.san" or a mobile. A name alone is text.
-const USERID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// A phone may be written with a country code; DingTalk's own examples are eleven bare digits.
+const bare = (id: string) => id.replace(/^\+?86[- ]?/, "");
+const mobile = (id: string) => (MOBILE.test(bare(id)) ? bare(id) : null);
+// The text may name a phone with a country code, so the sign is part of what a mention can look like.
+const MENTION = /@[+\w.-]+/g;
+const MENTION_ID = /^[+\w.-]{1,64}$/;
 
 export function payload(platform: string, text: string, at: readonly string[] = []): object {
   if (platform === "discord" && [...text].length > 2000) throw new Error("Discord 消息超过 2000 个字，请缩短卡片");
@@ -12,15 +16,22 @@ export function payload(platform: string, text: string, at: readonly string[] = 
     case "dingtalk": {
       // A mention needs both sides: the id in the card text and the same id in the owner's allowlist,
       // so outside text alone can never choose who gets pinged.
+      // A phone may be written either way round (+86 prefix on one side only), so compare the bare number.
       const allowed = [...new Set(at)];
-      const named = new Set((text.match(/@[\w.-]+/g) ?? []).map((hit) => hit.slice(1)).filter((id) => USERID.test(id)));
-      const picked = allowed.filter((id) => named.has(id));
+      const named = new Set(
+        (text.match(MENTION) ?? [])
+          .map((hit) => hit.slice(1))
+          .filter((id) => MENTION_ID.test(id))
+          .map(bare),
+      );
+      // A phone may be written with a country code on either side, so compare the bare number.
+      const picked = allowed.filter((id) => named.has(id) || named.has(bare(id)));
       return {
         msgtype: "text",
         text: { content: text },
         at: {
-          atUserIds: picked.filter((id) => !MOBILE.test(id)),
-          atMobiles: picked.filter((id) => MOBILE.test(id)),
+          atUserIds: picked.filter((id) => !mobile(id)),
+          atMobiles: picked.map(mobile).filter((id): id is string => id !== null),
           isAtAll: false,
         },
       };

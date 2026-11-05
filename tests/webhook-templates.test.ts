@@ -37,6 +37,15 @@ test("DingTalk only mentions ids the owner allowlisted, and never everyone", () 
   );
 });
 
+test("DingTalk takes a mobile written with a country code and sends it the way its docs show", () => {
+  const sent: any = payload("dingtalk", "正文 @17673053536", ["+86-17673053536"]);
+  assert.deepEqual(sent.at, { atUserIds: [], atMobiles: ["17673053536"], isAtAll: false });
+  const bare: any = payload("dingtalk", "正文 @17673053536", ["17673053536"]);
+  assert.deepEqual(bare.at, { atUserIds: [], atMobiles: ["17673053536"], isAtAll: false });
+  const prefixed: any = payload("dingtalk", "正文 @+8617673053536", ["17673053536"]);
+  assert.deepEqual(prefixed.at, { atUserIds: [], atMobiles: ["17673053536"], isAtAll: false });
+});
+
 test("signedUrl appends the documented DingTalk signature for a fixed moment", () => {
   const url = "https://oapi.dingtalk.com/robot/send?access_token=abc";
   const signed = signedUrl(url, "SEC", 1_730_000_000_000);
