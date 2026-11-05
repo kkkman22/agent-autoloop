@@ -331,7 +331,7 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   const dir = mkdtempSync(join(scratch, "notify-"));
   writeFileSync(
     join(dir, "users.json"),
-    JSON.stringify({ "zhang.san@example.com": { name: "张三", userid: "zhang.san" } }),
+    JSON.stringify({ "zhang.san@example.com": { name: "张三", mention: "张三" } }),
   );
   const events = [
     {
@@ -372,7 +372,7 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   assert.equal(problem, undefined);
   const notice = result.notice!;
   assert.equal(notice.length, 2);
-  assert.match(notice[0].text, /@zhang\.san\b/, "DingTalk pings by userid, so the id goes in the text");
+  assert.match(notice[0].text, /@张三/, "the mention is written the way the group knows the person");
   assert.match(notice[0].text, /张三/);
   assert.doesNotMatch(notice[1].text, /@/, "an unmapped creator is named, not pinged");
   assert.match(notice[1].text, /李四/);

@@ -28,13 +28,23 @@ test("DingTalk only mentions ids the owner allowlisted, and never everyone", () 
   assert.deepEqual(
     (payload("dingtalk", "正文 @张三", ["zhang.san"]) as any).at,
     { atUserIds: [], atMobiles: [], isAtAll: false },
-    "a name in outside text is not a mention request",
+    "a name the owner did not allow is not a mention request",
   );
   assert.deepEqual(
     (payload("dingtalk", "正文 @13800001111", ["13800001111"]) as any).at,
     { atUserIds: [], atMobiles: ["13800001111"], isAtAll: false },
     "a mobile still works for people without a userid",
   );
+});
+
+test("DingTalk matches a mention written the way the owner allows it, Chinese names included", () => {
+  // The allowlist holds every spelling that reaches the person: a name in the group, a userid, a mobile.
+  const sent: any = payload("dingtalk", "创建人：王亮 @王亮", ["王亮", "vivawl", "13800001111"]);
+  assert.deepEqual(sent.at, { atUserIds: ["王亮"], atMobiles: [], isAtAll: false });
+  const both: any = payload("dingtalk", "@王亮 @13800001111", ["王亮", "13800001111"]);
+  assert.deepEqual(both.at, { atUserIds: ["王亮"], atMobiles: ["13800001111"], isAtAll: false });
+  const group: any = payload("dingtalk", "@Gruby.Wang", ["Gruby.Wang"]);
+  assert.deepEqual(group.at, { atUserIds: ["Gruby.Wang"], atMobiles: [], isAtAll: false });
 });
 
 test("DingTalk takes a mobile written with a country code and sends it the way its docs show", () => {

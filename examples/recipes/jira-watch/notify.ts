@@ -1,8 +1,8 @@
-// 把事项资料拼成给钉钉群看的通知文字。@只认钉钉 userId 或手机号，纯名字没有提醒效果。
+// 把事项资料拼成给钉钉群看的通知文字。@认钉钉 userId、手机号和群里的名字；名字要用映射表里的写法。
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-type User = { name?: string; userid?: string; mobile?: string };
+type User = { name?: string; userid?: string; mobile?: string; mention?: string };
 type Context = {
   events: { id: string; type: string; subject: string; summary: string; detail: string; link?: string }[];
 };
@@ -19,10 +19,29 @@ function findUser(detail: Record<string, string>, users: Record<string, User>) {
     detail.reporter_account?.split("@")[0],
   ].filter(Boolean);
   for (const form of forms) {
-    const hit = users[form] ?? users[form.toLowerCase()];
+    // The map may be keyed by email, by English name, or by Chinese name; the first two are what Jira hands over.
+    const hit =
+      users[form] ??
+      users[form.toLowerCase()] ??
+      users[form.replace(/\s+/g, "")] ??
+      users[form.replace(/\s+/g, "").toLowerCase()];
+    if (hit) return hit;
+  }
+  // One person can show up under either email domain, so a name that differs only by domain still counts.
+  const local = forms.map((form) => form.split("@")[0]).filter(Boolean);
+  for (const name of local) {
+    const hit = users[name] ?? users[name.toLowerCase()];
     if (hit) return hit;
   }
   return undefined;
+}
+
+// 钉钉按正文里的写法匹配：userId、手机号、群里显示的名字都认。
+// 谁被 @ 只能由本地映射表决定，事件里的文字没有这个权力。
+function mentionOf(who: User | undefined) {
+  if (!who) return "";
+  const id = who.mention ?? who.userid ?? who.mobile;
+  return id ? `@${id}` : "";
 }
 
 function noticeFrom(event: Context["events"][number], users: Record<string, User>) {
@@ -33,8 +52,7 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
     // detail 被截断过就当没有：通知仍发，只是少几行资料。
   }
   const who = findUser(detail, users);
-  // DingTalk pings by userid or mobile; a name in the text is just text. Text type is the one that highlights.
-  const mention = who?.userid ? `@${who.userid}` : who?.mobile ? `@${who.mobile}` : "";
+  const mention = mentionOf(who);
   const name = who?.name || detail.reporter_name || detail.reporter_account || "（没有映射）";
   const title = `[${event.subject}] ${event.summary}`.slice(0, 80);
   const text = [

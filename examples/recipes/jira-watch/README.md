@@ -13,13 +13,13 @@
 
 ## 钉钉 @ 的规矩（先看这段，不然 @ 不出来）
 
-钉钉的 @ 认两种标识，**不认名字**：
+钉钉的 @ 认三种标识，**都不认 Jira 里的名字**：
 
-| 写法                                                            | 效果                           |
-| --------------------------------------------------------------- | ------------------------------ |
-| 文字里写 `@张三`                                                | 只是普通文字，**没有提醒效果** |
-| 文字里写 `@13800001111`（手机号） + 通道的 `at` 白名单里有它    | 真的 @ 到人                    |
-| 文字里写 `@jane.long`（钉钉 userId） + 通道的 `at` 白名单里有它 | 真的 @ 到人                    |
+| 写法                                                     | 效果                       |
+| -------------------------------------------------------- | -------------------------- |
+| 文字里写 `@王亮`，但 `at` 白名单里没有                   | 只是普通文字，**没有提醒** |
+| 文字里写 `@Gruby.Wang`（群里那个人的写法）+ 白名单里有它 | 真的 @ 到人                |
+| 文字里写 `@13800001111`（手机号）+ 白名单里有它          | 真的 @ 到人                |
 
 手机号可以写成 `+86-138xxxx`，程序会归一化成 11 位再发。
 
@@ -27,18 +27,18 @@
 
 所以这套要做两件事：
 
-1. `users.json` 把 Jira 账号映射到**钉钉 userId**（`userid` 字段）或**手机号**（`mobile` 字段）。
-2. `config.json` 的通道项写 `at` 白名单，列出允许被 @ 的标识。
+1. `users.json` 把 Jira 账号映射到**群里那个人的写法**（`mention` 字段）。
+2. `config.json` 的通道项写 `at` 白名单，列出允许被 @ 的写法。
 
 名单里没写的人照样收到通知文字，只是不会被提醒——这是刻意的：事件里的文字不该能决定 @ 谁。
 
-**钉钉号不是 userId。** 官方把两者列为独立字段（`userId` 与 `dingTalkId`），「钉钉号」是可改的个人号，
-`userId` 才是 API 认的、群里 @ 用的标识。公司里的 userId 长什么样不统一，不能靠猜。两条可靠路径：
+**用什么写法 @，得实测。** 钉钉认「群里那个人的写法」，各家不一样：
 
-- **手机号**（最省事）：填 `mobile`，或写 `+86-138xxxx` 这样的带区号写法，程序会归一化成 11 位。
-- **真 userId**：需要企业内部应用调通讯录接口（「搜索企业通讯录」权限）才能拿到，或从钉钉管理后台导出。
+- **群昵称**：最常见。像「Gruby.Wang」这样，英文名按点分段、每段首字母大写——但不是每人都这样，要一个个试。
+- **手机号**：`mobile` 字段，填 `+86-138xxxx` 也能认。
+- **userId**：企业内部应用调通讯录接口才能拿到，本模板用不上。
 
-拿不到就只用手机号。
+**钉钉号（`dingTalkId`）不能用来 @。** 官方把 `userId` 和 `dingTalkId` 列为两个独立字段，「钉钉号」是可改的个人号。
 
 ## 一、准备
 
@@ -92,21 +92,22 @@ EOF
 chmod 600 jira.env
 ```
 
-### 3. `work/jira-watch/users.json` —— @谁（Jira 创建人 → 钉钉 userId）
+### 3. `work/jira-watch/users.json` —— @谁（Jira 创建人 → 群里那个人的写法）
 
-键写 Jira 账号的**邮箱**（优先）或**英文名**；值里的 `userid` 是要 @ 的钉钉 userId：
+键写 Jira 账号的**邮箱**（优先）或**英文名**；值里的 `mention` 是要 @ 的写法，`name` 只是显示用的名字：
 
 ```json
 {
-  "zhang.san@shijigroup.com": { "name": "张三", "userid": "zhang.san" },
-  "li.si@shijigroup.com": { "name": "李四", "userid": "li.si", "mobile": "13900002222" }
+  "zhang.san@shijigroup.com": { "name": "张三", "mention": "Zhang.San" },
+  "li.si@shijigroup.com": { "name": "李四", "mention": "13900002222" }
 }
 ```
 
+- `mention` 写群里那个人被叫的写法：群昵称（`Zhang.San`）或手机号（`13900002222`）。哪个能 @ 到人，得在群里试。
 - 同一人的邮箱可能有两个域（`@shijigroup.com` 和 `@cn.shijigroup.com`），脚本两个都会试，映射表写哪个都行。
-- 没有 `userid` 只有 `mobile` 时走手机号 @；两个都没有就只发文字、不 @ 人。
-- 本目录的 `users.example.json` 是按公司名单填好的样例：`confirmed` 为 `true` 或没有这个字段的是核对过的号；
-  `confirmed: false` 的 `userid` 只是按英文名占位、@ 不生效，拿到真号再改。
+- 没有 `mention` 就只发文字、不 @ 人。
+- 本目录的 `users.example.json` 是按公司名单填好的样例：`mention` 是按「英文名按点分段、每段首字母大写」猜的，
+  猜错的 @ 不生效，收到真实通知后按群里显示的写法改。
 
 ### 4. 规则和通道 —— 合入 `~/.agent-autoloop/rules.json` 与 `~/.agent-autoloop/config.json`
 
@@ -129,7 +130,7 @@ agent-autoloop key new channel dingtalk
       "platform": "dingtalk",
       "url": "https://oapi.dingtalk.com/robot/send?access_token=xxxx",
       "secret": "SECxxxxxxxx",
-      "at": ["zhang.san", "li.si"]
+      "at": ["Zhang.San", "13900002222"]
     }
   }
 }
@@ -161,7 +162,8 @@ agent-autoloop why <轮次号>   # 能查到这条更新的来龙去脉
 ## 常见问题
 
 - **第一次跑超时**：uvx 要下载 mcp-atlassian，先手动 `uvx mcp-atlassian==0.23.0 --help` 预热一次。
-- **通知发了但没 @ 到人**：三处要对上——`users.json` 的 `userid`、`config.json` 的 `at` 白名单、正文里的 `@userid`（前两处配对，正文是脚本自动拼的）。还 @ 不到，多半是 userId 填错了（不是英文名）。
+- **通知发了但没 @ 到人**：三处要对上——`users.json` 的 `mention`、`config.json` 的 `at` 白名单、正文里的 `@写法`（前两处配对，正文是脚本自动拼的）。还 @ 不到，多半是这个写法不是群里叫他的那个，把群里显示的名字抄进 `mention`。
+- **想知道群里到底叫什么**：在群里点开那个人，看他名字旁边显示的那一串，抄进 `mention`；或者在群里手动 @ 他，看消息里长什么样。
 - **JQL 命中 0 条**：`--dry-run` 看返回；`updated >= '-20m'` 的窗口内确实没改动。
 - **令牌过期**：`jira.env` 里的 `JIRA_PERSONAL_TOKEN` 换新值，不用动别的。
 - **想让通知更像人话**：把规则「通知钉钉群」的 `to` 换成你的模型 Agent（`use: "codex"` 等），给它写个 Skill 读事件资料写通知——那就开始花 Token 了，本模板默认不用。

@@ -1,93 +1,78 @@
 {
   "king.zou@shijigroup.com": {
     "name": "邹聪聪",
-    "userid": "drgn12n"
+    "mention": "邹聪聪"
   },
   "quinn.qiu@cn.shijigroup.com": {
     "name": "邱耀光",
-    "userid": "quinn.qiu",
-    "confirmed": false
+    "mention": "邱耀光"
   },
   "peek.lin@shijigroup.com": {
     "name": "林登锋",
-    "userid": "rycxnw4"
+    "mention": "林登锋"
   },
   "jensen.qin@cn.shijigroup.com": {
     "name": "覃建成",
-    "userid": "jensen.qin",
-    "confirmed": false
+    "mention": "覃建成"
   },
   "alvin.long@cn.shijigroup.com": {
     "name": "龙涛",
-    "userid": "alvin.long",
-    "confirmed": false
+    "mention": "龙涛"
   },
   "nolan.li@shijigroup.com": {
     "name": "李骆",
-    "userid": "nolan.li",
-    "confirmed": false
+    "mention": "李骆"
   },
   "lucy.jiang@cn.shijigroup.com": {
     "name": "江向花",
-    "userid": "lucy.jiang",
-    "confirmed": false
+    "mention": "江向花"
   },
   "jerremy.su@shijigroup.com": {
     "name": "苏旭道",
-    "userid": "jerremy.su",
-    "confirmed": false
+    "mention": "苏旭道"
   },
   "potter.zhong@shijigroup.com": {
     "name": "钟舒钦",
-    "userid": "potter.zhong",
-    "confirmed": false
+    "mention": "钟舒钦"
   },
   "spring.li@cn.shijigroup.com": {
     "name": "李世春",
-    "userid": "spring.li",
-    "confirmed": false
+    "mention": "李世春"
   },
   "zack.liu@cn.shijigroup.com": {
     "name": "刘劲",
-    "userid": "zack.liu",
-    "confirmed": false
+    "mention": "刘劲"
   },
   "ryder.lai@cn.shijigroup.com": {
     "name": "赖永林",
-    "userid": "ryder.lai",
-    "confirmed": false
+    "mention": "赖永林"
   },
   "chaney.liu@shijigroup.com": {
     "name": "刘存礼",
-    "userid": "chaney.liu",
-    "confirmed": false
+    "mention": "刘存礼"
   },
   "seow.xiao@cn.shijigroup.com": {
     "name": "肖雅妮",
-    "userid": "seow.xiao",
-    "confirmed": false
+    "mention": "肖雅妮"
   },
   "abby.song@shijigroup.com": {
     "name": "宋双双",
-    "userid": "ssdouble"
+    "mention": "宋双双"
   },
   "lain.zhu@cn.shijigroup.com": {
     "name": "朱江",
-    "userid": "lain.zhu",
-    "confirmed": false
+    "mention": "朱江"
   },
   "jane.long@cn.shijigroup.com": {
     "name": "龙玉清",
-    "userid": "jane.long",
-    "confirmed": false
+    "mention": "龙玉清"
   },
   "blake.tan@shijigroup.com": {
     "name": "谭艳波",
-    "userid": "blake.tan",
-    "confirmed": false
+    "mention": "谭艳波"
   },
   "gruby.wang@cn.shijigroup.com": {
     "name": "王亮",
-    "userid": "vivawl"
+    "mention": "Gruby.Wang"
   }
 }

@@ -5,9 +5,13 @@ const MOBILE = /^1[3-9]\d{9}$/;
 // A phone may be written with a country code; DingTalk's own examples are eleven bare digits.
 const bare = (id: string) => id.replace(/^\+?86[- ]?/, "");
 const mobile = (id: string) => (MOBILE.test(bare(id)) ? bare(id) : null);
-// The text may name a phone with a country code, so the sign is part of what a mention can look like.
-const MENTION = /@[+\w.-]+/g;
-const MENTION_ID = /^[+\w.-]{1,64}$/;
+
+/** The ids the text names right after an @ that the owner allows. */
+function mentioned(text: string, allowed: readonly string[]): string[] {
+  // Everything after an @ up to the next space or punctuation is a candidate; a phone may carry a country code.
+  const said = new Set([...text.matchAll(/@([^\s@,，。！？、:：;；)\]】]+)/g)].map((hit) => bare(hit[1])));
+  return allowed.filter((id) => said.has(id) || said.has(bare(id)));
+}
 
 export function payload(platform: string, text: string, at: readonly string[] = []): object {
   if (platform === "discord" && [...text].length > 2000) throw new Error("Discord 消息超过 2000 个字，请缩短卡片");
@@ -15,17 +19,10 @@ export function payload(platform: string, text: string, at: readonly string[] = 
   switch (platform) {
     case "dingtalk": {
       // A mention needs both sides: the id in the card text and the same id in the owner's allowlist,
-      // so outside text alone can never choose who gets pinged.
-      // A phone may be written either way round (+86 prefix on one side only), so compare the bare number.
+      // so outside text alone can never choose who gets pinged. The allowlist holds every id the owner allows,
+      // in any spelling DingTalk matches: a userid, a mobile, or the name a person goes by in the group.
       const allowed = [...new Set(at)];
-      const named = new Set(
-        (text.match(MENTION) ?? [])
-          .map((hit) => hit.slice(1))
-          .filter((id) => MENTION_ID.test(id))
-          .map(bare),
-      );
-      // A phone may be written with a country code on either side, so compare the bare number.
-      const picked = allowed.filter((id) => named.has(id) || named.has(bare(id)));
+      const picked = mentioned(text, allowed);
       return {
         msgtype: "text",
         text: { content: text },
