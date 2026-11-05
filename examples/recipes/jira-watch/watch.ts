@@ -77,6 +77,7 @@ function eventFrom(issue: Issue, linked: Linked) {
     // The frontend case this one belongs to, and who works on it.
     linked_fe_key: linked.key.slice(0, 40),
     linked_fe_url: linked.url.slice(0, 500),
+    linked_fe_status: linked.status.slice(0, 50),
     linked_fe_assignee_name: linked.assigneeName.slice(0, 100),
     linked_fe_assignee_email: linked.assigneeEmail.slice(0, 200),
     updated: issue.updated.slice(0, 40),
@@ -93,7 +94,7 @@ function eventFrom(issue: Issue, linked: Linked) {
   };
 }
 
-type Linked = { key: string; url: string; assigneeName: string; assigneeEmail: string };
+type Linked = { key: string; url: string; status: string; assigneeName: string; assigneeEmail: string };
 
 function readEnv(file?: string): Record<string, string> {
   if (!file) return {};
@@ -217,7 +218,7 @@ class Mcp {
  * and steadier than reading the links off the issue: the issue's own link field is not always readable.
  */
 async function findLinkedFrontend(mcp: Mcp, issue: Issue, frontendComponent: string, reporterEmail: string) {
-  const linked: Linked = { key: "", url: "", assigneeName: "", assigneeEmail: "" };
+  const linked: Linked = { key: "", url: "", status: "", assigneeName: "", assigneeEmail: "" };
   const text = await mcp.call("jira_search", {
     jql: `issue in linkedIssues("${issue.key}")`,
     limit: 10,
@@ -229,6 +230,7 @@ async function findLinkedFrontend(mcp: Mcp, issue: Issue, frontendComponent: str
     if (reporterEmail && other.reporter?.email && other.reporter.email !== reporterEmail) continue;
     linked.key = other.key;
     linked.url = other.browse_url;
+    linked.status = statusName(other.status);
     linked.assigneeName = String(other.assignee?.display_name ?? "");
     linked.assigneeEmail = String(other.assignee?.email ?? "");
     return linked;
@@ -309,7 +311,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const events = [];
       for (const issue of issues) {
         if (!issue.key) continue;
-        let linked: Linked = { key: "", url: "", assigneeName: "", assigneeEmail: "" };
+        let linked: Linked = { key: "", url: "", status: "", assigneeName: "", assigneeEmail: "" };
         // A backend case points at the frontend case that goes with it.
         if ((issue.components ?? []).includes(backend)) {
           try {

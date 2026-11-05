@@ -727,6 +727,7 @@ test("jira-watch: a backend case pings the reporter and the developer of its lin
         reporter_name: "Zhang San",
         linked_fe_key: "OPS-11",
         linked_fe_url: "https://jira.example.com/browse/OPS-11",
+        linked_fe_status: "待办",
         linked_fe_assignee_email: "li.si@example.com",
         linked_fe_assignee_name: "Li Si",
         url: "https://jira.example.com/browse/OPS-12",
@@ -747,6 +748,8 @@ test("jira-watch: a backend case pings the reporter and the developer of its lin
   assert.match(notice[0].text, /@13900002222/, "and the developer of the linked frontend case");
   assert.match(notice[0].text, /OPS-11/, "the message names the linked frontend case");
   assert.match(notice[0].text, /https:\/\/jira\.example\.com\/browse\/OPS-11/, "and where that case is");
+  assert.match(notice[0].text, /———/, "a line separates the two cases");
+  assert.match(notice[0].text, /状态：待办/, "the linked case carries its own status");
 });
 
 test("jira-watch: a frontend case pings only its reporter", () => {
@@ -805,6 +808,7 @@ test("jira-watch: someone the map does not carry is named in words, not pinged",
         reporter_email: "zhang.san@example.com",
         linked_fe_key: "OPS-11",
         linked_fe_url: "https://jira.example.com/browse/OPS-11",
+        linked_fe_status: "待办",
         linked_fe_assignee_email: "li.si@example.com",
         linked_fe_assignee_name: "Li Si",
         url: "https://jira.example.com/browse/OPS-12",

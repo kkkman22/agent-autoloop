@@ -61,20 +61,23 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
   // The same person twice is one mention.
   const mentions = [...new Set([mentionOf(reporter), isBackend ? mentionOf(frontend) : ""].filter(Boolean))];
   const name = reporter?.name || text_("reporter_name") || "（没有映射）";
-  const title = `[${event.subject}] ${event.summary}`.slice(0, 80);
+  // The protocol allows 200 characters; the whole title belongs here, not a shortened one.
+  const title = `[${event.subject}] ${event.summary}`.slice(0, 200);
   // The mention is written the way the group knows the person, so the message reads as their name.
-  // Each address is on its own line: the case, and the frontend case that goes with it.
+  // The case and the frontend case that goes with it each get their own address and status, with a line between.
   const text = [
     mentions.join(" "),
     `${event.subject} ${event.summary}`,
     text_("url") || event.link || "",
     `状态：${text_("status") || "未知"}`,
+    isBackend && text_("linked_fe_key") ? "———" : "",
     isBackend && text_("linked_fe_key")
       ? `关联前端 case：${text_("linked_fe_key")}${
           text_("linked_fe_assignee_name") ? `（经办人 ${text_("linked_fe_assignee_name")}）` : ""
         }`
       : "",
     isBackend && text_("linked_fe_url") ? text_("linked_fe_url") : "",
+    isBackend && text_("linked_fe_status") ? `状态：${text_("linked_fe_status")}` : "",
     isBackend && !text_("linked_fe_key") ? "关联前端 case：没有找到" : "",
   ]
     .filter(Boolean)
