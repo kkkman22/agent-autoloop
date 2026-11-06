@@ -2,7 +2,7 @@
 // rules between them and, only to be shown, the scheduled tasks that run elsewhere. A mistake is caught here with a
 // message saying where: at start it stops the hub, later it leaves the old rules running and the owner is told.
 import { nextRun, parseCron } from "../kernel/cron.ts";
-import { SCHEDULE, type Rule, type Rules } from "../kernel/rules.ts";
+import { eventRule, SCHEDULE, type Rule, type Rules } from "../kernel/rules.ts";
 
 export class RulesError extends Error {
   readonly issues: string[];
@@ -112,6 +112,24 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
   }
   rule.group ??= rule.name;
   rule.tell ??= "needed";
+}
+
+/** What works but probably isn't what was meant: said as warnings by `rules validate`, never blocking. */
+export function ruleWarnings(
+  rules: Rules,
+  known: { keys?: Iterable<string>; cwdExists?: (dir: string) => boolean } = {},
+): string[] {
+  const warnings: string[] = [];
+  for (const [id, channel] of Object.entries(rules.channels))
+    if (!channel.answerers?.length) warnings.push(`通道「${channel.name}」没有 answerers，只能发通知，收不了回答`);
+  const keyed = new Set(known.keys);
+  const exists = known.cwdExists;
+  for (const rule of rules.rules) {
+    if (eventRule(rule) && keyed.size && !keyed.has(rule.when.source))
+      warnings.push(`规则「${rule.name}」的来源 ${rule.when.source} 还没有密钥，它发的事件进不来`);
+    if (exists && !exists(rule.cwd)) warnings.push(`规则「${rule.name}」的目录 ${rule.cwd} 在这台电脑上不存在`);
+  }
+  return warnings;
 }
 
 export function parseRules(json: string, now: number, timezone: string): Rules {

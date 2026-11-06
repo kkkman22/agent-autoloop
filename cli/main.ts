@@ -11,6 +11,7 @@ import { HOME, RULES_FILE } from "../host/home.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
 import { printer } from "./plain-text.ts";
+import { rules } from "./rules.ts";
 import { spendLine } from "./spend.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
 
@@ -32,6 +33,10 @@ const HELP = `Agent 自动化中台
                                     回答一张卡片；通知不用写序号
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
   agent-autoloop doctor                  查哪里没配好
+  agent-autoloop rules validate [文件]   校验规则文件并给出警告；check 是它的别名
+  agent-autoloop rules explain <来源> <事件类型>
+                                    列出会接这条事件的规则
+  agent-autoloop rules explain <规则名>  一条规则的完整说明，定时规则带上接下来 3 次到点
   agent-autoloop check                   检查 rules.json
   agent-autoloop emit <类型> [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]
                                     发一条事件
@@ -444,12 +449,6 @@ async function importRules() {
   }
 }
 
-async function check() {
-  const { parseRules } = await importRules();
-  parseRules(readFileSync(RULES_FILE, "utf8"));
-  console.log("规则没问题。");
-}
-
 async function key(args: string[]) {
   const [action, kind, name] = args;
   if (action === "rotate") {
@@ -639,7 +638,8 @@ const commands: Record<string, () => unknown> = {
   answer: () => answer(args),
   resolve: () => resolve(args),
   doctor,
-  check,
+  check: () => rules(["validate"]),
+  rules: () => rules(args),
   key: () => key(args),
   emit: () => emit(args),
   tell: () => tell(args),
