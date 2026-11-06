@@ -242,6 +242,7 @@ Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应
 - [规则与交付流水线配置手册](skills/agent-autoloop/SKILL.md)
 - [如何编写插件](docs/plugins.md)
 - [完整通信协议](docs/protocol.md)
+- [总览页参考客户端](docs/protocol.md#写一个客户端)：`agent-autoloop-console` 仓库，只靠 `/v1/state` 和 `/v1/stream` 做的例子，与中台分开发布
 - [安全边界说明](SECURITY.md)
 - [参与贡献与交流](CONTRIBUTING.md)
 - [项目开发约定](AGENTS.md)

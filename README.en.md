@@ -244,6 +244,7 @@ For automated workloads, providers generally recommend using API keys rather tha
 - [Configuration & delivery pipeline manual](skills/agent-autoloop/SKILL.md)
 - [Writing plugins](docs/plugins.md)
 - [Full HTTP protocol specification](docs/protocol.md)
+- [Overview console reference](docs/protocol.md): the `agent-autoloop-console` repository, an example built only on `/v1/state` and `/v1/stream`, released separately from the hub
 - [Security boundaries](SECURITY.md)
 - [Contributing and community](CONTRIBUTING.md)
 - [Development guidelines](AGENTS.md)

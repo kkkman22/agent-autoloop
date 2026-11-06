@@ -339,6 +339,16 @@ GET  /v1/metrics            Authorization: Bearer <本人的密钥>
 
 安装、卸载，以及本机的备份、恢复与主密钥轮换都不改变 HTTP 协议。`agent-autoloop --version` 显示包版本与提交；`agent-autoloop uninstall` 确认后移除自身程序、链接和服务，始终保留规则、密钥和记录；`--yes` 只跳过确认。
 
+## 写一个客户端
+
+总览页、大屏都只是 `GET /v1/state` 和 `GET /v1/stream` 的客户端，中台不带任何界面。写一个不需要改中台：
+
+- **本人的密钥只放在服务端。** 一个小服务读密钥、把页面发给浏览器、代理 `/v1/state`、用 SSE 转发 `/v1/stream`。密钥不进浏览器，所以中台不需要 CORS，也不必暴露到公网。参考实现在 `agent-autoloop-console` 仓库（与中台分开发布）。
+- **断线续读用日志序号。** `/v1/stream` 的每条消息带 `id:`，重连时发 `Last-Event-ID: <序号>`（或 `?after=<序号>`）就能从断点接着读，不重不漏。
+- **哪些字段保证稳定。** `/v1/state` 的响应有 JSON Schema（`protocol/schema.json` 的 `state`），上面列出的字段名字、类型和结构不变：`totals` 的九个数字、`lines` 每条规则的 `id/group/agent/disabled/source/types/every/next/totals`、`runs` 的十六个字段、`cards` 沿用 `card` 定义等。`spending`、每规则的 `totals.usage` 只有报了用量的轮次才非零。
+- **新增字段客户端必须忽略。** Schema 不封闭未知字段：中台加字段不动客户端；客户端按「读得到的用、读不到的跳过」写。删除或改名已有字段才是破坏性改动，升中台主版本号。
+- **翻页。** `/v1/state` 一次给最近 60 轮；`hasMore` 为真时用 `?before=<nextBefore>` 翻更早的，翻到的每页同样符合 Schema。
+
 ## 失败时会怎样
 
 | 出了什么事                              | 会怎样                                                                                                                                                                              |

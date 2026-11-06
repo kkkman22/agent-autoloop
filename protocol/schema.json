@@ -595,6 +595,9 @@
         "link": {
           "type": ["string", "null"]
         },
+        "rule": {
+          "type": ["string", "null"]
+        },
         "severity": {
           "enum": ["low", "normal", "urgent"]
         }
@@ -830,6 +833,440 @@
       },
       "required": ["added", "removed", "renamed", "changed", "cancels", "closes", "claimed"],
       "additionalProperties": false
+    },
+    "spending": {
+      "type": "object",
+      "properties": {
+        "rounds": {
+          "type": "integer"
+        },
+        "tokens": {
+          "type": "integer"
+        },
+        "cost": {
+          "type": "number"
+        },
+        "missingTokens": {
+          "type": "integer"
+        },
+        "missingCost": {
+          "type": "integer"
+        }
+      },
+      "required": ["rounds", "tokens", "cost", "missingTokens", "missingCost"]
+    },
+    "totals": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "integer"
+        },
+        "queued": {
+          "type": "integer"
+        },
+        "retrying": {
+          "type": "integer"
+        },
+        "unknown": {
+          "type": "integer"
+        },
+        "done": {
+          "type": "integer"
+        },
+        "doneToday": {
+          "type": "integer"
+        },
+        "nothing": {
+          "type": "integer"
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "integer"
+            },
+            "output": {
+              "type": "integer"
+            },
+            "cost": {
+              "type": "number"
+            }
+          },
+          "required": ["input", "output", "cost"]
+        }
+      },
+      "required": ["running", "queued", "retrying", "unknown", "done", "doneToday", "nothing", "usage"]
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "now": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "spending": {
+          "type": "object",
+          "properties": {
+            "today": {
+              "$ref": "#/$defs/spending"
+            },
+            "week": {
+              "$ref": "#/$defs/spending"
+            }
+          },
+          "required": ["today", "week"]
+        },
+        "totals": {
+          "type": "object",
+          "properties": {
+            "running": {
+              "type": "integer"
+            },
+            "queued": {
+              "type": "integer"
+            },
+            "retrying": {
+              "type": "integer"
+            },
+            "unknown": {
+              "type": "integer"
+            },
+            "done": {
+              "type": "integer"
+            },
+            "doneToday": {
+              "type": "integer"
+            },
+            "nothing": {
+              "type": "integer"
+            },
+            "attention": {
+              "type": "integer"
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "input": {
+                  "type": "integer"
+                },
+                "output": {
+                  "type": "integer"
+                },
+                "cost": {
+                  "type": "number"
+                }
+              },
+              "required": ["input", "output", "cost"]
+            }
+          },
+          "required": ["running", "queued", "retrying", "unknown", "done", "doneToday", "nothing", "usage", "attention"]
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/card"
+          }
+        },
+        "recentCards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/card"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "events": {
+                "type": "integer"
+              }
+            },
+            "required": ["id", "name", "events"]
+          }
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "disabled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "every": {
+                "type": ["string", "null"]
+              },
+              "next": {
+                "type": ["string", "null"]
+              },
+              "totals": {
+                "$ref": "#/$defs/totals"
+              }
+            },
+            "required": ["id", "name", "group", "agent", "disabled", "source", "types", "every", "next", "totals"]
+          }
+        },
+        "elsewhere": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "cron": {
+                "type": "string"
+              },
+              "every": {
+                "type": "string"
+              },
+              "next": {
+                "type": "string"
+              },
+              "where": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "name", "source", "agent", "cron", "every", "next", "where"]
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "use": {
+                "type": "string"
+              },
+              "worker": {
+                "type": "string"
+              },
+              "seenAt": {
+                "type": ["string", "null"]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "totals": {
+                "$ref": "#/$defs/totals"
+              }
+            },
+            "required": ["id", "name", "use", "worker", "seenAt", "online", "totals"]
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "seenAt": {
+                "type": ["string", "null"]
+              },
+              "online": {
+                "type": "boolean"
+              }
+            },
+            "required": ["id", "name", "seenAt", "online"]
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "rule": {
+                "type": "string"
+              },
+              "agent": {
+                "type": ["string", "null"]
+              },
+              "state": {
+                "type": "string"
+              },
+              "attempts": {
+                "type": "integer"
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "claimedAt": {
+                "type": ["string", "null"]
+              },
+              "finishedAt": {
+                "type": ["string", "null"]
+              },
+              "notBefore": {
+                "type": ["string", "null"]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string"
+              },
+              "session": {
+                "type": ["string", "null"]
+              },
+              "usage": {
+                "type": ["object", "null"]
+              },
+              "stopping": {
+                "type": "boolean"
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "link": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["source", "type", "subject", "summary", "link"]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "rule",
+              "agent",
+              "state",
+              "attempts",
+              "createdAt",
+              "claimedAt",
+              "finishedAt",
+              "notBefore",
+              "summary",
+              "error",
+              "link",
+              "session",
+              "usage",
+              "stopping",
+              "events"
+            ]
+          }
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextBefore": {
+          "type": ["integer", "null"]
+        },
+        "unrouted": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "source": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "source", "key", "type", "subject", "summary"]
+          }
+        }
+      },
+      "required": [
+        "now",
+        "timezone",
+        "spending",
+        "totals",
+        "cards",
+        "recentCards",
+        "sources",
+        "lines",
+        "elsewhere",
+        "agents",
+        "channels",
+        "runs",
+        "hasMore",
+        "nextBefore",
+        "unrouted"
+      ],
+      "additionalProperties": true
     },
     "fact": {
       "type": "object",
