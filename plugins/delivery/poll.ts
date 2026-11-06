@@ -1,8 +1,13 @@
 // What's waiting for delivery, as events: each labelled item, with an id that stays the same until something changes.
 import { github, pages } from "./github.ts";
+import { gitlabPoll } from "./gitlab.ts";
 import { pendingEvents } from "./input.ts";
 
+export type Platform = "github" | "gitlab";
+const platform = (): Platform => (process.env.AGENT_AUTOLOOP_DELIVERY_HOST === "gitlab" ? "gitlab" : "github");
+
 export async function poll(repo: string) {
+  if (platform() === "gitlab") return gitlabPoll(repo);
   const api = github(repo);
   const rows = [];
   for (const label of ["deliver", "ask-owner"]) {

@@ -527,6 +527,8 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 
 `deliver-review` 审查通过就结束并移除交付标签，不代表已检查、合并或上线；在等待检查期间加上这个标签，合并前也会停在只审查，不写允许合并的审查状态。审查发现问题写 `delivery=failure`，交回问题；`deliver-attended` 不额外产生通知卡片。普通 issue 的 `ask-owner` 只将可读正文变成问题卡片，去掉代码块和本机路径，答复后移除标签。不向 GitHub 发评论，不建立 PR 说明里的多轮审查账本，也不支持用“已处理”文字豁免发现的问题；新提交重新审查。
 
+**第二个托管平台。** 交付的规则写在平台无关的 `DeliveryHost` 接口里（`plugins/delivery/host.ts`），GitHub 和 GitLab 各自把它翻译成自己的 REST 方言（`github.ts`、`gitlab.ts`，后者走已登录的 `glab`）。同一张行为场景表（受保护路径不自动合并、检查定义与 main 不一致不合并、草稿转正、提交或 main 变化不合并、合并响应丢失读回、设置只从 main 读）对两个平台的假 REST 各跑一遍，规则一个字不差。GitLab 的方言：MR 标签是字符串列表，草稿写在标题前缀（`Draft:`）里，转正就是改标题；完整检查是 head 提交上的流水线，`manual`、`skipped` 只算等待、永不算通过；合并带 `sha` 条件，审批不通过的平台拒绝就是拒绝；定义一致性比较的是 `.gitlab-ci.yml`；Ship 判定走 `plugins/delivery/gitlab-ci.yml` 模板里的 job，调同一个发布判断。接单机选平台用环境变量 `AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`（默认 `github`）；`ops/delivery.json` 仍不加平台字段，平台属于接单机的接入方式。GitLab 没有另一条更高权限的合并通道，`admin_merge` 在 GitLab 上不起作用——合并权限就是 `glab` 登录者自己的角色。
+
 已经合并的 PR 直接继续跟踪 Ship 和健康检查。默认最多跟踪 30 分钟，超时交给中台重试；没有健康设置的项目明确报告只完成合并。发布范围对比**健康版本到目标提交的整个差异**：只有普通内部文档变化可跳过，可执行位、符号链接、重命名到外部路径、未知历史都要求发布；后来只有文档变化不能让尚未完成的代码发布被跳过。
 
 Ship 使用本引擎仓库的 `plugins/delivery/action.yml`，项目固定到发布后的完整提交。Action 只输出 `release` 和 `superseded`，项目已有发布步骤根据输出运行。它与交付进程共用 `project.ts` 的范围与健康判断，不在项目里长期复制工具。

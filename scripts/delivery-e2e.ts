@@ -15,6 +15,12 @@ assert.ok(
   repo && /^[\w.-]+\/[\w.-]+$/.test(repo) && flag === "--run",
   "用法：node scripts/delivery-e2e.ts owner/name --run（会创建并删除这个私有仓库）",
 );
+// GitLab's behavior runs in the shared scenario table (tests/delivery-hosts.test.ts); this live script only drives
+// GitHub today, and says so instead of pretending a glab run would work.
+assert.ok(
+  process.env.AGENT_AUTOLOOP_DELIVERY_HOST !== "gitlab",
+  "GitLab 的真机脚本还没提供；GitLab 行为由 tests/delivery-hosts.test.ts 覆盖，真机验证请先用 GitHub。",
+);
 const root = mkdtempSync(join(tmpdir(), "agent-autoloop-delivery-e2e-"));
 const work = join(root, "seed");
 const home = join(root, "hub");

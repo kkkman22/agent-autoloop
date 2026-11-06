@@ -158,7 +158,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
 
-**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。PR 改动 CI 工作流、`scripts/`、`tests/`、`package.json`、`package-lock.json` 或 `ops/delivery.json` 时不会自动合并，要在 PR 上打 `deliver-attended` 确认；Ship 用合并前 main 的设置判定发布。审查是建议，不是安全门禁。
+**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。PR 改动 CI 工作流、`scripts/`、`tests/`、`package.json`、`package-lock.json` 或 `ops/delivery.json` 时不会自动合并，要在 PR 上打 `deliver-attended` 确认；Ship 用合并前 main 的设置判定发布。审查是建议，不是安全门禁。**同样的规则也跑在 GitLab 上**：接单机设 `AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`（用已登录的 `glab`），MR 的草稿是标题前缀、完整检查是流水线（manual/skipped 只算等待）、合并钉住已审查的提交；同一张行为场景表对两个平台各跑一遍，见 `plugins/delivery/gitlab-ci.yml` 模板与 `docs/protocol.md` 的交付插件一节。
 
 **写自己的插件。** 从 [Agent](examples/plugins/hello-agent/agent.ts)、[通道](examples/plugins/hello-channel/channel.ts)、[事件](examples/plugins/hello-source/source.ts) 三个可运行的最小模板开始，见[插件开发说明](docs/plugins.md)。要让 Agent 操作网页，先看[浏览器接入](docs/plugins.md#浏览器接入)。命令行和 [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销)（默认只读）也能查看和回答卡片。
 

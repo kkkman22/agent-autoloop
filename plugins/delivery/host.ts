@@ -3,6 +3,7 @@
 // The business logic (delivery.ts) only speaks this; each platform file translates it to and from its REST shapes,
 // so the same scenarios hold on any host and the existing GitHub tests keep exercising the GitHub translation.
 import { githubHost } from "./github.ts";
+import { gitlabHost } from "./gitlab.ts";
 import type { DeliveryIO } from "./delivery.ts";
 import type { Settings } from "./project.ts";
 
@@ -50,9 +51,6 @@ export type DeliveryHost = {
 
 /** Which platform an io object speaks; everything already wired to the GitHub shapes stays on GitHub. */
 export function hostFor(io: DeliveryIO, repo: string): DeliveryHost {
-  if (io.host === "gitlab") {
-    // Added with the GitLab translation; until then, a mislabelled io is refused rather than misread.
-    throw new Error(`GitLab 交付还没有接线（repo：${repo}）`);
-  }
+  if (io.host === "gitlab") return gitlabHost(repo, io);
   return githubHost(repo, io);
 }

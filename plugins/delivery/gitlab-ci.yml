@@ -1,0 +1,16 @@
+# Ship 判断的 GitLab 版：main 上的 push 跑一次发布判定，判定逻辑与 GitHub Action 同源（plugins/delivery/action.ts
+# 的 decideShip，由 run.ts 调起）。放进目标项目 .gitlab-ci.yml 的 job 模板；外部镜像固定到摘要后再上生产。
+#
+# 前置：
+#   - 目标项目装好交付插件需要的四类标签（deliver、deliver-attended、deliver-review、ask-owner）。
+#   - CI 变量提供 AGENT_AUTOLOOP_HUB / AGENT_AUTOLOOP_OWNER（本人密钥，masked & protected）。
+#   - runner 里有 Node 24 和检出中台代码的路径（DELIVERY_HOME），或直接把中台检出作为 includes 的项目。
+ship:
+  image: node:24-slim@sha256:0000000000000000000000000000000000000000000000000000000000000000 # 固定摘要，升级时换成新摘要
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    # 只做发布判定：读合并前 main 的设置，算 release / superseded，需要时发事件给中台。
+    - node "$DELIVERY_HOME/plugins/delivery/run.ts" "$CI_PROJECT_PATH"
+  environment:
+    name: production

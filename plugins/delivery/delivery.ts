@@ -22,8 +22,14 @@ export type Delivered = { summary: string; merged?: string; reviewOnly?: boolean
 
 const DELIVER_LABELS = ["deliver", "deliver-attended", "deliver-review"];
 
-export const status = (io: DeliveryIO, head: string, context: string, state: string, description: string) =>
-  hostFor(io, "github/status").status(head, context, state, description);
+export const status = (
+  io: DeliveryIO,
+  head: string,
+  context: string,
+  state: string,
+  description: string,
+  repo?: string,
+) => hostFor(io, repo ?? "").status(head, context, state, description);
 
 export async function disableAuto(number: number, io: DeliveryIO, repo?: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
