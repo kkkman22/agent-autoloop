@@ -26,7 +26,7 @@ const edits: [string, string, string, string][] = [
   ["receipt-conflict", "decide.ts", "if (prior.last_result !== hash)", "if (false)"],
   ["run-capability", "decide.ts", 'credential(draft.env, "run", id, run.issued) !== token', "false"],
   ["answer-first", "decide.ts", 'if (card.state !== "open")', "if (false)"],
-  ["answer-person", "decide.ts", 'if (allowed && !allowed.includes(given.by ?? ""))', "if (false)"],
+  ["answer-person", "decide.ts", 'if (!answerers.includes("*") && !answerers.includes(given.by))', "if (false)"],
   ["answer-message", "decide.ts", "if (!delivery?.ref || delivery.ref !== given.ref)", "if (false)"],
   [
     "answer-wakeup",

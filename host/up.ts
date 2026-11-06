@@ -3,9 +3,11 @@
 // detached, and the worker finds them again when it's back.
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { loadChannel } from "./channels.ts";
 import { parseListen, readConfig, type ChannelConfig } from "./config.ts";
 import { HOME } from "./home.ts";
+import { limitsFrom } from "./limits.ts";
 import { runningUp } from "./service.ts";
 import { commitOf } from "./version.ts";
 import { hubClient } from "../protocol/client.ts";
@@ -35,22 +37,43 @@ export function loadSecrets() {
   process.loadEnvFile(file);
 }
 
-/** A channel that stops for any reason is started again. */
-async function keepChannelRunning(
+/** A channel that stops soon after it started waits this long first, twice as long each further time, up to the most. */
+const FIRST_PAUSE = 5_000;
+const LONGEST_PAUSE = 5 * 60_000;
+/** A channel that ran this long before stopping was working: its next stop starts the pauses over. */
+const STEADY = 10 * 60_000;
+
+type ChannelDeps = {
+  load?: typeof loadChannel;
+  now?: () => number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  say?: (line: string) => void;
+};
+const pause = (ms: number, signal: AbortSignal) => sleep(ms, undefined, { signal }).catch(() => {});
+
+/** A channel that stops for any reason is started again, later each time it stops right after starting. */
+export async function keepChannelRunning(
   id: string,
   { use, key, ...options }: ChannelConfig,
   url: string,
   signal: AbortSignal,
+  { load = loadChannel, now = Date.now, sleep = pause, say = log(id) }: ChannelDeps = {},
 ) {
-  const say = log(id);
+  let quickStops = 0;
   while (!signal.aborted) {
+    const began = now();
+    let why = "returned";
     try {
-      const start = await loadChannel(use ?? id);
+      const start = await load(use ?? id);
       await start({ hub: hubClient(url, key), options, log: say, signal });
     } catch (error) {
-      say(`stopped: ${error}; starting again in 30 seconds`);
-      await new Promise((resolve) => setTimeout(resolve, 30_000));
+      why = String(error);
     }
+    if (signal.aborted) return;
+    quickStops = now() - began >= STEADY ? 0 : quickStops + 1;
+    const wait = Math.min(FIRST_PAUSE * 2 ** Math.max(quickStops - 1, 0), LONGEST_PAUSE);
+    say(`stopped: ${why}; starting again in ${wait / 1000} seconds`);
+    await sleep(wait, signal);
   }
 }
 
@@ -64,13 +87,15 @@ export async function up() {
   if (config.hub) {
     loadSecrets();
     const { host, port } = parseListen(config.hub.listen);
+    // A mistyped limit stops the start here: running without the limit the owner meant is worse than not running.
+    const limits = limitsFrom(config.hub.limits);
     process.env.AGENT_AUTOLOOP_PUBLIC_URL = config.hub.publicUrl ?? `http://${config.hub.listen}`;
     const { serve } = await import("./http.ts");
     const say = log("hub");
     if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
       say(`${host} 不是本机回环地址，中台会向这个地址所在的网络开放；前面要有 HTTPS 反向代理`);
     }
-    const server = serve(port, host, { commit: commitOf() });
+    const server = serve(port, host, { commit: commitOf(), limits, log: say });
     server.on("listening", () => say(`listening on ${config.hub!.listen}`));
     server.on("error", (error) => {
       say(`can't listen: ${error}`);

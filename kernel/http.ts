@@ -13,6 +13,7 @@ export type Services = {
   dispatch(type: string, args: any[], now: number): any;
   state(now: number, before?: number): unknown;
   why(id: number): unknown;
+  metrics(): string;
   card(token: string): Row | undefined;
   wait(until: number, signal: AbortSignal): Promise<void>;
   stream(after: number, signal: AbortSignal, key: string): ReadableStream;
@@ -209,6 +210,13 @@ function stream(call: Call) {
   return new Response(services.stream(Number(after), request.signal, token), { headers });
 }
 
+function metrics(call: Call) {
+  requireKey(call, "owner");
+  return new Response(call.services.metrics(), {
+    headers: { "content-type": "text/plain; charset=utf-8", ...NO_STORE },
+  });
+}
+
 async function route(call: Call): Promise<Response> {
   const { request, services, token } = call;
   const { method } = request;
@@ -251,6 +259,7 @@ async function route(call: Call): Promise<Response> {
   const card = /^\/v1\/cards\/([1-9][0-9]*)\/(delivered|failed|answer|resolve)$/.exec(path);
   if (method === "POST" && card) return cardAction(call, Number(card[1]), card[2]);
   if (method === "GET" && path === "/v1/state") return state(call);
+  if (method === "GET" && path === "/v1/metrics") return metrics(call);
   if (method === "GET" && path === "/v1/stream") return stream(call);
   return json({ error: "没有这个地址" }, 404);
 }

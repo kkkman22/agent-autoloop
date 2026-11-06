@@ -57,7 +57,8 @@ export function initialize(db: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS projection_meta(id INTEGER PRIMARY KEY,seq INTEGER NOT NULL,next TEXT NOT NULL,format TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS projection_refs(collection TEXT,key TEXT,seq INTEGER,PRIMARY KEY(collection,key,seq));
     CREATE TABLE IF NOT EXISTS projection_pending(key TEXT PRIMARY KEY,card_id INTEGER,channel TEXT);
-    CREATE INDEX IF NOT EXISTS pending_channel ON projection_pending(channel,card_id);`);
+    CREATE INDEX IF NOT EXISTS pending_channel ON projection_pending(channel,card_id);
+    CREATE TABLE IF NOT EXISTS projection_tallies(rule TEXT,agent TEXT,state TEXT,count INTEGER NOT NULL,retrying INTEGER NOT NULL,input INTEGER NOT NULL,output INTEGER NOT NULL,cost_nano INTEGER NOT NULL,PRIMARY KEY(rule,agent,state));`);
   indexProjection(db);
   ready.add(db);
 }
@@ -190,7 +191,7 @@ export function evolve(view: View, facts: Iterable<Fact>, db = view.db, reset = 
       .all())
       db.exec(`DROP INDEX "${String(name).replaceAll('"', '""')}"`);
     db.exec("DELETE FROM projections");
-    db.exec("DELETE FROM projection_refs; DELETE FROM projection_pending");
+    db.exec("DELETE FROM projection_refs; DELETE FROM projection_pending; DELETE FROM projection_tallies");
     indexProjection(db);
   }
   let seq = view.seq;
@@ -200,6 +201,27 @@ export function evolve(view: View, facts: Iterable<Fact>, db = view.db, reset = 
     "INSERT INTO projections VALUES (?,?,?) ON CONFLICT(collection,key) DO UPDATE SET data=excluded.data",
   );
   const remove = statement(db, "DELETE FROM projections WHERE collection=? AND key=?");
+  const stored = statement(db, "SELECT data FROM projections WHERE collection=? AND key=?");
+  // Derived like projection_pending, kept outside the records: the log never states these totals, it only implies them.
+  const tally = statement(
+    db,
+    `INSERT INTO projection_tallies VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(rule,agent,state) DO UPDATE SET
+      count=count+excluded.count, retrying=retrying+excluded.retrying, input=input+excluded.input,
+      output=output+excluded.output, cost_nano=cost_nano+excluded.cost_nano`,
+  );
+  const untally = statement(db, "DELETE FROM projection_tallies WHERE rule=? AND agent=? AND state=? AND count=0");
+  /** Keeps the totals of each rule, agent and state as runs come, change and go, so nobody has to count them all. */
+  const count = (run: Row | null | undefined, sign: 1 | -1) => {
+    if (!run) return;
+    const usage = run.usage ? JSON.parse(run.usage) : {};
+    const retrying = run.state === "queued" && run.attempts > 0 ? sign : 0;
+    // Whole billionths: adding a cost and later taking it away must leave exactly nothing behind.
+    const cost = sign * Math.round((usage.cost ?? 0) * 1e9);
+    const input = sign * (usage.input ?? 0);
+    const output = sign * (usage.output ?? 0);
+    tally.run(run.rule, run.agent, run.state, sign, retrying, input, output, cost);
+    untally.run(run.rule, run.agent, run.state);
+  };
   for (const fact of facts) {
     seq = fact.seq;
     const pending = new Map<string, Change>();
@@ -210,6 +232,11 @@ export function evolve(view: View, facts: Iterable<Fact>, db = view.db, reset = 
     for (const { table, key, row } of pending.values()) {
       if (["events", "runs", "cards"].includes(table))
         statement(db, "INSERT OR IGNORE INTO projection_refs VALUES (?,?,?)").run(table, key, fact.seq);
+      if (table === "runs") {
+        const before = stored.get(table, key);
+        count(before ? JSON.parse(String(before.data)) : null, -1);
+        count(row, 1);
+      }
       if (row === null) remove.run(table, key);
       else {
         const data = JSON.stringify(row);

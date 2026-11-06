@@ -24,7 +24,7 @@ while IFS= read -r file; do
     # Tests read these pages: tests/example-plugins.test.ts runs this tutorial's commands, and tests/docs-json.test.ts
     # parses the examples in them, so a change to one gets the unit tests.
     docs/protocol.md | docs/plugins.md | README.md | README.en.md) kind=normal ;;
-    INSTALL.md | SECURITY.md | CONTRIBUTING.md | AGENTS.md | LICENSE) kind=docs ;;
+    INSTALL.md | SECURITY.md | CONTRIBUTING.md | AGENTS.md | LICENSE | CHANGELOG.md) kind=docs ;;
     docs/* | .github/ISSUE_TEMPLATE/* | .github/pull_request_template.md) kind=docs ;;
     plugins/* | examples/* | skills/* | worker/* | host/* | cli/* | bin/* | install.sh) kind=normal ;;
     *) kind=full ;;

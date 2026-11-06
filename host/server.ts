@@ -3,13 +3,69 @@
 import { watch } from "node:fs";
 import { dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
+import { createLimiter, type Limits } from "./limits.ts";
+import { metricsText } from "./metrics.ts";
 import { loadPlugin } from "./plugins.ts";
 import * as hub from "./runtime.ts";
+import { PAGE_HEADERS, wordsPage } from "../kernel/card-page.ts";
+import { whose } from "../kernel/credentials.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
 import { createHandler } from "../kernel/http.ts";
 
 /** Past this setTimeout fires at once. */
 const LONGEST_TIMER = 2147483647;
+/** A turned-away upload is read this far before answering: answering mid-write resets the caller's connection. */
+const DRAIN = 8 * 1024 * 1024;
+const DRAIN_MS = 5_000;
+const KINDS = ["owner", "worker", "channel", "source"];
+
+/** Who is asking, for counting: a key's holder, a run, a webhook's source, card links, or one name for every guess. */
+function callerOf(request: Request) {
+  const { pathname } = new URL(request.url);
+  const token = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
+  if (!token) {
+    const hook = /^\/v1\/in\/([a-z][a-z0-9-]*)$/.exec(pathname);
+    if (hook) return `in:${hook[1]}`;
+    return pathname.startsWith("/c/") ? "link" : "anyone";
+  }
+  const view = hub.getView();
+  for (const kind of KINDS) {
+    const name = whose(view, kind, token);
+    if (name) return `${kind}:${name}`;
+  }
+  const run = /^\/v1\/runs\/([1-9][0-9]*)\/(started|result)$/.exec(pathname);
+  return run ? `run:${run[1]}` : "guess";
+}
+
+async function drain(request: Request) {
+  if (!request.body) return;
+  const reader = request.body.getReader();
+  let timer: NodeJS.Timeout | undefined;
+  // A refused caller isn't counted any more, so an upload that never ends must not keep it here either.
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(resolve, DRAIN_MS, null);
+  });
+  let size = 0;
+  try {
+    while (size <= DRAIN) {
+      const next = await Promise.race([reader.read(), late]);
+      if (!next || next.done) return;
+      size += next.value.length;
+    }
+  } catch {
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function tooMany(request: Request, reason: string, retryAfter: number) {
+  const message = `请求太多了（${reason}），${retryAfter} 秒后再试`;
+  const headers = { "retry-after": String(retryAfter), "cache-control": "no-store" };
+  if (new URL(request.url).pathname.startsWith("/c/")) {
+    return new Response(wordsPage(message), { status: 429, headers: { ...PAGE_HEADERS, ...headers } });
+  }
+  return Response.json({ error: message }, { status: 429, headers });
+}
 
 function logStream(after: number, signal: AbortSignal, key: string) {
   let cursor = after;
@@ -66,7 +122,9 @@ async function adaptWebhook(source: string, headers: Headers, body: string) {
   }
 }
 
-export function makeHandler(commit = "dev") {
+export type HandlerOptions = { commit?: string; limits?: Limits; log?: (line: string) => void };
+
+export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerOptions = {}) {
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
   const waiting = new Set<{ until: number; done: () => void }>();
@@ -107,6 +165,7 @@ export function makeHandler(commit = "dev") {
     dispatch: hub.execute,
     state: hub.stateOf,
     why: hub.why,
+    metrics: () => metricsText(commit),
     card: hub.cardByToken,
     wait(until, signal) {
       return new Promise((resolve) => {
@@ -129,8 +188,20 @@ export function makeHandler(commit = "dev") {
   });
   hub.tick();
   arm();
+  const admit = limits && createLimiter(limits, log);
   return {
-    handle,
+    async handle(request: Request) {
+      if (!admit) return handle(request);
+      const admitted = admit(callerOf(request), new URL(request.url).pathname);
+      if ("reason" in admitted) {
+        await drain(request);
+        return tooMany(request, admitted.reason, admitted.retryAfter);
+      }
+      // The Node server aborts every request's signal once its answer is over, a long poll or a stream included.
+      request.signal.addEventListener("abort", admitted.release, { once: true });
+      if (request.signal.aborted) admitted.release();
+      return handle(request);
+    },
     close() {
       closed = true;
       clearTimeout(timer);

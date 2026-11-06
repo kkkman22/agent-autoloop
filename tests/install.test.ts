@@ -68,8 +68,13 @@ if [ "$1" = clone ]; then for target; do :; done; cp -R "${copy}" "$target"; mkd
   const hub = join(person, ".agent-autoloop");
   const program = join(hub, "app", "bin", "agent-autoloop.ts");
   const local = join(person, ".local", "bin");
-  const run = (path: string[], args = ["--no-service", "--command", "true", "--port", "3999"], shell = "/bin/sh") => {
-    const env: NodeJS.ProcessEnv = { HOME: person, PATH: [...path, tools].join(":") };
+  const run = (
+    path: string[],
+    args = ["--no-service", "--command", "true", "--port", "3999"],
+    shell = "/bin/sh",
+    extra: NodeJS.ProcessEnv = {},
+  ) => {
+    const env: NodeJS.ProcessEnv = { HOME: person, PATH: [...path, tools].join(":"), ...extra };
     return spawnSync(shell, [script, ...args], {
       env,
       encoding: "utf8",
@@ -212,4 +217,32 @@ test("running it again updates and doesn't set anything up over what's there", (
   assert.equal(it.run([it.local], []).status, 0);
   const service = process.platform === "darwin" ? /^launchctl bootstrap /m : /^systemctl --user enable --now /m;
   assert.match(readFileSync(it.called, "utf8"), service, "without --no-service an update restarts the service");
+});
+
+// Failure modes: a named version installs the newest anyway; running it again with a version pulls instead of moving
+// to that version; a version that starts like an option reaches git as one.
+test("a version named in AGENT_AUTOLOOP_REF is the one installed, and the one moved to when it runs again", () => {
+  const it = computer();
+  const version = { AGENT_AUTOLOOP_REF: "v1.2.0" };
+  const first = it.run([it.local], undefined, undefined, version);
+  assert.equal(first.status, 0, first.stderr);
+  const app = join(it.hub, "app");
+  assert.match(
+    readFileSync(it.called, "utf8"),
+    new RegExp(`^git clone --quiet --depth 1 --branch v1\\.2\\.0 -- \\S+ ${app}$`, "m"),
+  );
+
+  rmSync(it.called);
+  const again = it.run([it.local], undefined, undefined, version);
+  assert.equal(again.status, 0, again.stderr);
+  assert.deepEqual(readFileSync(it.called, "utf8").trim().split("\n"), [
+    `git -C ${app} fetch --quiet origin tag v1.2.0`,
+    `git -C ${app} checkout --quiet refs/tags/v1.2.0`,
+  ]);
+
+  rmSync(it.called);
+  const sneaky = it.run([it.local], undefined, undefined, { AGENT_AUTOLOOP_REF: "--upload-pack=touch" });
+  assert.equal(sneaky.status, 1);
+  assert.match(sneaky.stdout, /版本名/);
+  assert.ok(!existsSync(it.called), "git 一次都没被叫到");
 });

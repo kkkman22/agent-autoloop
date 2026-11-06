@@ -1,10 +1,10 @@
 // Node's HTTP server and nothing more: each request becomes a web Request for the kernel, each answer goes back out.
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
-import { makeHandler } from "./server.ts";
+import { makeHandler, type HandlerOptions } from "./server.ts";
 
-export function serve(port: number, host = "127.0.0.1", { commit = "dev" }: { commit?: string } = {}) {
-  const runtime = makeHandler(commit);
+export function serve(port: number, host = "127.0.0.1", options: HandlerOptions = {}) {
+  const runtime = makeHandler(options.commit, options);
   const server = createServer(async (req, res) => {
     const gone = new AbortController();
     res.on("close", () => gone.abort());

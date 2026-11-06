@@ -3,8 +3,10 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { openDatabase } from "./database.ts";
 import { HOME, RULES_FILE } from "./home.ts";
+import { formatOf } from "./fingerprint.ts";
 import { credential, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
@@ -12,7 +14,7 @@ import { evolve, rows, keyOf, statement, type Fact, type Row, type Table } from 
 import * as query from "../kernel/query.ts";
 import { eventRule, typeMatches } from "../kernel/rules.ts";
 import { stateOf as state } from "../kernel/state.ts";
-import { commit, openView } from "../kernel/store.ts";
+import { commit, openView, REBUILD_CHUNK } from "../kernel/store.ts";
 import type { Job } from "../protocol/job.ts";
 import { parseRules as checkRules, RulesError } from "../protocol/rules.ts";
 import type { Rejected } from "../protocol/validate.ts";
@@ -37,7 +39,7 @@ export const environment = {
 };
 
 const dbFile = join(HOME, "hub.db");
-export const db = new DatabaseSync(dbFile);
+export const db = openDatabase(dbFile, environment.secret);
 chmodSync(dbFile, 0o600);
 db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
 if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").get()) {
@@ -47,9 +49,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS facts(seq INTEGER PRIMARY KEY, fact TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS projections(collection TEXT, key TEXT, data TEXT NOT NULL, PRIMARY KEY(collection, key));
 `);
-db.function("card_token", { deterministic: true }, (id, at) => credential(environment, "card", id, at));
-db.function("card_hash", { deterministic: true }, (id, at) => digest(credential(environment, "card", id, at)));
-
 const schema = readFileSync(new URL("../kernel/schema.sql", import.meta.url), "utf8");
 const views: string[] = [];
 for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n\);/g)) {
@@ -67,13 +66,16 @@ for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n
 // Other processes must see either the old views or the new ones, never the gap between DROP and CREATE.
 db.exec(`BEGIN IMMEDIATE; ${views.join(";")}; COMMIT`);
 
-// The persisted projection is expendable; the log alone rebuilds it.
-const format = digest(
-  ["../kernel/evolve.ts", "../kernel/schema.sql", "../kernel/credentials.ts", "./runtime.ts"]
-    .map((file) => readFileSync(new URL(file, import.meta.url), "utf8"))
-    .join("\n") + digest(environment.secret),
-);
-let current = openView(db, format);
+// The persisted projection is expendable; the log alone rebuilds it. Where that value comes from is in fingerprint.ts:
+// a backup records the same value, so a restore can tell whether the copy it brings needs rebuilding here.
+const format = formatOf(environment.secret);
+// A long log takes a while to rebuild; it says how far it has got, and a stop partway carries on from there next time.
+const rebuilding = {
+  progress(done: number, total: number) {
+    if (total > REBUILD_CHUNK) console.error(`正在从日志重建视图：${done} / ${total}`);
+  },
+};
+let current = openView(db, format, rebuilding);
 db.exec(
   "CREATE INDEX IF NOT EXISTS projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'",
 );
@@ -90,7 +92,7 @@ export const one = <T>(sql: string, params: SQLInputValue[] = []) => {
 };
 
 export function getView() {
-  current = openView(db, format);
+  current = openView(db, format, rebuilding);
   return current;
 }
 

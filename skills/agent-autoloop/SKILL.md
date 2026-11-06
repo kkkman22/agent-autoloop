@@ -13,6 +13,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 这里没有网页。用户想要一个页面看全局，就替他写一个：读 `GET /v1/state`，密钥是 `config.json` 的 `owner`，请求见 `docs/protocol.md` 的「本人」一节。
 
+用户要把中台接进监控（Prometheus、Grafana、告警），让他抓 `GET /v1/metrics`，同样用 `owner` 密钥：一行一个数值，含轮数、费用、在线数、发送失败和被放弃的卡片、日志与投影的位置和数据库文件大小。里面没有卡片和事件里的字，也没有密钥；读它不写事实。
+
 ## 改规则
 
 改 `rules.json`，运行 `agent-autoloop check`。几秒内生效；写错了旧规则继续跑，并推一张卡片说错在哪。尚未领取的任务在领活时一起更新 Agent、目录和权限；已领取任务的 Job 配置与接单程序保留到这次执行结束。删掉或改名一条规则会取消还没领走的排队轮次、关闭对应卡片并各发一张通知；回答这些旧卡片会被拒绝，要先 `resolve` 结掉。
@@ -88,7 +90,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 同一个飞书应用的卡片点击只能有一个监听，只在一台电脑上跑。
 
-**只会发文字的（钉钉、企微的群机器人，Slack、Discord 的 Webhook）**：用 `plugins/webhook/channel.ts`，`config.json` 的通道项写 `"use": "webhook"`、`"platform": "dingtalk"` 和 `"url": "已有的 Webhook 地址"`；平台也可选 `wecom`、`slack`、`discord`。钉钉机器人用加签时再写 `"secret": "SEC…"`；要 @ 人就写 `"at": ["userid 或手机号", …]` 白名单——正文里写了同一个标识、且它在白名单里，才会真的提醒那个人，纯名字（`@张三`）不算提及。`rules.json` 里写 `"links": true`，卡片链接本身就能回答；`config.json` 的 `hub.publicUrl` 要配成手机或电脑能打开的地址。
+**只会发文字的（钉钉、企微的群机器人，Slack、Discord 的 Webhook）**：用 `plugins/webhook/channel.ts`，`config.json` 的通道项写 `"use": "webhook"`、`"platform": "dingtalk"` 和 `"url": "已有的 Webhook 地址"`；平台也可选 `wecom`、`slack`、`discord`。钉钉机器人用加签时再写 `"secret": "SEC…"`；要 @ 人就写 `"at": ["userid、手机号或群里那个人的写法", …]` 白名单——正文里写了同一个写法、且它在白名单里，才会真的提醒那个人；名字要和白名单里那一项对得上，纯文字（`@张三`）而白名单里没有 `张三`，就不算提及。`rules.json` 里写 `"links": true`，卡片链接本身就能回答；`config.json` 的 `hub.publicUrl` 要配成手机或电脑能打开的地址。
 
 **有按钮的新通道**：在 `~/.agent-autoloop/plugins/<名字>/channel.ts` 写一个，照 `plugins/feishu/channel.ts`：循环领卡片、发或改、报告；收到点击转给 `hub.answer`。协议在 `docs/protocol.md`，用别的语言写也行，只要会发 HTTP。
 
@@ -156,12 +158,16 @@ MCP 客户端的启动程序填 `node`，参数为本机引擎绝对路径 `bin/
 
 电脑不用开放任何端口，它们自己连过去。
 
+中台按调用者限量：每把密钥、每一轮、每个 Webhook 来源各算各的，对不上的密钥合起来算一个。超了回 429，接单程序会留着结果稍后再交。正常用量碰不到默认上限；真碰到了（比如一个来源一次推几百条），在 `config.json` 的 `hub.limits` 里调大 `perMinute`、`burst`、`inFlight` 或 `waiting`，再 `agent-autoloop service install` 重启。中台日志里的 `limited <调用者>` 说明是谁、超了哪一项。通道插件一启动就退出时会越等越久再重启，最长 5 分钟，日志里能看到原因。
+
 ## 日志与恢复
 
 接插件先在专用测试中台验证：`agent-autoloop conformance <地址> --config <测试凭据文件>`。文件里的 `keys` 分别放来源、接单程序、通道、本人密钥；`eventType` 匹配测试规则，`answerer` 在测试通道的允许名单内。检查会写事件和卡片，不指向正在用的中台。协议类型在 `protocol/schema.json`。
 
-`kernel/` 不读时钟、不取随机数。判断、事实追加和 `evolve` 更新投影在同一 WAL + FULL 事务里完成，提交后才应答。正常启动复用带游标和编号高水位的投影；格式指纹变化时从日志逐条重建，不改变旧事实。`agent-autoloop why 42` 查一轮的事件、规则和回执；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希。
+`kernel/` 不读时钟、不取随机数。判断、事实追加和 `evolve` 更新投影在同一 WAL + FULL 事务里完成，提交后才应答。正常启动复用带游标和编号高水位的投影；格式指纹变化时从日志逐条重建，不改变旧事实。`agent-autoloop why 42` 查一轮的事件、规则和回执；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希，卡片链接查找索引也只保存 token 的哈希。
+
+备份用命令：`agent-autoloop backup [目录]` 把数据库、主密钥、配置和规则写进一个新目录（默认 `~/.agent-autoloop/backups/<时间>`），中台在跑也能备份；目录和文件只给本人读。换回来用 `agent-autoloop restore <目录> --yes`：中台要先停掉，命令先核对清单、每个文件的哈希和事实条数，任何一处对不上就整份拒绝；确认后旧文件先挪到 `replaced-<时间>` 里保留。换主密钥用 `agent-autoloop key rotate --yes`（同样要求先停掉中台，换之前自动在 `backups/` 留一份当时的备份）：换完所有旧的卡片链接、以及已经发出去还没交回结果的轮次 token 立刻失效，`key new` 建的访问密钥不受影响；换完启动中台，它按新的格式指纹从日志重建视图，慢一点，数据不丢。
 
 ## 版本与卸载
 
-`agent-autoloop --version` 显示版本和提交。`agent-autoloop uninstall` 确认后删除自身程序、链接和服务，规则、密钥和记录保留；`--yes` 只跳过确认。
+`agent-autoloop --version` 显示版本和提交。`agent-autoloop update --check` 看有没有更新，不改任何东西；`agent-autoloop update` 更新到最新，`update <版本>` 换到某个标签，`update --rollback` 换回上一次更新之前的版本，再执行一次就又换回来。更新前先 `agent-autoloop backup`。`agent-autoloop uninstall` 确认后删除自身程序、链接和服务，规则、密钥和记录保留；`--yes` 只跳过确认。

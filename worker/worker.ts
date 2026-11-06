@@ -38,6 +38,8 @@ const KEEP_DAYS = 14;
 const WAIT = 50;
 const PAUSE = 30_000;
 const UNREACHABLE = 10 * 60_000;
+/** How long a result the hub was too busy to take waits before it's handed in again. */
+const BUSY_PAUSE = 30_000;
 const TELL_TRIES = 5;
 /** Enough of a long output to find what's at either end of it, while it runs. */
 const HEAD = 64 * 1024;
@@ -417,6 +419,14 @@ export function createWorker({
       entry.retryAt = undefined;
       save(entry);
     } catch (error) {
+      if (error instanceof HubError && error.status === 429) {
+        // The hub is only busy: the result is kept and comes back after a pause, so as not to add to the crowd.
+        entry.retryAt = now() + BUSY_PAUSE;
+        save(entry);
+        return log(
+          `run ${entry.run}: the hub is busy (${error.message}); keeping the result, trying again in 30 seconds`,
+        );
+      }
       if (error instanceof HubError && (error.status === 401 || error.status === 403)) {
         // A rotated or revoked key refuses the token for now; the finished work must not be thrown away.
         entry.refusals = (entry.refusals ?? 0) + 1;
@@ -462,12 +472,23 @@ export function createWorker({
     }
   }
 
-  /** One round: look at what's in hand, hand in what's ended, come for more. Whether the hub could be reached. */
+  /** One run that can't be looked at must not stop the others being looked at, handed in or taken on. */
+  async function isolated(entry: Entry, step: (entry: Entry) => Promise<void>, what: string) {
+    try {
+      await step(entry);
+    } catch (error) {
+      log(`run ${entry.run}: couldn't ${what} it, trying again next round: ${error}`);
+    }
+  }
+
+  /** One round: look at what's in hand, hand in what's ended, come for more. Whether to come again without a pause. */
   async function tick() {
-    for (const entry of entries()) await check(entry);
-    for (const entry of entries()) await settle(entry);
+    for (const entry of entries()) await isolated(entry, check, "look at");
+    for (const entry of entries()) await isolated(entry, settle, "hand in");
     const held = entries();
     let reachable = true;
+    // A hub that answers "too busy" is there: only one that doesn't answer is a reason to tell the owner.
+    let answered = true;
     try {
       const answer = await hub.work({
         claim,
@@ -484,10 +505,12 @@ export function createWorker({
         await start(answer.job);
       }
     } catch (error) {
-      log(`couldn't reach the hub: ${error}`);
+      const busy = error instanceof HubError && error.status === 429;
+      log(busy ? `the hub asked this worker to slow down: ${error.message}` : `couldn't reach the hub: ${error}`);
       reachable = false;
+      answered = busy;
     }
-    watchHub(reachable, now());
+    watchHub(answered, now());
     return reachable;
   }
 

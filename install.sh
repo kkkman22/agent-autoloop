@@ -27,7 +27,21 @@ node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)
 
 mkdir -p -m 700 "$ROOT"
 chmod 700 "$ROOT"
-if [ -d "$APP/.git" ]; then git -C "$APP" pull --ff-only --quiet; else git clone --quiet --depth 1 -- "$REPO" "$APP"; fi
+# AGENT_AUTOLOOP_REF names a version (a tag) to install instead of the newest; it must never reach git as an option.
+REF="${AGENT_AUTOLOOP_REF:-}"
+case "$REF" in -*) echo "AGENT_AUTOLOOP_REF 要写成版本名，比如 v1.2.0。"; exit 1 ;; esac
+if [ -d "$APP/.git" ]; then
+  if [ -n "$REF" ]; then
+    git -C "$APP" fetch --quiet origin tag "$REF"
+    git -C "$APP" checkout --quiet "refs/tags/$REF"
+  else
+    git -C "$APP" pull --ff-only --quiet
+  fi
+elif [ -n "$REF" ]; then
+  git clone --quiet --depth 1 --branch "$REF" -- "$REPO" "$APP"
+else
+  git clone --quiet --depth 1 -- "$REPO" "$APP"
+fi
 
 # Only a folder that's on PATH makes `agent-autoloop` work, and an agent-autoloop that isn't this one is someone else's to keep.
 place_link() {

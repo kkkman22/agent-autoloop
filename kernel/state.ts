@@ -6,7 +6,7 @@ import type { cardView } from "./query.ts";
 import { cronOf, eventRule, SCHEDULE, type Rules } from "./rules.ts";
 
 /** Seen this recently counts as online. */
-const ONLINE = 120_000;
+export const ONLINE = 120_000;
 const PAGE = 60;
 const WEEK = 7 * 86400_000;
 
@@ -18,14 +18,49 @@ const SPENDING = `SELECT COUNT(*) AS rounds,
   COUNT(*) - COUNT(json_extract(usage, '$.cost')) AS missingCost
   FROM runs WHERE finished_at >= ? AND (claimed_at IS NOT NULL OR usage IS NOT NULL)`;
 
-const COUNTS = `
-  SELECT rule, agent, state, COUNT(*) AS count,
-    SUM(CASE WHEN state = 'queued' AND attempts > 0 THEN 1 ELSE 0 END) AS retrying,
-    SUM(CASE WHEN state = 'done' AND finished_at >= ? THEN 1 ELSE 0 END) AS today,
-    COALESCE(SUM(json_extract(usage, '$.input')), 0) AS input,
-    COALESCE(SUM(json_extract(usage, '$.output')), 0) AS output,
-    COALESCE(SUM(json_extract(usage, '$.cost')), 0) AS cost
-  FROM runs GROUP BY rule, agent, state`;
+// The totals evolve keeps per rule, agent and state, plus what was done since the start of today: only that part depends
+// on the day, and the index on finished_at reads it without going through every run there has been.
+const TALLIES = "SELECT rule, agent, state, count, retrying, input, output, cost_nano FROM projection_tallies";
+const DONE_SINCE = `SELECT rule, agent, COUNT(*) AS today FROM runs WHERE state = 'done' AND finished_at >= ?
+  GROUP BY rule, agent`;
+
+export type Count = {
+  rule: string;
+  agent: string;
+  state: string;
+  count: number;
+  retrying: number;
+  today: number;
+  input: number;
+  output: number;
+  cost: number;
+};
+/** One line per rule, agent and state, and a line with no state for each rule and agent with work done since `since`. */
+export function countsOf(all: Reads["all"], since: string): Count[] {
+  const kept = all<Row>(TALLIES).map((row) => ({
+    rule: row.rule,
+    agent: row.agent,
+    state: row.state,
+    count: row.count,
+    retrying: row.retrying,
+    today: 0,
+    input: row.input,
+    output: row.output,
+    cost: row.cost_nano / 1e9,
+  }));
+  const today = all<Row>(DONE_SINCE, [since]).map((row) => ({
+    rule: row.rule,
+    agent: row.agent,
+    state: "",
+    count: 0,
+    retrying: 0,
+    today: row.today,
+    input: 0,
+    output: 0,
+    cost: 0,
+  }));
+  return [...kept, ...today];
+}
 
 // Start from this run's links; scanning events in ID order would revisit the whole history for each run.
 const EVENTS_OF_RUN = `
@@ -67,7 +102,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
     const seenAt = seen.get(who) ?? null;
     return { seenAt, online: seenAt !== null && now - Date.parse(seenAt) <= ONLINE };
   };
-  const counts = all<Row>(COUNTS, [iso(dayStart(now, rules.timezone))]);
+  const counts: Row[] = countsOf(all, iso(dayStart(now, rules.timezone)));
   const openCards = all<Row>("SELECT * FROM cards WHERE state = 'open' ORDER BY id DESC");
   const recentCards = all<Row>("SELECT * FROM cards WHERE state <> 'open' ORDER BY id DESC LIMIT 20");
   const older = before ? "WHERE id < ?" : "";

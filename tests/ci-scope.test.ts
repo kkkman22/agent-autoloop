@@ -71,6 +71,7 @@ const touch = (root: string, file: string) => {
 test("text nothing reads skips the checks; pages tests read and code get normal; kernel, protocol and sim get full", () => {
   for (const [file, expected] of [
     ["docs/notes.md", "scope=docs"],
+    ["CHANGELOG.md", "scope=docs"],
     [".github/pull_request_template.md", "scope=docs"],
     ["docs/protocol.md", "scope=normal"],
     ["README.md", "scope=normal"],

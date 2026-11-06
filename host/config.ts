@@ -7,7 +7,7 @@ import { HOME } from "./home.ts";
 export type ChannelConfig = { use?: string; key: string; [option: string]: unknown };
 export type Config = {
   url: string;
-  hub?: { listen: string; publicUrl?: string };
+  hub?: { listen: string; publicUrl?: string; limits?: unknown };
   worker?: { name: string; key: string; capacity?: number; unreachable?: string[] };
   channels?: Record<string, ChannelConfig>;
   source?: { name: string; key: string };

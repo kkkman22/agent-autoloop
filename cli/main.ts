@@ -15,6 +15,7 @@ import { spendLine } from "./spend.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
+const stampNow = () => new Date().toISOString().replace(/[:.]/g, "-");
 const PROGRAM = path.join(ROOT, "bin", "agent-autoloop.ts");
 
 const HELP = `Agent 自动化中台
@@ -41,11 +42,16 @@ const HELP = `Agent 自动化中台
                                     新建一把密钥（只显示这一次）
   agent-autoloop key list                有哪些密钥
   agent-autoloop key remove <种类> <名字>  立即收回一把密钥
+  agent-autoloop key rotate [--yes]      换主密钥；旧的卡片链接和轮次凭据立刻失效
+  agent-autoloop backup [目录]           把数据库、主密钥、配置和规则备份到一个空目录
+  agent-autoloop restore <目录> [--yes]  用备份换掉现在的数据；中台要先停掉
   agent-autoloop add <git 地址>           安装插件，不自动更新
   agent-autoloop mcp [--allow-writes]     用标准输入输出连接 MCP 客户端；默认只读
   agent-autoloop join <中台地址> --worker <名字> --key <密钥>
                                     另一台电脑只接活时用
-  agent-autoloop update                  更新到最新版
+  agent-autoloop update [版本]           更新到最新，或者换到某个版本（标签）
+  agent-autoloop update --check          看看有没有更新，不改任何东西
+  agent-autoloop update --rollback       换回上一次更新之前的版本
   agent-autoloop uninstall [--yes]       卸载程序并保留数据；--yes 跳过确认
   agent-autoloop --version               版本和当前提交
   agent-autoloop up                      启动（平时由系统服务调用）
@@ -446,6 +452,22 @@ async function check() {
 
 async function key(args: string[]) {
   const [action, kind, name] = args;
+  if (action === "rotate") {
+    const { rotateKey } = await import("../host/backup.ts");
+    if (args.includes("--yes") || (await confirmed("换主密钥会让所有旧的卡片链接和正在跑的轮次凭据立刻失效。"))) {
+      const { kept } = rotateKey();
+      console.log(
+        [
+          "换好了。",
+          ...(kept ? [`换之前那把钥匙和当时的数据在 ${kept}。`] : []),
+          "旧的卡片链接、以及已经发出去还没交回结果的轮次凭据，现在都失效了。",
+          "用 key new 建的密钥不受影响（只存哈希）。",
+          "中台是停着的：启动它就会从日志重建视图，慢一点，数据不丢。",
+        ].join("\n"),
+      );
+    }
+    return;
+  }
   if (action === "remove") {
     if (!kind || !name) return fail("用法：agent-autoloop key remove <种类> <名字>");
     const { changed } = await ownerClient().removeKey(kind, name);
@@ -535,11 +557,62 @@ function addPlugin(args: string[]) {
   console.log(`已安装 ${name}。`);
 }
 
-async function update() {
-  const pulled = spawnSync("git", ["-C", ROOT, "pull", "--ff-only"], { stdio: "inherit" });
-  if (pulled.status !== 0) return fail("更新失败。");
+async function update(args: string[]) {
+  const { named, rest } = flags(args);
+  const { checkForUpdate, rollBack, updateTo } = await import("./update.ts");
+  if (named.check !== undefined) {
+    const found = checkForUpdate();
+    const now = found.current ?? found.commit.slice(0, 12);
+    if (!found.behind) return console.log(`已经是最新的（${now}）。`);
+    const newest = found.newest ? `，最新的版本是 ${found.newest}` : "";
+    return console.log(
+      `现在是 ${now}，落后 ${found.behind} 个提交${newest}。\n` +
+        "运行 agent-autoloop update 更新到最新，或者 agent-autoloop update <版本> 换到某个版本。",
+    );
+  }
+  const moved = named.rollback !== undefined ? rollBack() : updateTo(rest[0]);
+  if (moved.before === moved.after) return console.log("已经是这个版本了。");
   if (serviceRunning()) installService();
-  console.log("更新好了。");
+  console.log(
+    `更新好了：${moved.before.slice(0, 12)} → ${moved.after.slice(0, 12)}。\n` +
+      "要换回去：agent-autoloop update --rollback",
+  );
+}
+
+/** A confirmation, or the way to skip it: without a terminal there's nobody to ask. */
+async function confirmed(warning: string) {
+  if (!process.stdin.isTTY) return fail(`${warning}确认后重来，加上 --yes。`);
+  return /^y(es)?$/i.test((await askAtTerminal(`${warning}继续？[y/N] `)).trim());
+}
+
+async function backup(args: string[]) {
+  const [target] = flags(args).rest;
+  const { backupTo } = await import("../host/backup.ts");
+  const { dir, manifest } = backupTo(target ?? path.join(HOME, "backups", `backup-${stampNow()}`));
+  console.log(
+    `备份好了：${dir}\n  ${manifest.facts} 条事实，` +
+      `${Object.keys(manifest.files).join("、")} 和清单都在里面，只有你能读。\n` +
+      `  恢复要用它换掉现在的数据：agent-autoloop restore ${dir} --yes（先停掉中台）。`,
+  );
+}
+
+async function restore(args: string[]) {
+  const { named, rest } = flags(args);
+  const dir = rest[0] ?? fail("用法：agent-autoloop restore <备份目录> [--yes]");
+  const { restoreFrom } = await import("../host/backup.ts");
+  const replace =
+    named.yes !== undefined || (await confirmed("恢复会用这份备份换掉现在的数据，旧的文件先挪到 replaced-… 里。"));
+  if (!replace) return;
+  const done = restoreFrom(dir, { replace });
+  console.log(
+    [
+      `恢复好了：${done.facts} 条事实。`,
+      ...(done.replaced ? [`换下来的东西在 ${done.replaced}，确认没问题再删。`] : []),
+      ...(done.keyChanged ? ["这份备份用的是另一把主密钥：链接和轮次凭据都跟着换成了它的。"] : []),
+      ...(done.rebuilt ? ["备份是别的版本做的，下次启动会从日志重建视图，慢一点，数据不丢。"] : []),
+      "中台还停着，确认没问题再启动。",
+    ].join("\n"),
+  );
 }
 
 async function askAtTerminal(question: string) {
@@ -571,7 +644,9 @@ const commands: Record<string, () => unknown> = {
   emit: () => emit(args),
   tell: () => tell(args),
   stop: () => stop(args),
-  update,
+  backup: () => backup(args),
+  restore: () => restore(args),
+  update: () => update(args),
   uninstall: async () => {
     const { uninstall } = await import("./uninstall.ts");
     await uninstall(flags(args).named.yes !== undefined, process.stdin.isTTY ? askAtTerminal : null);

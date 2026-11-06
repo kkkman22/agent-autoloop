@@ -30,7 +30,9 @@ AGENT_AUTOLOOP_REPO=/path/to/agent-autoloop sh /path/to/agent-autoloop/install.s
 
 安装器和中台启动时都会把数据目录设为 `0700`，包括已有目录，阻止其他系统用户读取数据库、事件和运行输出。升级后同步重启中台与接单程序；新版 `status` 使用中台提供的费用汇总。
 
-升级时若投影格式有变化，会自动从旧日志逐条重建，历史多时首次启动需要等待；之后正常启动直接复用投影。原日志和已有卡片链接保留，不需要手动迁移。
+升级时若投影格式有变化，会自动从旧日志逐条重建，历史多时首次启动需要等待；之后正常启动直接复用投影。原日志和已有卡片链接保留，不需要手动迁移。重建中途被打断，下次启动接着做。
+
+要装某个版本而不是最新的，在安装命令前加 `AGENT_AUTOLOOP_REF=<版本>`（比如 `v1.2.0`，即仓库里的标签）；已经装过时再运行一遍，会换到那个版本。装好以后用 `agent-autoloop update --check` 看有没有更新（不改任何东西），`agent-autoloop update` 更新到最新，`agent-autoloop update <版本>` 换到某个版本，`agent-autoloop update --rollback` 换回上一次更新之前的版本。更新前先 `agent-autoloop backup`：新版本可能改投影格式，换回旧版本时也会从日志重建一次，数据不丢。
 
 ## 临时 HOME、CI 或没有服务管理器
 
@@ -93,4 +95,4 @@ agent-autoloop uninstall
 - [插件](docs/plugins.md)：三个可运行的最小例子。
 - [安全边界](SECURITY.md)：密钥、执行权限和交付审查。
 
-开发检查用 `npm test`、`npm run typecheck`、`npm run format:check`，完整故障与性能检查用 `npm run test:nightly`。备份同时保留 `hub.db` 和 `master.key`；后者权限应为 0600。
+开发检查用 `npm test`、`npm run typecheck`、`npm run format:check`，完整故障与性能检查用 `npm run test:nightly`。备份同时保留 `hub.db` 和 `master.key`；后者权限应为 0600。`agent-autoloop backup [目录]` 把这套数据和配置一起备份到一个空目录，`agent-autoloop restore <目录> --yes` 换回来；恢复和换主密钥（`agent-autoloop key rotate`）都要求中台先停掉。
