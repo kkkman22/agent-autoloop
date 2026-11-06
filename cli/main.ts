@@ -12,6 +12,7 @@ import { installService, removeService, serviceRunning } from "../host/service.t
 import { versionLine } from "../host/version.ts";
 import { flags, text, type Flags } from "./flags.ts";
 import { printer } from "./plain-text.ts";
+import { addPlugin, pluginReport, plugins } from "./plugins.ts";
 import { rules } from "./rules.ts";
 import { spendLine } from "./spend.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
@@ -56,7 +57,14 @@ const HELP = `Agent 自动化中台
   agent-autoloop key rotate [--yes]      换主密钥；旧的卡片链接和轮次凭据立刻失效
   agent-autoloop backup [目录]           把数据库、主密钥、配置和规则备份到一个空目录
   agent-autoloop restore <目录> [--yes]  用备份换掉现在的数据；中台要先停掉
-  agent-autoloop add <git 地址>           安装插件，不自动更新
+  agent-autoloop add <git 地址> [--ref v版本]
+                                    安装插件：读清单、核对兼容和签名，记录版本，不自动更新
+  agent-autoloop plugins list             装了哪些插件：版本、提交、签名人、是否兼容
+  agent-autoloop plugins update <名字> [--check]
+                                    换到更新的版本；--check 只看
+  agent-autoloop plugins trust <名字> <公钥文件>
+                                    登记签名人公钥；以后安装更新都要签名
+  agent-autoloop plugins remove <名字>    删掉插件和安装记录
   agent-autoloop mcp [--allow-writes]     用标准输入输出连接 MCP 客户端；默认只读
   agent-autoloop join <中台地址> --worker <名字> --key <密钥>
                                     另一台电脑只接活时用
@@ -425,6 +433,9 @@ async function doctor() {
       say(false, `读不到中台状态：${(error as Error).message}`);
     }
   }
+  const { bad: pluginProblems, notes: pluginNotes } = pluginReport();
+  for (const words of pluginProblems) say(false, words);
+  for (const words of pluginNotes) console.log(`○ ${words}`);
   if (bad) process.exit(1);
 }
 
@@ -529,22 +540,6 @@ function service(args: string[]) {
   fail("用法：agent-autoloop service install|remove");
 }
 
-/** A plugin is a folder of its own under this install, named after its repository. */
-function addPlugin(args: string[]) {
-  const url = args[0] ?? fail("用法：agent-autoloop add <git 地址>");
-  const name = url
-    .replace(/\/$/, "")
-    .split(/[/:]/)
-    .at(-1)!
-    .replace(/\.git$/, "")
-    .toLowerCase();
-  if (!/^[a-z][a-z0-9-]*$/.test(name)) fail("插件仓库名要用小写字母、数字和 -");
-  mkdirSync(path.join(HOME, "plugins"), { recursive: true });
-  const clone = spawnSync("git", ["clone", "--", url, path.join(HOME, "plugins", name)], { stdio: "inherit" });
-  if (clone.status !== 0) fail("安装失败。");
-  console.log(`已安装 ${name}。`);
-}
-
 async function update(args: string[]) {
   const { named, rest } = flags(args);
   const { checkForUpdate, rollBack, updateTo } = await import("./update.ts");
@@ -617,6 +612,7 @@ const commands: Record<string, () => unknown> = {
       flags(args).named["allow-writes"] !== undefined || process.env.AGENT_AUTOLOOP_MCP_ALLOW_WRITES === "1",
     ),
   add: () => addPlugin(args),
+  plugins: () => plugins(args),
   init: () => init(args),
   join: () => join(args),
   up: async () => (await import("../host/up.ts")).up(),
