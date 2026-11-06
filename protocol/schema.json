@@ -594,6 +594,9 @@
         },
         "link": {
           "type": ["string", "null"]
+        },
+        "severity": {
+          "enum": ["low", "normal", "urgent"]
         }
       },
       "required": [

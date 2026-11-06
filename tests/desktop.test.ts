@@ -128,6 +128,19 @@ test("a new card notifies once with its title; an update only reports", async ()
   ]);
 });
 
+test("a low card is noted, never shown; a normal one still pops up", async () => {
+  const fake = standIns();
+  const { reports } = await deliver([
+    { ...base, id: 6, severity: "low" },
+    { ...base, id: 7, severity: "normal" },
+  ]);
+  assert.equal(fake.calls().length, 1, "只有 normal 那张弹了通知");
+  assert.deepEqual(reports, [
+    ["delivered", 6, 1, "skipped-6"],
+    ["delivered", 7, 1, "shown-7"],
+  ]);
+});
+
 const marker = join(dir, "ran");
 const hostile = [
   `" & (do shell script "touch ${marker}") & "`,

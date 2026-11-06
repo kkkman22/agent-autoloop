@@ -14,6 +14,8 @@ export class RulesError extends Error {
 
 const ACCESS = ["read", "edit", "full"];
 const TELLS = ["always", "needed", "never"];
+const SEVERITIES = ["low", "normal", "urgent"];
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ID = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_PARALLEL = 100;
 const MAX_TIMEOUT = 7 * 24 * 60;
@@ -40,6 +42,13 @@ const atMost =
     isCount(value) && (value as number) <= max;
 const isTypes: Check = (value) => isSomeWords(value) && (value as string[]).every((type) => TYPE_PATTERN.test(type));
 const isCron: Check = (value) => typeof value === "string" && parseCron(value) !== null;
+/** Two different times of day, as HH:MM; a window may cross midnight, but from and to may not be the same. */
+const isQuiet: Check = (value) =>
+  isObject(value) &&
+  Object.keys(value).length === 2 &&
+  CLOCK.test(String(value.from)) &&
+  CLOCK.test(String(value.to)) &&
+  value.from !== value.to;
 
 function isKeyOf(table: object): Check {
   return (value) => typeof value === "string" && Object.hasOwn(table, value);
@@ -92,6 +101,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
       "要是已登记通道的编号列表",
       true,
     ],
+    ["severity", (value) => SEVERITIES.includes(value as string), `只能是 ${SEVERITIES.join("、")}`, true],
     ["emits", isObject, "要是一个对象", true],
   ]);
   if (isObject(when) && "source" in when) {
@@ -188,6 +198,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["name", isText, NOT_EMPTY],
       ["answerers", isWords, "要是文字的列表", true],
       ["links", (value) => typeof value === "boolean", "要是 true 或 false", true],
+      ["quiet", isQuiet, "要是 { from, to }，两个不同的 HH:MM（按 rules.json 的时区）", true],
     ]);
   }
   for (const [id, agent] of Object.entries(rules.agents)) {

@@ -34,6 +34,7 @@ export const rules = parseRules(
         prompt: "做事",
         group: "shared",
         parallel: 2,
+        severity: "urgent",
       },
     ],
   }),

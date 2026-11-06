@@ -198,6 +198,9 @@ test("what the numbers say is what /v1/state says, and only work moves them", as
 });
 
 test("a failed delivery and a given-up one are told apart, and a rebuilt projection keeps saying so", async () => {
+  // The sweep normally reaps the run the last test left in hand when its timer gets a turn; under a loaded test
+  // runner that turn may come late and block this claim. Sweep here, once, so what follows is deterministic.
+  hub.sweep(Date.now());
   // A card someone has to decide on is open, so the channel is handed it whenever it asks.
   hub.ingest("app", { id: "e-ask", type: "feedback.new", subject: "third" }, at(5));
   const job = hub.claimNext("w1", "claim-3", at(5))!;

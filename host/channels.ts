@@ -17,6 +17,8 @@ export type Card = {
   answer: string | null;
   result: string | null;
   link: string | null;
+  /** How much the card wants to be seen: a quiet channel holds everything but `urgent`, and `low` need not pop up. */
+  severity?: "low" | "normal" | "urgent";
 };
 export type ChannelContext = {
   hub: Pick<Hub, "nextCard" | "delivered" | "failed" | "answer">;

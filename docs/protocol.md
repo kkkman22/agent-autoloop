@@ -89,6 +89,7 @@
 - `tell` 是 `always` 每次都推送、`needed` 只在有卡片时（默认）、`never` 不推送。
 - `disabled` 是 `true` 时这条规则暂停：事件照常记录、照常排队（同一事项还是合成一轮），回答也照常排队，只是不派出去；恢复后一起接着处理，什么都不丢。定时规则暂停时不补跑，恢复后从下一次到点开始。
 - `channels` 是这条规则的卡片只发往的通道编号列表，不写就发往所有通道。卡片创建时把去向写在卡片上，之后改规则不影响已经发出的卡片，`why` 能查到当时为什么发给这些通道。
+- `severity` 是这条规则卡片的紧急程度：`low`（安静，通道可以只记下不弹出）、`normal`（默认）、`urgent`（不受安静时段限制）。通道拿到的卡片 JSON 带 `severity`，第三方通道插件可以按它决定怎么送；不认识的字段忽略即可。
 - `notices` 是不属于任何规则的卡片（`tell`、规则写错、接单程序离线、事件循环）发往的通道，写成 `{ "channels": ["chat"] }`；不写就发往所有通道。处理私人资料的中台可以用它把这些卡片收回到本人的通道。
 - `emits` 写明回执里能发什么事件，不写就不能发。
 - `sources`、`agents`、`channels` 的编号只能用小写字母、数字和 `-`，以字母开头，最多 64 字；`constructor`、`prototype`、`__proto__` 这类名字不能用。规则里的 `to`、`when.source`、`emits.source` 必须指向已登记的编号。
@@ -279,10 +280,12 @@ GET /v1/cards/next?wait=50    Authorization: Bearer <通道的密钥>
 // Card：这张卡片现在的样子。内容创建后不变，只有状态会变
 { "id": 56, "version": 2, "ref": null, "kind": "ask", "state": "open",
   "title": "…", "text": "…", "options": ["…", "…"], "recommend": 0,
-  "choice": null, "answer": null, "result": null, "link": null }
+  "choice": null, "answer": null, "result": null, "link": null, "severity": "normal" }
 ```
 
 - 通道必须先在 `rules.json` 的 `channels` 里登记。密钥有效但名字没登记，`GET /v1/cards/next` 返回 404，不会进入长轮询。
+- 通道可以配安静时段：`"channels": { "chat": { "quiet": { "from": "22:00", "to": "08:00" } } }`，按 `rules.json` 的时区，`from` 和 `to` 不能相同。安静时段里这个通道领不到普通卡片，`urgent` 的照领；时段结束后照常补发。时段结束不会主动叫醒正在长轮询的通道，最多等这一轮（50 秒）结束。安静时段里没领到的卡片不算发送尝试，放弃计时从第一次真正交出算起。
+- `severity` 是卡片想被看到的方式：`low` 的可以只记下不弹出（桌面通知就这样做），`urgent` 的在安静时段也照发。第三方通道插件按需取用。
 - `ref` 是空的就发一条新的；不是空的就把那条改成现在的样子，改不了就直接报告。
 - 发完报告：`POST /v1/cards/56/delivered { "version": 2, "ref": "om_xxx" }`。没报告的过一分钟会再给你。**支持幂等键的平台，发新消息只用卡片编号，不带版本**。平台不支持时无法保证去重，Webhook 模板可能在报告丢失后重发。
 - 发不出去：`POST /v1/cards/56/failed { "version": 2, "error": "…" }`。第一次发送隔得越来越久地重试，一小时后放弃（卡片还开着，`agent-autoloop status` 看得到）；通道一直没来领不算在内。

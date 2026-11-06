@@ -17,7 +17,16 @@ import {
   workerOf,
   workers,
 } from "./query.ts";
-import { cronOf, eventRule, SCHEDULE, typeMatches, type Rule, type Rules } from "./rules.ts";
+import {
+  cronOf,
+  eventRule,
+  inQuietHours,
+  SCHEDULE,
+  typeMatches,
+  type Rule,
+  type Rules,
+  type Severity,
+} from "./rules.ts";
 import { addUsage, parseEvent, parseResult, type Later, type Rejected, type Result } from "../protocol/validate.ts";
 
 export type Input = { type: string; args: any[] };
@@ -35,8 +44,17 @@ const NOT_DELIVERED: Row = { version: 0, ref: null, ...NOT_TRYING, error: null, 
 
 const nulls = (...names: string[]) => Object.fromEntries(names.map((name) => [name, null]));
 const CARD_BASICS = { text: "", options: "[]", recommend: null, about: "", state: "open", fyi: 0, quiet: 0 };
-/** Where a card may go: without a list, to every channel there is. */
-type Routing = { channels: string[] | null };
+/** Where a card may go: without a list, to every channel there is. How loudly it asks to be seen. */
+type Routing = { channels: string[] | null; severity: Severity };
+const ruleRouting = (draft: Draft, name: string): Routing => {
+  const rule = ruleNamed(draft, name);
+  return { channels: rule?.channels ?? null, severity: rule?.severity ?? "normal" };
+};
+/** What a card that belongs to no rule follows: the notices the owner narrowed, or every channel. */
+const noticesRouting = (draft: Draft): Routing => ({
+  channels: draft.rules.notices?.channels ?? null,
+  severity: "normal",
+});
 const DEFAULTS: Partial<Record<Table, Row>> = {
   runs: {
     attempts: 0,
@@ -49,6 +67,7 @@ const DEFAULTS: Partial<Record<Table, Row>> = {
     lane: "",
     ...nulls("grp", "source", "agent", "session", "run_id", "answer_event"),
     channels: null,
+    severity: "normal",
     version: 1,
     ...nulls("decided_at", "closed_at"),
   },
@@ -124,13 +143,14 @@ function createCard(draft: Draft, spec: Row) {
   const existing = cards.findLast((card) => card.key === spec.key && (spec.once || card.state === "open"));
   if (existing) return { card: existing.id, duplicate: true };
   const { once, run, options, fyi, quiet, routing, ...fields } = spec;
-  const where = (routing as Routing | undefined)?.channels ?? draft.rules.notices?.channels ?? null;
+  const { channels: where, severity } = (routing as Routing | undefined) ?? noticesRouting(draft);
   const stored = {
     run_id: run ?? null,
     options: JSON.stringify(options ?? []),
     fyi: fyi ? 1 : 0,
     quiet: quiet ? 1 : 0,
     channels: where,
+    severity,
   };
   const card = add(draft, "cards", { ...fields, ...stored, state: fyi ? "closed" : "open", created_at: draft.at });
   return { card: card.id, duplicate: false };
@@ -204,8 +224,16 @@ function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
   const quiet = kind === "notice" && rule?.tell === "never";
   const origin = { source: sourceOf(draft.view, run.id), agent: run.agent, session, run: run.id };
   const key = `thread:${run.rule}:${run.lane}:${name}`;
-  const routing: Routing = { channels: rule?.channels ?? null };
-  createCard(draft, { ...card, hops: hopsOf(draft, run), key, kind, quiet, ...threadOf(run), ...origin, routing });
+  createCard(draft, {
+    ...card,
+    hops: hopsOf(draft, run),
+    key,
+    kind,
+    quiet,
+    ...threadOf(run),
+    ...origin,
+    routing: ruleRouting(draft, run.rule),
+  });
 }
 
 /** Notices what has gone quiet: a worker that stopped coming, a run its worker stopped mentioning. */
@@ -370,7 +398,7 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
       ...threadOf(run),
       source: sourceOf(draft.view, id),
       run: id,
-      routing: { channels: rule.channels ?? null } satisfies Routing,
+      routing: ruleRouting(draft, run.rule),
     };
     notify(draft, `run:${id}:done`, run.rule, summary, once);
   }
@@ -449,9 +477,13 @@ function answer(draft: Draft, id: number, given: Row) {
 function nextCard(draft: Draft, channel: string) {
   if (!Object.hasOwn(draft.rules.channels, channel)) return null;
   const { now } = draft;
+  // Quiet hours are read here, from the passed clock and the rules' zone, so the kernel never reads a clock. A
+  // channel dozing through them wakes at most one long poll later: the sleep is never billed as a delivery attempt.
+  const dozing = inQuietHours(draft.rules.channels[channel]?.quiet, now, draft.rules.timezone);
   for (const card of draft.view.deliveryCandidates(channel, now)) {
     // A card made for other channels is not this channel's to take, no matter how long it has waited.
     if (Array.isArray(card.channels) && !card.channels.includes(channel)) continue;
+    if (dozing && card.severity !== "urgent") continue;
     const key = `${card.id}:${channel}`;
     const delivery = draft.view.get("deliveries", key) ?? NOT_DELIVERED;
     const recentNote = card.fyi && Date.parse(card.created_at) >= now - 24 * 60 * MINUTE;

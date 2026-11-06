@@ -51,6 +51,11 @@ export default async function desktop({ hub, log, signal }: ChannelContext) {
       await hub.delivered(card.id, card.version, card.ref);
       continue;
     }
+    // A low card is for reading later, not for popping up: noted and never shown.
+    if (card.severity === "low") {
+      await hub.delivered(card.id, card.version, `skipped-${card.id}`);
+      continue;
+    }
     if (!available) {
       await hub.delivered(card.id, card.version, `skipped-${card.id}`);
       continue;
