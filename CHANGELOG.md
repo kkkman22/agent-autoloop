@@ -20,6 +20,7 @@
 
 - `agent-autoloop rules validate [文件]`（`check` 是别名）：校验规则文件并给出警告——通道收不了回答、来源还没有密钥、目录这台电脑上没有。
 - `agent-autoloop rules explain <来源> <事件类型>`、`rules explain <规则名>`：列出会接这条事件的规则，或给一条规则的完整说明（定时规则带接下来 3 次到点）。
+- `agent-autoloop rules diff [文件]`、`rules disable|enable <规则名>`、`rules remove <规则名>`、`rules edit`：改规则前先在中台上空跑一遍并列出影响（会取消哪些排队轮次、关闭哪些卡片），确认后留备份再原子替换；非交互要加 `--yes`。背后是只认本人密钥的 `POST /v1/rules/preview`。
 - 规则的可选字段 `disabled`：`true` 暂停这条规则。事件照常记录、照常排队（同一事项还是合成一轮），回答也照常排队，只是不派出去，恢复后一起接着处理；定时规则暂停期间不补跑，恢复后从下一次到点开始。
 - `agent-autoloop backup`、`restore`、`key rotate`：备份、恢复和换主密钥。
 - `GET /v1/metrics`：给监控程序抓的数字，只认本人的密钥。

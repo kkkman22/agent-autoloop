@@ -299,11 +299,16 @@ POST /v1/cards/56/answer    { "choice": 1 } 或 { "text": "别的想法" }
 POST /v1/cards/56/resolve   { "reason": "不用决定了，因为……" }
 POST /v1/runs/12/cancel     {}
 
+POST /v1/rules/preview      Authorization: Bearer <本人的密钥>
+                            请求体就是一份候选的 rules.json，→ 200 这份规则生效后会怎样
+
 GET  /v1/metrics            Authorization: Bearer <本人的密钥>
 → 200 text/plain，一行一个数值（Prometheus 文本格式）
 ```
 
 `agent-autoloop status`、`answer`、`resolve`、`stop` 就是这几个请求。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。
+
+`POST /v1/rules/preview` 是 `rules diff`、`disable`、`enable`、`remove`、`edit` 先走的一步：只看不改。中台把候选规则按规则文件的标准校验（不合格回 400，写明哪一条有问题），再在当前视图上空跑一遍「换成这份规则」，归纳出会新增、删除、改名、改动的规则，会取消的排队轮次（按规则计数，带前 20 个编号），会关闭的卡片（带前 20 个编号和标题），以及已经领走、照常跑完的轮次。空跑只用内核现有的纯函数，不写任何事实，读多少遍日志都不变。
 
 `/v1/state` 的 `spending.today`、`spending.week` 独立于分页，按规则时区的今天和过去 7 × 24 小时的完成时间汇总。每项含 `rounds`、`tokens`、`cost`、`missingTokens`、`missingCost`，后两项是没报对应用量的轮数；从未开始就取消的轮次不计入。旧请求和响应字段保持不变，旧客户端可以忽略新增字段；新版 `status` 需要中台一起更新，不再逐页读取历史来算费用。
 

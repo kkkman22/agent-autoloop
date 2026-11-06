@@ -10,6 +10,7 @@ import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/confi
 import { HOME, RULES_FILE } from "../host/home.ts";
 import { installService, removeService, serviceRunning } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
+import { flags, text, type Flags } from "./flags.ts";
 import { printer } from "./plain-text.ts";
 import { rules } from "./rules.ts";
 import { spendLine } from "./spend.ts";
@@ -37,6 +38,11 @@ const HELP = `Agent 自动化中台
   agent-autoloop rules explain <来源> <事件类型>
                                     列出会接这条事件的规则
   agent-autoloop rules explain <规则名>  一条规则的完整说明，定时规则带上接下来 3 次到点
+  agent-autoloop rules diff [文件]       候选文件和正在用的规则对比，并列出影响（要中台在跑）
+  agent-autoloop rules disable|enable <规则名>
+                                    暂停、恢复一条规则；先预览，确认后写回
+  agent-autoloop rules remove <规则名>   删掉一条规则；先预览要取消和关闭的东西
+  agent-autoloop rules edit             用 $EDITOR 编辑；保存后校验、预览，确认后替换
   agent-autoloop check                   检查 rules.json
   agent-autoloop emit <类型> [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]
                                     发一条事件
@@ -64,23 +70,6 @@ const HELP = `Agent 自动化中台
 
 配置和数据在 ${HOME}。规则在 ${RULES_FILE}，改了自动生效。`;
 
-type Flags = Record<string, string | true>;
-
-function flags(args: string[]) {
-  const named: Flags = {};
-  const rest: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    if (!args[i].startsWith("--")) {
-      rest.push(args[i]);
-      continue;
-    }
-    const name = args[i].slice(2);
-    if (args[i + 1] !== undefined && !args[i + 1].startsWith("--")) named[name] = args[++i];
-    else named[name] = true;
-  }
-  return { named, rest };
-}
-const text = (value: string | true | undefined) => (typeof value === "string" ? value : undefined);
 const fail = (words: string): never => {
   console.error(words);
   process.exit(1);

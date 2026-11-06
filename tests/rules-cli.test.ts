@@ -4,8 +4,9 @@
 // instead of just reporting; a name no rule has is silently answered with nothing.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { nextRun, parseCron } from "../kernel/cron.ts";
+import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -90,4 +91,113 @@ test("explain of a cron rule also shows the agent, and an unknown name is an err
     assert.match(error.stderr, /没有叫/);
     return true;
   });
+});
+
+// The write-back commands talk to a running hub: here is one, with the owner key and its address in config.json.
+// Their file is a copy in the test home, so the fixture the other tests read is never rewritten.
+const { serve } = await import("../host/http.ts");
+const server = serve(0);
+await once(server, "listening");
+after(() => {
+  server.closeAllConnections();
+  server.close();
+});
+writeFileSync(
+  join(home, "config.json"),
+  JSON.stringify({
+    url: `http://127.0.0.1:${(server.address() as any).port}`,
+    owner: hub.addKey("owner", "changer"),
+  }),
+);
+const workFile = join(home, "rules.json");
+const freshFile = () => copyFileSync(join(import.meta.dirname, "rules.fixture.json"), workFile);
+const parsed = () => JSON.parse(readFileSync(workFile, "utf8"));
+const runOnFile = (env: NodeJS.ProcessEnv, ...args: string[]) =>
+  cli(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(import.meta.dirname, "../bin/agent-autoloop.ts"), "rules", ...args],
+    { encoding: "utf8", env: { ...process.env, AGENT_AUTOLOOP_RULES: workFile, ...env } },
+  );
+const backups = () => readdirSync(home).filter((name) => /^rules\.json\..+\.bak$/.test(name));
+
+test("disable refuses without --yes when nobody can confirm, and the file is untouched", async () => {
+  freshFile();
+  const before = readFileSync(workFile, "utf8");
+  await assert.rejects(runOnFile({}, "disable", "意见"), (error: { code: number; stderr: string }) => {
+    assert.match(error.stderr, /--yes/);
+    return true;
+  });
+  assert.equal(readFileSync(workFile, "utf8"), before);
+  assert.deepEqual(backups(), []);
+});
+
+test("disable adds one field to one rule, leaves a backup, and enable takes it away", async () => {
+  freshFile();
+  const before = parsed();
+  await runOnFile({}, "disable", "意见", "--yes");
+  const after = parsed();
+  assert.equal(after.rules.find((rule: { name: string }) => rule.name === "意见").disabled, true);
+  for (const rule of after.rules) if (rule.name !== "意见") assert.equal(rule.disabled, undefined);
+  assert.deepEqual(backups().length, 1);
+  await runOnFile({}, "enable", "意见", "--yes");
+  const restored = parsed();
+  for (const rule of restored.rules) assert.equal(rule.disabled, undefined);
+  assert.deepEqual(restored, before);
+});
+
+test("remove previews what it would cancel and close, then takes the rule out", async () => {
+  freshFile();
+  const out = await runOnFile({}, "remove", "告警", "--yes");
+  assert.match(out.stdout, /删除「告警」/);
+  assert.equal(
+    parsed().rules.some((rule: { name: string }) => rule.name === "告警"),
+    false,
+  );
+  // The hub still runs the old rules until the file watcher picks the change up: against them, the file is a deletion.
+  const listing = await runOnFile({}, "diff");
+  assert.match(listing.stdout, /删除「告警」/);
+});
+
+test("diff of a candidate file lists the change against the running hub", async () => {
+  freshFile();
+  const other = join(home, "candidate.json");
+  const raw = parsed();
+  raw.rules = raw.rules.filter((rule: { name: string }) => rule.name !== "早报");
+  writeFileSync(other, JSON.stringify(raw, null, 2));
+  const out = await runOnFile({}, "diff", other);
+  assert.match(out.stdout, /删除「早报」/);
+});
+
+test("edit with an editor that saves a broken file changes nothing and keeps the copy", async () => {
+  freshFile();
+  const before = readFileSync(workFile, "utf8");
+  await assert.rejects(
+    runOnFile({ EDITOR: "echo '{ broken' >" }, "edit", "--yes"),
+    (error: { code: number; stderr: string }) => {
+      assert.match(error.stderr, /规则文件没动/);
+      return true;
+    },
+  );
+  assert.equal(readFileSync(workFile, "utf8"), before);
+});
+
+test("edit with a working editor previews and replaces after confirmation", async () => {
+  freshFile();
+  const script = join(home, "edit.mjs");
+  writeFileSync(
+    script,
+    `import { readFileSync, writeFileSync } from "node:fs";
+const file = process.argv[2];
+const raw = JSON.parse(readFileSync(file, "utf8"));
+raw.rules.push({ name: "新规则", when: { cron: "0 9 * * *" }, to: "a1", cwd: "~/x", prompt: "新" });
+writeFileSync(file, JSON.stringify(raw, null, 2));
+`,
+  );
+  const out = await runOnFile({ EDITOR: `node ${script}` }, "edit", "--yes");
+  assert.match(out.stdout, /新增「新规则」/);
+  assert.match(out.stdout, /换好了/);
+  assert.equal(
+    parsed().rules.some((rule: { name: string }) => rule.name === "新规则"),
+    true,
+  );
 });

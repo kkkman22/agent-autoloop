@@ -712,6 +712,122 @@
       "required": ["rejected"],
       "additionalProperties": false
     },
+    "rules-preview": {
+      "type": "object",
+      "properties": {
+        "added": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "removed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "renamed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": ["from", "to"],
+            "additionalProperties": false
+          }
+        },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cancels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "required": ["rule", "count", "runs"],
+            "additionalProperties": false
+          }
+        },
+        "closes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rule": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "cards": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "title"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["rule", "count", "cards"],
+            "additionalProperties": false
+          }
+        },
+        "claimed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "run": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "rule": {
+                "type": "string"
+              }
+            },
+            "required": ["run", "rule"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["added", "removed", "renamed", "changed", "cancels", "closes", "claimed"],
+      "additionalProperties": false
+    },
     "fact": {
       "type": "object",
       "properties": {

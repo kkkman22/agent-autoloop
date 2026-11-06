@@ -3,7 +3,8 @@ import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
 import { whose, type Environment } from "./credentials.ts";
 import { AuthError, Conflict, Gone, InputError, NotFound } from "./errors.ts";
 import type { Row, View } from "./evolve.ts";
-import { agentsOf, cancels, cardView, configuration } from "./query.ts";
+import { agentsOf, cancels, cardView, configuration, previewRules } from "./query.ts";
+import { parseRules, RulesError } from "../protocol/rules.ts";
 
 export type Services = {
   now(): number;
@@ -60,7 +61,7 @@ async function readJson(request: Request) {
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: NO_STORE });
 function statusOf(error: unknown) {
   if (error instanceof TooLarge) return 413;
-  if (error instanceof InputError) return 400;
+  if (error instanceof InputError || error instanceof RulesError) return 400;
   if (error instanceof AuthError) return 401;
   if (error instanceof Conflict) return 409;
   if (error instanceof NotFound) return 404;
@@ -259,6 +260,12 @@ async function route(call: Call): Promise<Response> {
   const card = /^\/v1\/cards\/([1-9][0-9]*)\/(delivered|failed|answer|resolve)$/.exec(path);
   if (method === "POST" && card) return cardAction(call, Number(card[1]), card[2]);
   if (method === "GET" && path === "/v1/state") return state(call);
+  if (method === "POST" && path === "/v1/rules/preview") {
+    requireKey(call, "owner");
+    // The body is the candidate rules file itself; a preview decides on a fork of the view and commits nothing.
+    const candidate = parseRules(await readText(request), call.now, call.rules.timezone);
+    return json(previewRules(call.view, candidate, call.now, call.services.environment));
+  }
   if (method === "GET" && path === "/v1/metrics") return metrics(call);
   if (method === "GET" && path === "/v1/stream") return stream(call);
   return json({ error: "没有这个地址" }, 404);

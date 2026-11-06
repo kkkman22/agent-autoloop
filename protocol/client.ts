@@ -55,6 +55,8 @@ export function hubClient(url: string, key: string) {
     state: (before?: number) => call("GET", before === undefined ? "/v1/state" : `/v1/state?before=${before}`),
     cancel: (run: number) => call("POST", `/v1/runs/${run}/cancel`, { body: {} }),
     resolve: (card: number, reason: string) => call("POST", `/v1/cards/${card}/resolve`, { body: { reason } }),
+    // The body is the candidate rules file itself; the hub answers with what applying it would do.
+    rulesPreview: (rules: unknown) => call("POST", "/v1/rules/preview", { body: rules }),
   };
 }
 export type Hub = ReturnType<typeof hubClient>;
