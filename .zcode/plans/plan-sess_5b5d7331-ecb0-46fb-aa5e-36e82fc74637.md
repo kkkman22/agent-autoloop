@@ -1,54 +1,48 @@
 ## Context
 
-按 `docs/f2-plan-2026-11-06.md` 开发。F2 共 5 个包;本会话做 **F2-01 规则编辑体验**(计划建议顺序 F2-01 → F2-02 串行,其余并行,一轮做不完全部)。目标:用户不手改 JSON 也能检查、解释、预览、暂停、恢复、删除规则;暂停不丢活。
+按 `docs/f2-plan-2026-11-06.md` 做 **F2-02 路由与审批角色**(F2-01 已完成)。目标:一个中台服务多拨人——规则指定通道、安静时段、紧急程度、回答者角色;旧配置一个字不改(全部新字段可选)。D4-D6 按计划建议:D4 卡片创建时定去向并写在卡片上;D5 系统卡片默认发所有通道,顶层 `notices.channels` 可收;D6 顶层 `roles`,`rules.json` 里 `answerers: ["role:运维"]` 引用。基线:分支 `feature/f2-01-rules` 之上继续,按 PR 拆 3 个本地提交。
 
-计划文档 D1-D3 争议项按文档建议执行:D1 不支持注释、写回前留 `.bak`;D2 暂停的事件规则照常记录/排队、只不派发;D3 暂停的定时规则不补跑。
+## 关键现状(已探明)
 
-前置:工作区有阶段 0/1 存量改动(未提交)。先 `npm run test:quick` + `typecheck` + `format:check` 验证存量是绿的,提交为一个 stage-1 提交,再切 `feature/f2-01-rules` 分支做 F2。全部本地提交,不推送。
+- `kernel/decide.ts`:`nextCard` 对所有已登记通道交出所有候选卡片;重试标记(tries/first_try_at)在候选循环里发生 → 安静时段跳过必须放在**标记之前**,否则重试计时提前耗尽。
+- 卡片创建:`createCard` 是唯一入口;规则产品卡走 `cardFromReceipt`;系统卡(tell/rulesError/接单程序离线/hops/run 卡)走 `notify`/`tell`。sweep 的离线通知 spec 带 rule 但属于系统卡 → 必须显式传 routing,不能按「有 rule 就按规则路由」。
+- `answer` 只核对通道 answerers + 送达 ref;卡片链接回答 by=「链接」不走通道核对(保持现状)。
+- 格式指纹:host/fingerprint.ts 把 kernel/schema.sql 哈希进 format → cards 加列自动触发升级首启重建,无需改代码,只写 CHANGELOG。
+- 桌面通道:plugins/desktop/channel.ts `show(card.title)`;low 时改为标记 delivered(`skipped-<id>`)不弹。host/channels.ts 的 Card 类型加可选 `severity`。
+- 时区处理:内核不读时钟,quiet 判断用 `draft.now` + `draft.rules.timezone`;纯函数 `inQuietHours(quiet, now, zone)` 放 kernel/rules.ts(跨午夜 from>to;Intl formatToParts 取当地分钟,模式照 kernel/cron.ts)。
 
-## 实施步骤(3 个提交,按计划 PR 拆分)
+## 提交 1:规则 `channels` + 顶层 `notices`,卡片记录去向
 
-### 提交 0:存量 stage-0/1 改动
-验证绿后把当前工作区全部改动提交为一个提交(信息说明是阶段 0/1:备份/更新/限额/指标/重建)。
+- `protocol/rules.ts` + `kernel/rules.ts`:规则可选 `channels`(已登记通道列表);顶层可选 `notices: {channels: [...]}`(引用未登记通道报错);`Rules` 类型加 `notices`。
+- `kernel/decide.ts`:`DEFAULTS.cards` 加 `channels: null`;`createCard` 接受 `spec.routing`,`cardFromReceipt` 和 `tell=always` 的完成通知按规则算 `routing.channels`(规则没写 = null 即所有通道),其余(tell/rulesError/sweep 离线/hops/run 卡)用 `notices.channels ?? null`;`nextCard` 循环开头:卡片 `channels` 不含该通道 → continue(在任何投递标记之前)。
+- 卡片视图/`why`:卡片行带 channels,why 的事实里自然可查。
+- 测试:`tests/routing.test.ts`(新,先红):规则指定通道另一通道领不到;不写两通道都领到(旧行为);系统卡按 notices;创建后改规则旧卡片去向不变、新卡片按新规则;`why` 查得到去向。`tests/kernel.test.ts` 加「绑定单通道的卡片不会交到别的通道」(抓变异)。`sim/invariants.ts` 加不变量「卡片只送达给目标通道」;`sim/world.ts` 规则一加 `channels:["chat"]`、加第二通道 bell;`sim/mutate.ts` 加 `route-channel` 变异(去掉 nextCard 通道过滤,须被抓)。
+- 文档:protocol.md 通道/规则节、README×2、CHANGELOG(卡片行加列,升级首启重建视图)。
 
-### 提交 1:`rules validate` + `rules explain`(纯本地,不改内核)
-- `protocol/rules.ts`:新函数 `ruleWarnings(rules, known)`(不进 `parseRules`,不阻止生效):通道无 `answerers`(只能发通知)、规则引用的来源还没有密钥(`known.keys`)、规则 `cwd` 在本机不存在(`known.cwdExists`)。
-- `cli/rules.ts`(新):`rules validate [文件]`(打印警告)、`rules explain <来源> <事件类型>`、`rules explain <规则名>`(定时规则列接下来 3 次到点,用 `kernel/cron.ts` 的 `nextRun`)。坏文件要能报错不崩(参照 `cli/main.ts` 的 `importRules` 模式)。
-- `cli/main.ts`:`rules` 命令接线;`check` 变为 `rules validate` 别名;HELP 更新。
-- 测试 `tests/rules-cli.test.ts`(新,先写失败方式):validate 错误与警告;explain 对通配类型、并发组、定时规则的输出;不写文件。
+## 提交 2:`severity` + 通道 `quiet`
 
-### 提交 2:`disabled` 字段进内核
-- `protocol/rules.ts`:规则加可选 `disabled`(布尔);`protocol/schema.json` 的 rules 定义同步。
-- `kernel/rules.ts`:`Rule` 类型加 `disabled?: boolean`。
-- `kernel/decide.ts`:
-  - `claimNext` 可领条件加「规则未暂停」;
-  - `tick` 对暂停的定时规则**仍推进 schedules.next_at**但不 enqueue(这样恢复后从下一次到点开始,天然不补,满足 D3);
-  - `dropRules` 不变。
-- `kernel/state.ts`:`lines` 每项加 `disabled`。
-- 测试:
-  - `tests/rule-lifecycle.test.ts` 加 4 个用例:暂停的事件规则收 3 条同事项事件→只排一轮不派;恢复后派一次带 3 条事件;暂停的定时规则跨两次到点恢复后不补;暂停期间回答卡片恢复后叫醒原事项。
-  - `tests/kernel.test.ts` 或 `tests/schedule.test.ts` 加「暂停后 claimNext 返回 null」——**这条必须能抓变异**。
-  - `sim/random.ts`:随机操作加「暂停/恢复一条规则」(改 `rng(12)`→`rng(14)`,新分支切换 disabled 并重放 rules 输入;claimNext 拿到 job 后断言其规则未暂停)。
-  - `sim/invariants.ts` 或 random.ts:不变量「暂停中的规则不会有新领取的轮次」。
-  - `sim/mutate.ts`:变异清单加一条:去掉 `claimNext` 对 `disabled` 的判断(注意 mutate 只跑 kernel/events/cards/runs/schedule/stream/purity 七个测试,抓变异的测试必须在这些文件里)。
-- 文档:CHANGELOG「用了 disabled 后回滚,旧版本会拒绝规则文件,回滚前先 enable 或删字段」+「要注意」;`docs/protocol.md` 规则节;两份 README「这次改了什么」。
+- `protocol/rules.ts` + `kernel/rules.ts`:规则可选 `severity`(low/normal/urgent,默认 normal);通道可选 `quiet: {from, to}`(HH:MM,from ≠ to,引用 rules.json 时区);`kernel/rules.ts` 新 `inQuietHours(quiet, now, zone)` 纯函数。
+- `kernel/decide.ts`:卡片存 severity(DEFAULTS "normal",规则卡取规则);`nextCard`:通道安静时段中且卡片非 urgent → 在投递标记之前 continue(保证放弃计时从第一次真正交出算起;时段结束不主动叫醒长轮询,最晚 50 秒补发——写进协议)。
+- `kernel/query.ts` `cardView` 输出加 `severity`;`host/channels.ts` Card 类型加可选 severity;`plugins/desktop/channel.ts`:`severity === "low"` → 不弹通知,标记 delivered。
+- `protocol/schema.json` 的 `card` def 加 severity。
+- 测试(routing.test.ts + kernel.test.ts):时段内普通卡不交出、urgent 交出;跨午夜;结束后补发;规则时区 ≠ 本机时区按规则时区;安静时段不提前耗尽重试计时;quiet 校验错误(from=to、坏格式)。`tests/desktop.test.ts` 加 low 不弹、normal 照弹。`sim/random.ts` 随机规则带 severity/quiet 场景(用固定时区规则);`sim/mutate.ts` 变异(如去掉 urgent 豁免)可选——不加新变异,由现有用例覆盖。
+- 文档:protocol.md(安静时段 + severity + 50 秒补发口径)、README×2、CHANGELOG、schema.json。
 
-### 提交 3:`POST /v1/rules/preview` + 写回类命令
-- `kernel/query.ts`:新 `previewRules(view, candidateRules, now, env)`(只读):内部跑 `decide(view, {type:"rules"})` 空跑不提交,归纳为:新增/删除/改名/改动的规则;会被取消的排队轮次(按规则计数,前 20 个编号);会被关闭的卡片(按规则计数,前 20 个编号+标题);已领取的轮次单独列出。
-- `kernel/http.ts`:`POST /v1/rules/preview`,只认本人密钥(401);请求体是候选规则 JSON 文本,`parseRules` 校验失败按现有中文错误 400;超限走现有 413。
-- `protocol/client.ts`:加 `rulesPreview(body)`。
-- `protocol/schema.json`:加 `rules-preview` 请求/响应。
-- `cli/rules.ts` 扩展:`rules diff [文件]`、`rules disable|enable <名>`、`rules remove <名>`、`rules edit`(`$EDITOR`)。写回流程固定:校验候选 → 预览 → 确认(非交互必须 `--yes`,否则拒绝)→ 复制 `rules.json.<时间>.bak` → 写临时文件 → 原子改名。
-- 测试 `tests/rules-preview.test.ts`(新):删一条有排队轮次+开着卡片的规则,预览结果与真正生效后发生的一致;预览前后事实条数不变;非本人密钥 401;超限 413。`tests/rules-cli.test.ts` 补:disable 后文件只多这一个字段且留备份;非交互无 `--yes` 不写文件;edit 写错的规则不替换原文件。
-- 文档:`docs/protocol.md` 本人节加 preview 端点;schema.json;README×2;CHANGELOG;SKILL.md。
+## 提交 3:`roles` + 规则 `answerers`
+
+- `protocol/rules.ts` + `kernel/rules.ts`:顶层可选 `roles: {名字: [各通道写法]}`;规则可选 `answerers`(`"role:名字"` 或普通写法;role 引用不存在 → 校验报错);`Rules` 类型加 `roles`。
+- `kernel/decide.ts`:卡片创建时把规则的 answerers **展开角色**写进卡片(`answerers: null` = 不额外限制);`answer()`:通道转达的回答在现有两道核对之外,再核对 `card.answerers`(401,原因写清);本人密钥/链接回答不受限。
+- `kernel/query.ts` `cardView` 加 `answerers`?不加——回答者名单属路由细节,不进通道视图(泄漏名单给通道无必要);只进 why 的事实。
+- 测试:角色里的人能回答、不在的被拒(401);本人密钥不受限;通道 `["*"]` + 规则有角色 → 以角色为准;改角色不影响已建卡片(展开写在卡上);`rules.json` 校验:引用不存在角色报错。`tests/cards.test.ts` 加通道回答核对用例(抓 `answer-role` 变异);`sim/random.ts` op 9 加角色断言「回答者在卡片允许名单里」;`sim/mutate.ts` 加 `answer-role` 变异。
+- 文档:protocol.md(角色)、SECURITY.md 隐私边界(规则级 channels 是「只发给谁」不是加密;本人密钥看得到全部;私人资料用 notices.channels 收)、README×2、CHANGELOG。
 
 ## 验证
 
-- 每个提交:`npm run typecheck` + `npm run format:check` + 对应测试文件先红后绿。
-- 提交 2(动 kernel/protocol/sim):`npm test` 全量(含 20 万步模拟与穷举)+ `npm run test:nightly`(夜间模拟、强杀、变异;本机空闲内存预算项以与基线一致为准)。
-- 提交 3(动 kernel/http、client):`npm run test:quick` 起底,再跑相关测试全量。
-- 手工冒烟:临时 `AGENT_AUTOLOOP_HOME` 起中台,走一遍 validate → disable → preview → enable。
+- 每提交先红后绿;`typecheck` + `format:check` 全绿。
+- 三个提交都动 kernel/protocol/sim:`npm test` 全量(20 万步模拟 + 穷举)+ `npm run test:nightly`(模拟/强杀/变异;空闲内存预算项按已知基线 114 MB 口径)。
+- `tests/cards.test.ts`、`tests/channels.test.ts` 现有用例一个不改全过(「旧配置不用改」的证明)。
+- 手工冒烟:临时 home + 假通道,走「规则 channels 只发指定通道 → quiet 时段压卡 → urgent 豁免 → 角色外回答 401」。
 
-## 不做(留到下轮)
+## 不做
 
-F2-02~F2-05、push/建 PR、打版本标签、24 小时 soak。F2-03 的参考客户端在新仓库,不在本仓库动。
+F2-03~F2-05、推送/建 PR、打标签。

@@ -49,6 +49,10 @@ export function invariants(current: View, log: Fact[], before?: Snapshot) {
         links.some((l) => l.event_id === e.id && view.tables.runs[l.run_id]?.rule === rule),
         "已收事件丢了派发关系",
       );
+  for (const d of rows(view, "deliveries")) {
+    const card = view.tables.cards[d.card_id];
+    if (card && Array.isArray(card.channels)) assert.ok(card.channels.includes(d.channel), "卡片送到了目标之外的通道");
+  }
   for (const card of cards)
     if (card.answer_event !== null) {
       const event = view.tables.events[card.answer_event];

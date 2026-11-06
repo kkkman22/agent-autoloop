@@ -12,6 +12,12 @@ const edits: [string, string, string, string][] = [
   ["lane-exclusion", "decide.ts", "!claimed.some((other) => other.grp === run.grp && other.lane === run.lane)", "true"],
   ["pause-claim", "decide.ts", "!ruleNamed(draft, run.rule)?.disabled &&", "true &&"],
   [
+    "route-channel",
+    "decide.ts",
+    "if (Array.isArray(card.channels) && !card.channels.includes(channel)) continue;",
+    "if (false) continue;",
+  ],
+  [
     "worker-boundary",
     "decide.ts",
     'run.state === "queued" &&\n    agents.includes(ruleNamed(draft, run.rule)?.to ?? "")',

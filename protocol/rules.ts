@@ -86,6 +86,12 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["disabled", (value) => typeof value === "boolean", "要是 true 或 false", true],
+    [
+      "channels",
+      (value) => isWords(value) && (value as string[]).every((id) => isKeyOf(rules.channels)(id)),
+      "要是已登记通道的编号列表",
+      true,
+    ],
     ["emits", isObject, "要是一个对象", true],
   ]);
   if (isObject(when) && "source" in when) {
@@ -147,6 +153,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
     ["sources", isObject, "要是一个对象"],
     ["agents", isObject, "要是一个对象"],
     ["channels", isObject, "要是一个对象", true],
+    ["notices", isObject, "要是一个对象", true],
     ["rules", Array.isArray, "要是一个列表"],
     ["elsewhere", Array.isArray, "要是一个列表", true],
   ]);
@@ -156,6 +163,16 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
   rules.askFirst ??= ASK_FIRST;
   rules.channels ??= {};
   rules.elsewhere ??= [];
+  if (rules.notices !== undefined)
+    checkFields(issues, "notices ", rules.notices, [
+      [
+        "channels",
+        (value) => isWords(value) && (value as string[]).every((id) => isKeyOf(rules.channels)(id)),
+        "要是已登记通道的编号列表",
+        true,
+      ],
+    ]);
+  rules.notices ??= {};
   if (SCHEDULE in rules.sources) issues.push(`来源 ${SCHEDULE} 是保留的，定时用规则的 cron`);
   for (const [id, source] of Object.entries(rules.sources)) {
     if (!isName(id)) issues.push(`来源的编号${ID_WORDS}：${id}`);

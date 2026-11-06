@@ -8,6 +8,7 @@
 
 ### 要注意
 
+- 卡片行加了 `channels` 列，升级后第一次启动会从日志重建视图；重建可以中途停下再接着做。
 - 规则加了可选的 `disabled` 字段（暂停）。用过之后再回滚到没有这个字段的版本，旧版本会拒绝规则文件，回滚前先恢复规则或删掉这个字段。
 - 通道要在 `rules.json` 里写 `answerers` 才能转达回答；没写或写成空的只能发通知。只有 `["*"]` 允许任何人回答。
 - `agent-autoloop join` 只接受 `https://`，`http://` 只允许本机回环地址。
@@ -18,6 +19,7 @@
 
 ### 新增
 
+- 规则的可选字段 `channels`：这条规则的卡片只发往列出的通道；卡片创建时写下去向，改规则不影响已发的卡片。顶层可选 `notices.channels`：不属于任何规则的卡片发往哪，不写就是所有通道。
 - `agent-autoloop rules validate [文件]`（`check` 是别名）：校验规则文件并给出警告——通道收不了回答、来源还没有密钥、目录这台电脑上没有。
 - `agent-autoloop rules explain <来源> <事件类型>`、`rules explain <规则名>`：列出会接这条事件的规则，或给一条规则的完整说明（定时规则带接下来 3 次到点）。
 - `agent-autoloop rules diff [文件]`、`rules disable|enable <规则名>`、`rules remove <规则名>`、`rules edit`：改规则前先在中台上空跑一遍并列出影响（会取消哪些排队轮次、关闭哪些卡片），确认后留备份再原子替换；非交互要加 `--yes`。背后是只认本人密钥的 `POST /v1/rules/preview`。

@@ -14,7 +14,7 @@ export const rules = parseRules(
       a: { name: "甲", worker: "w1", use: "command", command: ["true"] },
       b: { name: "乙", worker: "w2", use: "command", command: ["true"] },
     },
-    channels: { chat: { name: "通道", answerers: ["owner"] } },
+    channels: { chat: { name: "通道", answerers: ["owner"] }, bell: { name: "铃声", answerers: ["owner"] } },
     rules: [
       {
         name: "one",
@@ -24,6 +24,7 @@ export const rules = parseRules(
         prompt: "做事",
         group: "shared",
         parallel: 2,
+        channels: ["chat"],
       },
       {
         name: "two",

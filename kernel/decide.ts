@@ -35,6 +35,8 @@ const NOT_DELIVERED: Row = { version: 0, ref: null, ...NOT_TRYING, error: null, 
 
 const nulls = (...names: string[]) => Object.fromEntries(names.map((name) => [name, null]));
 const CARD_BASICS = { text: "", options: "[]", recommend: null, about: "", state: "open", fyi: 0, quiet: 0 };
+/** Where a card may go: without a list, to every channel there is. */
+type Routing = { channels: string[] | null };
 const DEFAULTS: Partial<Record<Table, Row>> = {
   runs: {
     attempts: 0,
@@ -46,6 +48,7 @@ const DEFAULTS: Partial<Record<Table, Row>> = {
     ...nulls("choice", "answer", "by", "result", "rule"),
     lane: "",
     ...nulls("grp", "source", "agent", "session", "run_id", "answer_event"),
+    channels: null,
     version: 1,
     ...nulls("decided_at", "closed_at"),
   },
@@ -120,12 +123,14 @@ function createCard(draft: Draft, spec: Row) {
   const cards = rows(draft.view, "cards", { key: spec.key, ...(!spec.once && { state: "open" }) }, 1, true);
   const existing = cards.findLast((card) => card.key === spec.key && (spec.once || card.state === "open"));
   if (existing) return { card: existing.id, duplicate: true };
-  const { once, run, options, fyi, quiet, ...fields } = spec;
+  const { once, run, options, fyi, quiet, routing, ...fields } = spec;
+  const where = (routing as Routing | undefined)?.channels ?? draft.rules.notices?.channels ?? null;
   const stored = {
     run_id: run ?? null,
     options: JSON.stringify(options ?? []),
     fyi: fyi ? 1 : 0,
     quiet: quiet ? 1 : 0,
+    channels: where,
   };
   const card = add(draft, "cards", { ...fields, ...stored, state: fyi ? "closed" : "open", created_at: draft.at });
   return { card: card.id, duplicate: false };
@@ -195,10 +200,12 @@ function heldRun(draft: Draft, id: number, token: string, states: string[]) {
 function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
   const name = card.key ?? digest(`${card.title}\n${card.text}`).slice(0, 32);
   const session = draft.view.get("runs", run.id)!.session;
-  const quiet = kind === "notice" && ruleNamed(draft, run.rule)?.tell === "never";
+  const rule = ruleNamed(draft, run.rule);
+  const quiet = kind === "notice" && rule?.tell === "never";
   const origin = { source: sourceOf(draft.view, run.id), agent: run.agent, session, run: run.id };
   const key = `thread:${run.rule}:${run.lane}:${name}`;
-  createCard(draft, { ...card, hops: hopsOf(draft, run), key, kind, quiet, ...threadOf(run), ...origin });
+  const routing: Routing = { channels: rule?.channels ?? null };
+  createCard(draft, { ...card, hops: hopsOf(draft, run), key, kind, quiet, ...threadOf(run), ...origin, routing });
 }
 
 /** Notices what has gone quiet: a worker that stopped coming, a run its worker stopped mentioning. */
@@ -357,7 +364,14 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
   for (const ask of result.ask ?? []) cardFromReceipt(draft, run, "ask", ask);
   for (const notice of result.notice ?? []) cardFromReceipt(draft, run, "notice", notice);
   if (rule?.tell === "always" && result.outcome === "done") {
-    const once = { fyi: true, once: true, ...threadOf(run), source: sourceOf(draft.view, id), run: id };
+    const once = {
+      fyi: true,
+      once: true,
+      ...threadOf(run),
+      source: sourceOf(draft.view, id),
+      run: id,
+      routing: { channels: rule.channels ?? null } satisfies Routing,
+    };
     notify(draft, `run:${id}:done`, run.rule, summary, once);
   }
   for (const later of result.later ?? []) scheduleReview(draft, run, later);
@@ -436,6 +450,8 @@ function nextCard(draft: Draft, channel: string) {
   if (!Object.hasOwn(draft.rules.channels, channel)) return null;
   const { now } = draft;
   for (const card of draft.view.deliveryCandidates(channel, now)) {
+    // A card made for other channels is not this channel's to take, no matter how long it has waited.
+    if (Array.isArray(card.channels) && !card.channels.includes(channel)) continue;
     const key = `${card.id}:${channel}`;
     const delivery = draft.view.get("deliveries", key) ?? NOT_DELIVERED;
     const recentNote = card.fyi && Date.parse(card.created_at) >= now - 24 * 60 * MINUTE;
