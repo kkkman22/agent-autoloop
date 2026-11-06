@@ -6,6 +6,7 @@
 // Source event IDs must not collide with internally generated answer or timer IDs.
 // Quiet notices must not escape through a channel; a stale writer must receive Conflict rather than a database failure.
 // Existing logs can contain a queued run with an old agent after a rules change; replay must retain claimed configurations.
+// A paused rule keeps queueing what arrives but hands out nothing until it is enabled again.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -126,6 +127,25 @@ test("one due table retains cron, retry, timer and offline deadlines without per
   act("finish", [job.run, job.token, { outcome: "failed" }], 2000);
   assert.ok(rows(v, "due").some((d) => d.kind === "retry" && d.at === 302000));
   assert.deepEqual(decide(v, { type: "tick", args: [] }, 2000, environment).facts, []);
+});
+
+test("a paused rule keeps queueing what arrives but hands out nothing until it is enabled again", () => {
+  let v = seeded();
+  const act = (type: string, args: unknown[], now = 1000) => {
+    const d = decide(v, { type, args }, now, environment);
+    v = evolve(v, d.facts);
+    return d.value;
+  };
+  const paused = structuredClone(rules);
+  paused.rules[0].disabled = true;
+  act("rules", [paused]);
+  const ack = act("ingest", ["app", { id: "paused", type: "feedback.new" }]);
+  assert.deepEqual(ack.routed, ["意见"], "the paused rule still takes the event");
+  assert.equal(act("claimNext", ["w1", "while-paused"]), null);
+  act("rules", [rules]);
+  const job = act("claimNext", ["w1", "after-enable"]);
+  assert.equal(job.rule.name, "意见");
+  assert.equal(job.context.events.length, 1);
 });
 
 test("receipt normalization leaves the request unchanged and can be decided twice", () => {

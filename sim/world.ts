@@ -80,6 +80,12 @@ export class World {
   }
   recover() {
     this.advance(86400000);
+    // A pause is meant to hold work, not to hold it for ever: recovery ends every pause before draining the queue.
+    const config = structuredClone(this.view.get("config", "rules")!.value) as typeof rules;
+    if (config.rules.some((rule) => rule.disabled)) {
+      for (const rule of config.rules) delete rule.disabled;
+      this.call("rules", config);
+    }
     for (const r of rows(this.view, "runs").filter((r) => ["claimed", "unknown"].includes(r.state))) this.finish(r.id);
     this.call("heartbeat", "w1", []);
     this.call("heartbeat", "w2", []);

@@ -2,6 +2,9 @@
 // worker can claim it; an open card stays open although its rule is gone; an answer lands on a card whose thread can no
 // longer run, and is recorded as if it would; the owner is told once per change instead of once per lost item; a failed
 // run with no rule goes back to the queue and waits for ever; restoring a rule leaves new work stuck behind old state.
+// A paused rule that keeps receiving events must neither lose them nor fire them: they wait as one run while paused,
+// go out together when it resumes; a paused schedule must not owe its missed slots on resume; an answer given while
+// paused must wake its matter, not sit apart from it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { at, setup } from "./helpers.ts";
@@ -12,7 +15,7 @@ const { Conflict } = await import("../kernel/errors.ts");
 const { all, one, run } = await import("./storage.ts");
 
 const clean = () => {
-  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"])
+  for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers", "schedules"])
     run(`DELETE FROM ${table}`);
 };
 const note = (n: number) => ({ id: `feedback:${n}:new`, type: "feedback.new", subject: `#${n}` });
@@ -122,4 +125,59 @@ test("restoring a deleted rule lets new work run again", () => {
   hub.ingest("app", note(1), at(2));
   const job = hub.claimNext("w1", "restored", at(2))!;
   assert.equal(job.rule.name, "意见");
+});
+
+const disabling = (name: string) => {
+  const next = structuredClone(origin);
+  next.rules.find((rule: { name: string }) => rule.name === name).disabled = true;
+  return next;
+};
+const enabling = () => structuredClone(origin);
+const matter = (n: number, subject: string) => ({ id: `paused:${n}`, type: "feedback.new", subject });
+
+test("a paused rule queues what arrives as one run, and sends it all out when resumed", () => {
+  reset();
+  hub.execute("rules", [disabling("意见")], at(0));
+  const ack = hub.ingest("app", matter(1, "#1"), at(1));
+  assert.deepEqual(ack.routed, ["意见"], "the paused rule is still recorded as taking the event");
+  hub.ingest("app", matter(2, "#1"), at(2));
+  hub.ingest("app", matter(3, "#1"), at(3));
+  const queued = all("SELECT id FROM runs WHERE state = 'queued'");
+  assert.equal(queued.length, 1, "the same matter waits as one run");
+  assert.equal(hub.claimNext("w1", "while-paused", at(4)), null);
+  hub.execute("rules", [enabling()], at(5));
+  const job = hub.claimNext("w1", "resumed", at(6))!;
+  assert.equal(job.rule.name, "意见");
+  assert.equal(job.context.events.length, 3, "nothing that arrived while paused was lost");
+});
+
+test("a paused schedule does not owe its missed slots, and starts from the next one", () => {
+  reset();
+  hub.tick(at(0)); // 10:00: the schedule's next slot is 10:05
+  hub.execute("rules", [disabling("巡检")], at(1));
+  hub.tick(at(6)); // 10:06: the 10:05 slot passes while paused
+  hub.tick(at(11)); // 10:11: the 10:10 slot passes while paused
+  assert.equal(all("SELECT id FROM events WHERE type = 'schedule.tick'").length, 0, "no catch-up while paused");
+  hub.execute("rules", [enabling()], at(12));
+  hub.tick(at(13)); // 10:13: still before the next slot
+  assert.equal(all("SELECT id FROM events WHERE type = 'schedule.tick'").length, 0, "no catch-up on resume");
+  hub.tick(at(16)); // 10:16: the 10:15 slot is the first one after the pause
+  const fired = all<{ key: string }>("SELECT key FROM events WHERE type = 'schedule.tick'");
+  assert.equal(fired.length, 1);
+  assert.match(fired[0].key, /T02:15:/, "the 10:15 slot fired once, in the schedule's own clock");
+});
+
+test("an answer given while paused waits, and wakes its matter when the rule resumes", () => {
+  reset();
+  const { id } = askedCard(1);
+  hub.execute("rules", [disabling("意见")], at(1));
+  hub.answer(id, { choice: 0, by: "me" }, at(2));
+  const card = one<{ state: string }>("SELECT state FROM cards WHERE id = ?", [id])!;
+  assert.equal(card.state, "decided");
+  const waking = one<{ id: number }>("SELECT id FROM runs WHERE rule = '意见' AND state = 'queued'")!;
+  assert.equal(hub.claimNext("w1", "while-paused", at(3)), null);
+  hub.execute("rules", [enabling()], at(4));
+  const job = hub.claimNext("w1", "resumed", at(5))!;
+  assert.equal(job.run, waking.id, "the answer wakes the very run that was waiting");
+  assert.equal(job.context.events.filter((event: { type: string }) => event.type === "card.answered").length, 1);
 });

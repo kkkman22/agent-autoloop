@@ -130,6 +130,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       name: rule.name,
       group: rule.group,
       agent: rule.to,
+      disabled: rule.disabled === true,
       source: eventRule(rule) ? rule.when.source : SCHEDULE,
       types: eventRule(rule) ? rule.when.types : [],
       every: eventRule(rule) ? null : describeCron(cronOf(rule)),

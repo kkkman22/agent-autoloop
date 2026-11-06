@@ -242,6 +242,7 @@ function claimNext(draft: Draft, worker: string, claim: string) {
     run.state === "queued" &&
     agents.includes(ruleNamed(draft, run.rule)?.to ?? "") &&
     Date.parse(run.not_before) <= draft.now &&
+    !ruleNamed(draft, run.rule)?.disabled &&
     ruleNamed(draft, run.rule) &&
     !claimed.some((other) => other.grp === run.grp && other.lane === run.lane) &&
     claimed.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
@@ -468,6 +469,11 @@ function tick(draft: Draft) {
       continue;
     }
     if (now < Date.parse(schedule.next_at)) continue;
+    if (rule.disabled) {
+      // A paused schedule keeps its clock running, so resuming never owes the slots the pause swallowed.
+      put(draft, "schedules", rule.name, { next_at: nextAt() });
+      continue;
+    }
     const key = `${rule.name}@${iso(latestBefore(cron, Date.parse(schedule.next_at), now, timezone))}`;
     if (!rows(draft.view, "events", { source: SCHEDULE, key }).length) {
       enqueue(draft, rule, recordEvent(draft, SCHEDULE, { id: key, type: "schedule.tick" }, [rule.name]), "");

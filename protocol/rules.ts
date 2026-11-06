@@ -85,6 +85,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["group", isText, NOT_EMPTY, true],
     ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
+    ["disabled", (value) => typeof value === "boolean", "要是 true 或 false", true],
     ["emits", isObject, "要是一个对象", true],
   ]);
   if (isObject(when) && "source" in when) {

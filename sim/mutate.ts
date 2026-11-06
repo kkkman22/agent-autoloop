@@ -10,6 +10,7 @@ const edits: [string, string, string, string][] = [
   ["parallel-lane", "decide.ts", 'const lane = rule.parallel ? subject : ""', 'const lane = ""'],
   ["group-capacity", "decide.ts", "claimed.filter((other) => other.grp === run.grp).length <", "0 <"],
   ["lane-exclusion", "decide.ts", "!claimed.some((other) => other.grp === run.grp && other.lane === run.lane)", "true"],
+  ["pause-claim", "decide.ts", "!ruleNamed(draft, run.rule)?.disabled &&", "true &&"],
   [
     "worker-boundary",
     "decide.ts",

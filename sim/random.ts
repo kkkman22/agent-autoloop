@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { rows } from "../kernel/evolve.ts";
 import { AuthError } from "../kernel/errors.ts";
 import { credential } from "../kernel/credentials.ts";
-import { World, environment } from "./world.ts";
+import { World, environment, rules } from "./world.ts";
 
 export function random(seed: number) {
   let state = seed >>> 0;
@@ -17,7 +17,15 @@ export function random(seed: number) {
 export function simulate(seed = 0x5eed, steps = 200000) {
   const rng = random(seed);
   const start = performance.now();
-  const faults: Record<string, number> = { lost: 0, duplicate: 0, restart: 0, offline: 0, channel: 0, clock: 0 };
+  const faults: Record<string, number> = {
+    lost: 0,
+    duplicate: 0,
+    restart: 0,
+    offline: 0,
+    channel: 0,
+    clock: 0,
+    paused: 0,
+  };
   let world = new World();
   let completed = 0;
   const receipts: { id: number; token: string; body: object; ack: object }[] = [];
@@ -30,7 +38,7 @@ export function simulate(seed = 0x5eed, steps = 200000) {
         receipts.length = 0;
       }
       world.advance(rng(30000));
-      const op = rng(12);
+      const op = rng(13);
       const live = rows(world.view, "runs").filter((r) => ["claimed", "unknown"].includes(r.state));
       if (op < 3) {
         const id = String(rng(16));
@@ -50,6 +58,16 @@ export function simulate(seed = 0x5eed, steps = 200000) {
         );
         world.alarm();
         const job = world.call("claimNext", worker, claim);
+        if (job) {
+          // A fresh claim carries the current rules version, so only those may come from a paused rule.
+          const run = world.view.get("runs", job.run)!;
+          const config = world.view.get("config", "rules")!.value;
+          if (run.rules_version === config.version)
+            assert.ok(
+              !config.rules.find((r: { name: string }) => r.name === job.rule.name)?.disabled,
+              "暂停中的规则派出了新的轮次",
+            );
+        }
         if (op === 4 && job) {
           faults.lost++;
           const again = world.call("claimNext", worker, claim);
@@ -100,6 +118,14 @@ export function simulate(seed = 0x5eed, steps = 200000) {
       } else if (op === 10) {
         faults.clock++;
         world.advance(-rng(120000));
+      } else if (op === 11) {
+        // Pausing and resuming: what arrives for a paused rule must wait, never run and never vanish.
+        faults.paused++;
+        const config = structuredClone(world.view.get("config", "rules")!.value) as typeof rules;
+        const rule = config.rules[rng(config.rules.length)];
+        if (rule.disabled) delete rule.disabled;
+        else rule.disabled = true;
+        world.call("rules", config);
       } else {
         const card = rows(world.view, "cards").find((c) => c.kind === "ask");
         if (card) {
