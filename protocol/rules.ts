@@ -102,6 +102,14 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
       true,
     ],
     ["severity", (value) => SEVERITIES.includes(value as string), `只能是 ${SEVERITIES.join("、")}`, true],
+    [
+      "answerers",
+      (value) =>
+        isWords(value) &&
+        (value as string[]).every((who) => !who.startsWith("role:") || Object.hasOwn(rules.roles, who.slice(5))),
+      "要是文字的列表，或 role: 加已登记的角色名",
+      true,
+    ],
     ["emits", isObject, "要是一个对象", true],
   ]);
   if (isObject(when) && "source" in when) {
@@ -164,6 +172,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
     ["agents", isObject, "要是一个对象"],
     ["channels", isObject, "要是一个对象", true],
     ["notices", isObject, "要是一个对象", true],
+    ["roles", isObject, "要是一个对象", true],
     ["rules", Array.isArray, "要是一个列表"],
     ["elsewhere", Array.isArray, "要是一个列表", true],
   ]);
@@ -183,6 +192,9 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ],
     ]);
   rules.notices ??= {};
+  for (const [name, members] of Object.entries(rules.roles ?? {}))
+    if (!isWords(members)) issues.push(`角色 ${name} 要是文字的列表`);
+  rules.roles ??= {};
   if (SCHEDULE in rules.sources) issues.push(`来源 ${SCHEDULE} 是保留的，定时用规则的 cron`);
   for (const [id, source] of Object.entries(rules.sources)) {
     if (!isName(id)) issues.push(`来源的编号${ID_WORDS}：${id}`);

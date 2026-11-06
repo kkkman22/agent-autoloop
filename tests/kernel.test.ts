@@ -8,11 +8,13 @@
 // Existing logs can contain a queued run with an old agent after a rules change; replay must retain claimed configurations.
 // A paused rule keeps queueing what arrives but hands out nothing until it is enabled again.
 // A card made for one channel is never handed to another, however long it has waited.
+// A channel-relayed answer must come from the people the card was made for.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { empty, evolve, rows, snapshot, type Fact } from "../kernel/evolve.ts";
 import { decide } from "../kernel/decide.ts";
+import { AuthError } from "../kernel/errors.ts";
 import { parseRules } from "../protocol/rules.ts";
 
 const environment = { secret: "simulation-secret", publicUrl: "https://hub.test" };
@@ -168,6 +170,32 @@ test("a card made for one channel is never handed to another", () => {
   ]);
   assert.equal(act("nextCard", ["plain"]), null);
   assert.equal(act("nextCard", ["chat"])!.rule, "意见");
+});
+
+test("a channel-relayed answer must come from the people the card was made for", () => {
+  let v = seeded();
+  const act = (type: string, args: unknown[], now = 1000) => {
+    const d = decide(v, { type, args }, now, environment);
+    v = evolve(v, d.facts);
+    return d.value;
+  };
+  const narrow = structuredClone(rules);
+  narrow.roles = { 运维: ["ou_a"] };
+  narrow.rules[0].answerers = ["role:运维"];
+  narrow.channels.chat.answerers = ["*"];
+  act("rules", [narrow]);
+  act("ingest", ["app", { id: "narrow", type: "feedback.new" }]);
+  const job = act("claimNext", ["w1", "narrow"]);
+  act("finish", [
+    job.run,
+    job.token,
+    { outcome: "done", ask: [{ title: "选择", text: "内容", options: ["甲", "乙"], key: "narrow" }] },
+  ]);
+  const card = rows(v, "cards").find((c) => c.kind === "ask")!;
+  assert.deepEqual(card.answerers, ["ou_a"]);
+  act("delivered", ["chat", card.id, card.version, "om"]);
+  assert.throws(() => act("answer", [card.id, { choice: 0, by: "ou_z", channel: "chat", ref: "om" }]), AuthError);
+  assert.equal(act("answer", [card.id, { choice: 0, by: "ou_a", channel: "chat", ref: "om" }]).changed, true);
 });
 
 test("receipt normalization leaves the request unchanged and can be decided twice", () => {

@@ -34,6 +34,13 @@ const withNotices = (channels: string[] | undefined) => {
   else next.notices = { channels };
   return next;
 };
+const withRoles = (ruleAnswerers: string[], roles: Record<string, string[]>, channelAnswerers: string[]) => {
+  const next = structuredClone(origin);
+  next.roles = roles;
+  next.rules.find((rule: { name: string }) => rule.name === "意见").answerers = ruleAnswerers;
+  next.channels.chat.answerers = channelAnswerers;
+  return next;
+};
 const askCard = (n: number, now: number) => {
   hub.ingest("app", { id: `routing:${n}`, type: "feedback.new", subject: `#${n}` }, now);
   const job = hub.claimNext("w1", `c${n}`, now)!;
@@ -168,4 +175,91 @@ test("why shows the channels a card was created with", () => {
     .flatMap((fact: { changes: { table: string; key: string; row: { channels?: string[] } | null }[] }) => fact.changes)
     .find((change: { table: string; key: string }) => change.table === "cards" && change.key === String(card));
   assert.deepEqual(change!.row!.channels, ["chat"]);
+});
+
+/** Hands the chat channel everything queued until `card` comes up (an answered card's update may cut in line), and
+ * reports each as delivered, so a channel answer can name the message ref. */
+const handed = (card: number, now: number) => {
+  for (let round = 0; round < 10; round++) {
+    const sent = hub.nextCard("chat", now)!;
+    if (sent.id === card) {
+      hub.delivered("chat", card, sent.version, `om_${card}`, now);
+      return;
+    }
+    hub.delivered("chat", sent.id, sent.version, `om_${sent.id}`, now);
+  }
+  throw new Error(`卡片 ${card} 一直没被交给 chat`);
+};
+
+test("a card's answerers decide who may answer through a channel, and the owner ignores them", () => {
+  reset();
+  hub.execute("rules", [withRoles(["role:运维", "ou_boss"], { 运维: ["ou_a", "13800000000"] }, ["*"])], at(1));
+  const card = askCard(1, at(2));
+  handed(card, at(3));
+  hub.answer(card, { choice: 0, by: "ou_a", channel: "chat", ref: `om_${card}` }, at(4));
+  const other = askCard(2, at(5));
+  handed(other, at(6));
+  assert.throws(
+    () => hub.answer(other, { choice: 0, by: "ou_z", channel: "chat", ref: `om_${other}` }, at(7)),
+    /不能回答|只允许/,
+    "不在角色里也不在名单上的人进不来",
+  );
+  assert.equal(
+    hub.answer(other, { choice: 0, by: "ou_boss", channel: "chat", ref: `om_${other}` }, at(7)).changed,
+    true,
+  );
+  const mine = askCard(3, at(8));
+  assert.equal(hub.answer(mine, { choice: 0, by: "本人" }, at(9)).changed, true, "本人密钥回答不受限制");
+});
+
+test("both lists hold: the channel's answerers and the card's, each on its own", () => {
+  reset();
+  hub.execute("rules", [withRoles(["role:运维"], { 运维: ["ou_a"] }, ["me"])], at(1));
+  const card = askCard(1, at(2));
+  handed(card, at(3));
+  assert.throws(
+    () => hub.answer(card, { choice: 0, by: "ou_a", channel: "chat", ref: `om_${card}` }, at(4)),
+    /不能回答/,
+    "在角色里但不在通道名单里",
+  );
+  assert.throws(
+    () => hub.answer(card, { choice: 0, by: "me", channel: "chat", ref: `om_${card}` }, at(4)),
+    /只允许/,
+    "在通道名单里但不在角色里",
+  );
+  const next = structuredClone(hub.getView().get("config", "rules")!.value);
+  next.channels.chat.answerers = ["me", "ou_a"];
+  hub.execute("rules", [structuredClone(next)], at(5));
+  assert.equal(hub.answer(card, { choice: 0, by: "ou_a", channel: "chat", ref: `om_${card}` }, at(6)).changed, true);
+});
+
+test("the card keeps the answerers it was made with, even when roles change later", () => {
+  reset();
+  hub.execute("rules", [withRoles(["role:运维"], { 运维: ["ou_a"] }, ["*"])], at(1));
+  const card = askCard(1, at(2));
+  assert.deepEqual(
+    JSON.parse(one<{ answerers: string }>("SELECT answerers FROM cards WHERE id = ?", [card])!.answerers),
+    ["ou_a"],
+  );
+  hub.execute("rules", [withRoles(["role:运维"], { 运维: ["ou_z"] }, ["*"])], at(3));
+  handed(card, at(4));
+  assert.equal(hub.answer(card, { choice: 0, by: "ou_a", channel: "chat", ref: `om_${card}` }, at(5)).changed, true);
+  const fresh = askCard(2, at(6));
+  handed(fresh, at(7));
+  assert.throws(
+    () => hub.answer(fresh, { choice: 0, by: "ou_a", channel: "chat", ref: `om_${fresh}` }, at(8)),
+    /只允许/,
+  );
+});
+
+test("an answerer naming an unregistered role is a rules mistake", () => {
+  const base = JSON.parse(readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8"));
+  const broken = structuredClone(base);
+  broken.roles = { 运维: ["ou_a"] };
+  broken.rules[0].answerers = ["role:没有人"];
+  assert.throws(() => parseRules(JSON.stringify(broken), 0, "UTC"), /role/);
+  const fine = structuredClone(base);
+  fine.roles = { 运维: ["ou_a"] };
+  fine.rules[0].answerers = ["role:运维", "ou_boss"];
+  assert.equal(parseRules(JSON.stringify(fine), 0, "UTC").rules[0]!.answerers!.length, 2);
 });

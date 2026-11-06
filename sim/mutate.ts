@@ -18,6 +18,12 @@ const edits: [string, string, string, string][] = [
     "if (false) continue;",
   ],
   [
+    "answer-role",
+    "decide.ts",
+    "if (Array.isArray(card.answerers) && !card.answerers.includes(given.by))",
+    "if (false)",
+  ],
+  [
     "worker-boundary",
     "decide.ts",
     'run.state === "queued" &&\n    agents.includes(ruleNamed(draft, run.rule)?.to ?? "")',

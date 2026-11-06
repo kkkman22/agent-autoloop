@@ -111,8 +111,12 @@ export function simulate(seed = 0x5eed, steps = 200000) {
           if (rng(2)) world.call("failed", "chat", card.id, card.version, "模拟断线");
           else {
             world.call("delivered", "chat", card.id, card.version, `message-${card.id}`);
-            if (card.state === "open")
+            if (card.state === "open") {
+              const stored = world.view.get("cards", card.id)!;
+              if (Array.isArray(stored.answerers))
+                assert.ok(stored.answerers.includes("owner"), "回答者在卡片允许的名单里");
               world.call("answer", card.id, { choice: 0, by: "owner", channel: "chat", ref: `message-${card.id}` });
+            }
           }
         }
       } else if (op === 10) {

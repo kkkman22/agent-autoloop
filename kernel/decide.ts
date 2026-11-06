@@ -44,16 +44,24 @@ const NOT_DELIVERED: Row = { version: 0, ref: null, ...NOT_TRYING, error: null, 
 
 const nulls = (...names: string[]) => Object.fromEntries(names.map((name) => [name, null]));
 const CARD_BASICS = { text: "", options: "[]", recommend: null, about: "", state: "open", fyi: 0, quiet: 0 };
-/** Where a card may go: without a list, to every channel there is. How loudly it asks to be seen. */
-type Routing = { channels: string[] | null; severity: Severity };
+/** Where a card may go: without a list, to every channel there is. How loudly it asks to be seen. Who may answer it
+ * through a channel, with roles spelled out onto the card, so later role changes move no card that already exists. */
+type Routing = { channels: string[] | null; severity: Severity; answerers: string[] | null };
 const ruleRouting = (draft: Draft, name: string): Routing => {
   const rule = ruleNamed(draft, name);
-  return { channels: rule?.channels ?? null, severity: rule?.severity ?? "normal" };
+  return {
+    channels: rule?.channels ?? null,
+    severity: rule?.severity ?? "normal",
+    answerers: rule?.answerers
+      ? rule.answerers.flatMap((who) => (who.startsWith("role:") ? (draft.rules.roles[who.slice(5)] ?? []) : [who]))
+      : null,
+  };
 };
 /** What a card that belongs to no rule follows: the notices the owner narrowed, or every channel. */
 const noticesRouting = (draft: Draft): Routing => ({
   channels: draft.rules.notices?.channels ?? null,
   severity: "normal",
+  answerers: null,
 });
 const DEFAULTS: Partial<Record<Table, Row>> = {
   runs: {
@@ -68,6 +76,7 @@ const DEFAULTS: Partial<Record<Table, Row>> = {
     ...nulls("grp", "source", "agent", "session", "run_id", "answer_event"),
     channels: null,
     severity: "normal",
+    answerers: null,
     version: 1,
     ...nulls("decided_at", "closed_at"),
   },
@@ -143,7 +152,7 @@ function createCard(draft: Draft, spec: Row) {
   const existing = cards.findLast((card) => card.key === spec.key && (spec.once || card.state === "open"));
   if (existing) return { card: existing.id, duplicate: true };
   const { once, run, options, fyi, quiet, routing, ...fields } = spec;
-  const { channels: where, severity } = (routing as Routing | undefined) ?? noticesRouting(draft);
+  const { channels: where, severity, answerers } = (routing as Routing | undefined) ?? noticesRouting(draft);
   const stored = {
     run_id: run ?? null,
     options: JSON.stringify(options ?? []),
@@ -151,6 +160,7 @@ function createCard(draft: Draft, spec: Row) {
     quiet: quiet ? 1 : 0,
     channels: where,
     severity,
+    answerers,
   };
   const card = add(draft, "cards", { ...fields, ...stored, state: fyi ? "closed" : "open", created_at: draft.at });
   return { card: card.id, duplicate: false };
@@ -450,6 +460,9 @@ function answer(draft: Draft, id: number, given: Row) {
     if (typeof given.by !== "string" || !given.by.trim()) throw new AuthError("这个通道没有说是谁回答的");
     const answerers = registered.answerers ?? [];
     if (!answerers.includes("*") && !answerers.includes(given.by)) throw new AuthError("这个人不能回答这张卡片");
+    // The rule's own list sits on the card, spelled out when it was made; the owner answering as themselves skips it.
+    if (Array.isArray(card.answerers) && !card.answerers.includes(given.by))
+      throw new AuthError("这张卡片只允许指定的人回答");
     const delivery = draft.view.get("deliveries", `${id}:${channel}`);
     if (!delivery?.ref || delivery.ref !== given.ref) throw new AuthError("不是发出去的那条消息");
   }

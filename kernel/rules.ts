@@ -18,6 +18,8 @@ type RuleOptions = {
   /** The cards this rule makes go to these channels only; without it, to every channel there is. */
   channels?: string[];
   severity?: Severity;
+  /** People who may answer these cards through a channel: plain names, or "role:" plus a name in rules.roles. */
+  answerers?: string[];
 };
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
 export type Rule = RuleOptions & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };
@@ -26,12 +28,15 @@ export type Elsewhere = { name: string; source: string; to: string; cron: string
 type Registered = { sources: Record<string, Source>; agents: Record<string, Agent>; channels: Record<string, Channel> };
 /** Where the cards that belong to no rule go; without channels, to every channel there is. */
 type Notices = { channels?: string[] };
+/** Who a role names, in each channel's own way of writing a person. */
+export type Roles = Record<string, string[]>;
 export type Rules = Registered & {
   timezone: string;
   askFirst: string[];
   rules: Rule[];
   elsewhere: Elsewhere[];
   notices: Notices;
+  roles: Roles;
 };
 
 /** The source of what the clock makes happen. */
