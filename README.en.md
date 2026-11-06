@@ -138,7 +138,7 @@ More: [Claude-to-Codex browser handoff](examples/recipes/browser-handoff/README.
 
 ## Plugin ecosystem: swap any of the four sides
 
-Built-in plugins ship with the program and are enabled through configuration. Use `agent-autoloop add <git URL>` for third-party plugins.
+Built-in plugins ship with the program and are enabled through configuration. Use `agent-autoloop add <git URL> [--ref vversion]` for third-party plugins. A `plugin.json` at the repository root declares the version and the compatible hub range (`engine`); every install is recorded in `plugins.lock.json` (version, commit, signer, time) for `plugins list` to show and `doctor` to check. `plugins trust <name> <public key>` registers a publisher's SSH key: from then on the plugin installs and updates only through version tags signed with that key, and a bad signature is a refusal. `plugins update <name>` moves to a newer version (`--check` only looks) and stays on the old one when a check fails. See [writing plugins](docs/plugins.md).
 
 | Side | Built in | Setup |
 |---|---|---|

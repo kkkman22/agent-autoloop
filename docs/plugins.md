@@ -12,7 +12,20 @@
 
 一个插件就是一个目录，入口为 `agent.ts`、`channel.ts` 或 `source.ts`。只用 `node:` 模块和自己目录里的文件，类型在插件里声明；不要相对引用引擎源码。
 
-用 `agent-autoloop add <git 地址>` 安装到 `~/.agent-autoloop/plugins/<仓库名>`，也接受本地 Git 仓库。它只克隆，不装依赖、不跑安装脚本、不自动更新。加载时会执行插件，安装目录的同名插件优先。
+用 `agent-autoloop add <git 地址> [--ref v版本]` 安装到 `~/.agent-autoloop/plugins/<仓库名>`，也接受本地 Git 仓库。它只克隆，不装依赖、不跑安装脚本、不自动更新；不给 `--ref` 时优先装最新的版本标签。加载时会执行插件，安装目录的同名插件优先。
+
+## 清单、版本与签名
+
+仓库根目录可以放一份 `plugin.json`：
+
+```json
+{ "name": "qq", "version": "1.2.0", "provides": ["channel"], "engine": ">=1.1.0 <2.0.0", "description": "QQ 群机器人通道" }
+```
+
+- `name` 要和仓库名一致（仓库目录名就是插件名）；`version` 是三个数字；`provides` 只能是 `agent`、`channel`、`source`；`engine` 写这份插件能用的中台版本，只支持 `>=a.b.c` 和 `<a.b.c` 的组合。没有清单的老插件照常安装和加载。
+- 每次安装都记录在 `~/.agent-autoloop/plugins.lock.json`（0600）：地址、版本、提交、签名人、时间。`plugins list` 显示这些和是否兼容；`doctor` 会报没有清单、清单坏了、不兼容的插件。
+- 想核实插件来源：`agent-autoloop plugins trust <名字> <公钥文件>` 把发布者的 SSH 公钥登记进 `~/.agent-autoloop/allowed_signers`。之后这个插件只能安装和更新到**用这把钥匙签过名的版本标签**（发布者用 `git -c gpg.format=ssh -c user.signingkey=<公钥> tag -s v1.2.0` 发布），签名不对就拒装、拒更新，留在原来能用的版本。没登记公钥的插件照常能装，安装输出和 `doctor` 会提醒。
+- `plugins update <名字> [--check]` 换到更新的版本；`--check` 只报告。`plugins remove <名字>` 删目录和记录。
 
 ## 先跑起来
 

@@ -95,12 +95,20 @@ export function addPlugin(args: string[]) {
     .toLowerCase();
   if (!PLUGIN_NAME.test(name)) return fail("插件仓库名要用小写字母、数字和 -");
   const target = path.join(PLUGINS_DIR, name);
-  if (existsSync(target)) return fail(`插件 ${name} 已经装在 ${target}，先 plugins remove ${name} 再装。`);
   mkdirSync(PLUGINS_DIR, { recursive: true, mode: 0o700 });
-  const clone = spawnSync("git", ["clone", "--quiet", "--", url, target], { encoding: "utf8" });
   const lock = loadLock();
+  // Installing again over an existing install is how a trusted plugin moves to another signed version: fetch and
+  // switch instead of refusing, and go back where we were if any check along the way says no.
+  const restore = existsSync(target) ? git(target, ["rev-parse", "HEAD"]) : null;
+  if (restore !== null && !lock[name])
+    return fail(`插件 ${name} 已经装在 ${target}（没有安装记录），先 plugins remove ${name} 再装。`);
+  const clone =
+    restore !== null ? null : spawnSync("git", ["clone", "--quiet", "--", url, target], { encoding: "utf8" });
   try {
-    if (clone.status !== 0) throw new Error(`安装失败：${clone.stderr?.trim()}`);
+    if (restore !== null) {
+      git(target, ["fetch", "--quiet", "origin", "--tags"]);
+      git(target, ["checkout", "--quiet", restore]);
+    } else if (clone!.status !== 0) throw new Error(`安装失败：${clone!.stderr?.trim()}`);
     if (ref) git(target, ["checkout", "--quiet", `refs/tags/${ref}`]);
     else {
       const newest = versionTags(target)[0];
@@ -137,7 +145,9 @@ export function addPlugin(args: string[]) {
         .join(" "),
     );
   } catch (error) {
-    rmSync(target, { recursive: true, force: true });
+    // A first install that fails leaves nothing behind; a switch that fails goes back to the version that worked.
+    if (restore !== null) git(target, ["checkout", "--quiet", restore]);
+    else rmSync(target, { recursive: true, force: true });
     return fail((error as Error).message);
   }
 }

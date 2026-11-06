@@ -136,7 +136,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ## 插件体系：四个方向都能自由替换
 
-内置插件随程序安装，填好配置即可启用；第三方插件用 `agent-autoloop add <git 地址>` 安装。
+内置插件随程序安装，填好配置即可启用；第三方插件用 `agent-autoloop add <git 地址> [--ref v版本]` 安装。仓库根目录的 `plugin.json` 声明版本和兼容范围（`engine`），每次安装记录在 `plugins.lock.json`（版本、提交、签名人、时间），`plugins list` 看得清、`doctor` 会报异常；`plugins trust <名字> <公钥文件>` 登记发布者的 SSH 公钥后，安装和更新都要它签过名的版本标签，签名不对就拒装；`plugins update <名字>` 换新版本（`--check` 只看），失败停在原版本。详见[插件开发说明](docs/plugins.md)。
 
 | 方向 | 内置 | 配置 |
 |---|---|---|
