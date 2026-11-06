@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.agent-autoloop.worker</string>
+  <!-- 换成实际安装位置；join 读 AGENT_AUTOLOOP_HOME 下的 config.json。 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>/opt/agent-autoloop/bin/agent-autoloop.ts</string>
+    <string>join</string>
+    <string>https://hub.example.com</string>
+    <string>--worker</string><string>isolated</string>
+    <string>--no-service</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AGENT_AUTOLOOP_HOME</key>
+    <string>/Users/autoworker/.agent-autoloop</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/autoworker/.agent-autoloop/worker.log</string>
+  <key>StandardErrorPath</key><string>/Users/autoworker/.agent-autoloop/worker.log</string>
+</dict>
+</plist>

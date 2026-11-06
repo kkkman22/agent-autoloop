@@ -4,7 +4,7 @@
 
 ## 安装
 
-支持 macOS、Linux，暂不支持 Windows。需要 Node.js 24 或更新、Git、curl，以及一个已经登录的命令行 Agent。
+支持 macOS、Linux。**不支持原生 Windows**：要在 Windows 上跑，先在管理员 PowerShell 里 `wsl --install -d Ubuntu` 装 WSL2，进入 Ubuntu 后按下面的步骤安装 Linux 版。中台、接单程序和 Agent 全部留在 WSL 里跑；不要混用 Windows 的 `node.exe` 和 WSL 的路径。需要 Node.js 24 或更新、Git、curl，以及一个已经登录的命令行 Agent。要把接单程序隔离到单独账号或容器里，见 [examples/isolation](examples/isolation/README.md)。
 
 先检查 `node --version`。Homebrew 的 `node@24` 默认不进 PATH，装好后还要运行 `export PATH="$(brew --prefix node@24)/bin:$PATH"`；需要长期生效时再写入用户的 shell 配置。不要替用户登录，也不要读取或复制登录凭据。
 

@@ -1,0 +1,23 @@
+# agent-autoloop 接单程序（Linux systemd，单独系统账号）
+# 装到 /etc/systemd/system/，路径按实际安装位置改。
+[Unit]
+Description=agent-autoloop worker (isolated)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# 换成实际安装位置：检出目录里的接单程序入口。
+ExecStart=/opt/agent-autoloop/bin/agent-autoloop.ts --home /var/lib/autoloop-worker join https://hub.example.com --worker isolated --no-service
+# join 读 AGENT_AUTOLOOP_HOME 指向的 config.json；用 --home 等价地隔离数据目录。
+User=autoloop-worker
+Group=autoloop-worker
+WorkingDirectory=/var/lib/autoloop-worker
+Environment=AGENT_AUTOLOOP_HOME=/var/lib/autoloop-worker
+Restart=always
+RestartSec=10
+# 接单程序只需要出网连中台：需要更严时用网络策略收紧。
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
