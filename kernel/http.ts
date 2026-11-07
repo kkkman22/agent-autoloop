@@ -1,10 +1,13 @@
 // The doors: every request the hub takes, which key it asks for, and which input it becomes. Nothing is decided here.
 import { cardPage, PAGE_HEADERS, wordsPage } from "./card-page.ts";
 import { whose, type Environment } from "./credentials.ts";
+import { decide } from "./decide.ts";
 import { AuthError, Conflict, Gone, InputError, NotFound } from "./errors.ts";
-import type { Row, View } from "./evolve.ts";
-import { agentsOf, cancels, cardView, configuration, previewRules } from "./query.ts";
+import { rows, type Row, type View } from "./evolve.ts";
+import { agentsOf, cancels, cardView, configuration } from "./query.ts";
+import { type Rule, type Rules } from "./rules.ts";
 import { parseRules, RulesError } from "../protocol/rules.ts";
+import { isAsk } from "../protocol/validate.ts";
 
 export type Services = {
   now(): number;
@@ -33,6 +36,8 @@ class TooLarge extends Error {}
 
 async function readText(request: Request) {
   if (!request.body) return "";
+  // A little over the limit is read to its end: hanging up mid-upload can cost the client its 413.
+  if (Number(request.headers.get("content-length")) > 8 * MAX_BODY) throw new TooLarge();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -126,24 +131,38 @@ async function webhook(call: Call, source: string) {
 }
 
 async function tell(call: Call) {
-  const { rules, view } = call;
+  const { rules } = call;
   const source = keyHolder(call, "source");
   const worker = source ? null : keyHolder(call, "worker");
   if (!source && !worker) throw new AuthError("要来源或接单程序的密钥");
   const input = await readJson(call.request);
+  // A task elsewhere either tells you something or asks you, with a question just as a receipt's.
+  if (worker && input && typeof input === "object" && "ask" in input) return askAsTask(call, worker, input);
   const expected = source ? ["key", "text"] : ["key", "task", "text"];
   const hasExpected = input && typeof input === "object" && Object.keys(input).sort().join() === expected.join();
   const keyIsValid = typeof input?.key === "string" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(input.key);
   const text = typeof input?.text === "string" ? input.text.trim() : "";
-  if (!hasExpected || !keyIsValid || !text || [...text].length > 2_000) {
-    throw new InputError("要有正确的 key 和 text，接单程序还要写 task，text 最多 2000 字");
+  if (!hasExpected || !keyIsValid || !text || [...text].length > 20_000) {
+    throw new InputError("要有正确的 key 和 text，接单程序还要写 task，text 最多 20000 字；问你的写 task 和 ask");
   }
   if (source) {
     return json(act(call, "tell", `source:${source}:${input.key}`, rules.sources[source]?.name ?? source, text));
   }
-  const task = rules.elsewhere.find((task) => task.name === input.task && agentsOf(view, worker!).includes(task.to));
-  if (!task) throw new AuthError("这台接单程序没有这个定时任务");
+  const task = taskOf(call, worker!, input.task);
   return json(act(call, "tell", `elsewhere:${task.name}:${input.key}`, task.name, text));
+}
+
+function taskOf({ rules, view }: Call, worker: string, name: unknown) {
+  const task = rules.elsewhere.find((task) => task.name === name && agentsOf(view, worker).includes(task.to));
+  if (!task) throw new AuthError("这台接单程序没有这个定时任务");
+  return task;
+}
+
+function askAsTask(call: Call, worker: string, input: Record<string, any>) {
+  if (Object.keys(input).sort().join() !== "ask,task" || !isAsk(input.ask)) {
+    throw new InputError("问你的只写 task 和 ask，ask 和回执里的一样：title、text、2 到 5 个 options");
+  }
+  return json(act(call, "ask", taskOf(call, worker, input.task).name, input.ask));
 }
 
 async function work(call: Call) {
@@ -197,6 +216,32 @@ async function cardAction(call: Call, id: number, action: string) {
   const ref = typeof given.ref === "string" ? given.ref : null;
   act(call, action, channel, id, given.version, action === "delivered" ? ref : String(given.error ?? ""));
   return json({ ok: true });
+}
+
+const CONTROL_FIELDS: Record<string, string[]> = { pause: ["reason", "until"], resume: [], run: ["subject", "reason"] };
+const CONTROL_INPUTS: Record<string, string> = { pause: "pauseRule", resume: "resumeRule", run: "runRule" };
+
+/** Pause, resume or run a rule now: the owner's, kept in the log. */
+async function control(call: Call, encoded: string, action: string) {
+  const holder = requireKey(call, "owner");
+  let name: string;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {
+    throw new InputError("名字不正确");
+  }
+  const text = await readText(call.request);
+  let given: unknown = {};
+  try {
+    if (text.trim()) given = JSON.parse(text);
+  } catch {
+    throw new InputError("不是 JSON");
+  }
+  if (!given || typeof given !== "object" || Array.isArray(given)) throw new InputError("要是一个 JSON 对象");
+  const unknown = Object.keys(given).filter((field) => !CONTROL_FIELDS[action].includes(field));
+  if (unknown.length) throw new InputError(`不认识的字段：${unknown.join("、")}`);
+  const type = CONTROL_INPUTS[action];
+  return json(action === "resume" ? act(call, type, name) : act(call, type, name, holder, given));
 }
 
 function state(call: Call) {
@@ -263,6 +308,8 @@ async function route(call: Call): Promise<Response> {
   if (method === "GET" && path === "/v1/cards/next") return nextCard(call);
   const card = /^\/v1\/cards\/([1-9][0-9]*)\/(delivered|failed|answer|resolve)$/.exec(path);
   if (method === "POST" && card) return cardAction(call, Number(card[1]), card[2]);
+  const ruleControl = /^\/v1\/rules\/([^/]+)\/(pause|resume|run)$/.exec(path);
+  if (method === "POST" && ruleControl) return control(call, ruleControl[1], ruleControl[2]);
   if (method === "GET" && path === "/v1/state") return state(call);
   if (method === "POST" && path === "/v1/rules/preview") {
     requireKey(call, "owner");
@@ -287,5 +334,72 @@ export function createHandler(services: Services) {
       if (CARD_LINK.test(call.url.pathname)) return new Response(wordsPage(message), { status, headers: PAGE_HEADERS });
       return json({ error: message }, status);
     }
+  };
+}
+
+export type Preview = {
+  added: string[];
+  removed: string[];
+  renamed: { from: string; to: string }[];
+  changed: string[];
+  cancels: { rule: string; count: number; runs: number[] }[];
+  closes: { rule: string; count: number; cards: { id: number; title: string }[] }[];
+  claimed: { run: number; rule: string }[];
+};
+const WITHOUT_NAME = (rule: Rule) => JSON.stringify({ ...rule, name: null });
+const CAP = 20;
+
+/** What applying these rules would do: decided on a fork of the view and never committed, so reading writes nothing. */
+export function previewRules(view: View, candidate: Rules, now: number, env: Environment): Preview {
+  const current = configuration(view);
+  const before = new Map(current.rules.map((rule) => [rule.name, rule]));
+  const after = new Map(candidate.rules.map((rule) => [rule.name, rule]));
+  const added: string[] = [];
+  const renamed: { from: string; to: string }[] = [];
+  const changed: string[] = [];
+  for (const [name, rule] of after) {
+    const old = before.get(name);
+    if (old === undefined) {
+      const twin = [...before].find(([, other]) => WITHOUT_NAME(other) === WITHOUT_NAME(rule));
+      if (twin) renamed.push({ from: twin[0], to: name });
+      else added.push(name);
+    } else if (WITHOUT_NAME(old) !== WITHOUT_NAME(rule)) changed.push(name);
+  }
+  const removed = [...before.keys()].filter((name) => {
+    const twin = [...after].find(([, rule]) => WITHOUT_NAME(rule) === WITHOUT_NAME(before.get(name)!));
+    return !after.has(name) && !twin;
+  });
+  const { facts } = decide(view, { type: "rules", args: [candidate] }, now, env);
+  const cancels = new Map<string, { count: number; runs: number[] }>();
+  const closes = new Map<string, { count: number; cards: { id: number; title: string }[] }>();
+  for (const fact of facts)
+    for (const { table, key, row } of fact.changes) {
+      if (row === null) continue;
+      // A queued run is stopped with the rule's own words (不在了), one already in hand by dropRules (已删除).
+      if (table === "runs" && row.state === "cancelled" && /规则.*(已删除|不在了)/.test(String(row.summary ?? ""))) {
+        const entry = cancels.get(row.rule) ?? { count: 0, runs: [] };
+        entry.count += 1;
+        if (entry.runs.length < CAP) entry.runs.push(Number(key));
+        cancels.set(row.rule, entry);
+      }
+      if (table === "cards" && row.state === "closed" && row.result === "对应规则已删除") {
+        const entry = closes.get(row.rule) ?? { count: 0, cards: [] };
+        entry.count += 1;
+        if (entry.cards.length < CAP) entry.cards.push({ id: Number(key), title: row.title });
+        closes.set(row.rule, entry);
+      }
+    }
+  const kept = new Set(after.keys());
+  const claimed = rows(view, "runs", { state: "claimed" })
+    .filter((run) => !kept.has(run.rule))
+    .map((run) => ({ run: run.id, rule: run.rule }));
+  return {
+    added,
+    removed,
+    renamed,
+    changed,
+    cancels: [...cancels].map(([rule, { count, runs }]) => ({ rule, count, runs })),
+    closes: [...closes].map(([rule, { count, cards }]) => ({ rule, count, cards })),
+    claimed,
   };
 }

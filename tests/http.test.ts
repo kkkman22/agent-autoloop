@@ -5,12 +5,13 @@
 // to anyone; a worker tells as a task that isn't its own, or one matter twice; a channel answers without being on the list;
 // a cookie or a sign-in opens anything; someone other than the owner reads everything, answers, resolves or stops; looking
 // at a card's link answers it; a card's words run as markup or the page loads a script; Enter in the text box picks the first
-// option; a card link answers more than its card, or one older than a week still answers; a webhook with a bad signature
-// is taken, or one without an adapter; a
-// webhook's secret leaks into anything it returns; the owner's key opens the worker's door; a page other than a card's exists.
+// option; a card link answers more than its card; a webhook with a bad signature is taken, or one without an adapter; a
+// webhook's secret leaks into anything it returns; the owner's key opens the worker's door; a page other than a card's exists;
+// a card's link still answers or shows the card after its week, or sends you to a command that doesn't work; a link opens
+// when no channel takes links; a card that names its answerers takes an answer from a link that proves nobody.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -31,8 +32,8 @@ export default function ({ headers, body, secret, refuse }) {
 );
 process.env.AGENT_AUTOLOOP_SECRET_HOOKS = "hook-secret";
 const { serve } = await import("../host/http.ts");
-const { addKey } = await import("../host/runtime.ts");
-const { all, one } = await import("../host/runtime.ts");
+const { addKey, createCard, getView, reloadRules, view } = await import("./hub.ts");
+const { all, one } = await import("./hub.ts");
 
 const keys = {
   app: addKey("source", "app"),
@@ -177,11 +178,11 @@ test("a source tells under its own name, once per key; a worker only as its own 
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "Bad Key", text: "x" } })).status, 400);
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: " " } })).status, 400);
   assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: "x", oops: 1 } })).status, 400);
-  assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: "x".repeat(2001) } })).status, 400);
+  assert.equal((await call("/v1/tell", { key: keys.app, body: { key: "k", text: "x".repeat(20001) } })).status, 400);
   assert.equal(
-    (await call("/v1/tell", { key: keys.app, body: { key: "long", text: "😀".repeat(2000) } })).status,
+    (await call("/v1/tell", { key: keys.app, body: { key: "long", text: "😀".repeat(20000) } })).status,
     200,
-    "2000 characters is fine, however many bytes they take",
+    "20000 characters is fine, however many bytes they take",
   );
   assert.equal((await call("/v1/tell", { body: { key: "k", text: "x" } })).status, 401);
   const task = await call("/v1/tell", { key: keys.w1, body: { task: "每周清理", key: "m", text: "要你看一眼" } });
@@ -332,6 +333,8 @@ test("a card's link is a plain page: it shows that card as words, runs nothing, 
   assert.equal(stored(id).state, "open", "looking at it, as a chat app previewing the link does, answers nothing");
   const forms = page.text.split("<form").slice(1);
   assert.equal(forms.length, 2);
+  assert.match(forms[0], /<button name="choice" value="0" class="best" autofocus>/);
+  assert.equal(page.text.split("autofocus").length - 1, 1, "Enter submits only the focused recommended option");
   assert.ok(!forms[1].includes('name="choice"'), "Enter in the text box doesn't pick an option");
 
   assert.equal((await call("/c/made-up")).status, 404);
@@ -350,7 +353,6 @@ test("a card's link is a plain page: it shows that card as words, runs nothing, 
 });
 
 test("a card that names who may answer refuses its link", async () => {
-  const { createCard } = await import("../host/runtime.ts");
   createCard({
     key: "link-restricted",
     kind: "ask",
@@ -366,7 +368,52 @@ test("a card that names who may answer refuses its link", async () => {
   assert.equal(one<any>("SELECT state FROM cards WHERE id = ?", [row.id])!.state, "open");
 });
 
-test("a card's link takes words of your own, and a notice has one button", async () => {
+test("a card link focuses its first option when the agent recommends none", async () => {
+  const { path } = await linkFor(66, {
+    ask: [{ title: "没有推荐项", text: "选一个", options: ["甲", "乙"] }],
+  });
+  const page = await call(path);
+  assert.match(page.text, /<button name="choice" value="0" autofocus>/);
+  assert.equal(page.text.split("autofocus").length - 1, 1);
+});
+
+test("a card's link lasts a week: after that it neither answers nor shows the card", async () => {
+  const days = (count: number) => Date.now() - count * 24 * 60 * 60_000;
+  const made = (key: string, at: number) =>
+    createCard({ key, kind: "ask", title: "放了很久的问题", text: "放了很久的内容", options: ["甲", "乙"] }, at).card;
+  const linkOf = (id: number) => new URL(view(getView().get("cards", id)!, null, true).link!).pathname;
+
+  const recent = made("link-recent", days(6));
+  assert.equal((await call(linkOf(recent))).status, 200);
+  assert.equal((await form(linkOf(recent), "choice=1")).status, 303);
+  assert.equal(stored(recent).choice, 1);
+
+  const old = made("link-old", days(8));
+  const shown = await call(linkOf(old));
+  assert.equal(shown.status, 410);
+  assert.ok(!shown.text.includes("放了很久"), "what it asked stays off the page");
+  assert.ok(shown.text.includes("agent-autoloop answer"), "and it says where to answer instead");
+  assert.equal((await form(linkOf(old), "choice=1")).status, 410);
+  assert.deepEqual([stored(old).state, stored(old).choice], ["open", null]);
+});
+
+test("with no channel taking links, a card's link doesn't open", async () => {
+  const { path } = await linkFor(65, { ask: [{ title: "问", text: "问", options: ["甲", "乙"], key: "no-links" }] });
+  const fixture = process.env.AGENT_AUTOLOOP_RULES!;
+  const rules = JSON.parse(readFileSync(fixture, "utf8"));
+  delete rules.channels.plain.links;
+  const file = join(home, "no-links.json");
+  writeFileSync(file, JSON.stringify(rules));
+  reloadRules(file);
+  try {
+    assert.equal((await call(path)).status, 404);
+  } finally {
+    reloadRules(fixture);
+  }
+  assert.equal((await call(path)).status, 200);
+});
+
+test("a card's link takes words of your own, and a notice takes a line of its own", async () => {
   const asked = await linkFor(61, {
     ask: [{ title: "别的想法", text: "选一个", options: ["甲", "乙"], key: "words" }],
   });
@@ -375,10 +422,19 @@ test("a card's link takes words of your own, and a notice has one button", async
   assert.ok((await call(asked.path)).text.includes("你选了「都不要」"));
   const told = await linkFor(62, { notice: [{ title: "留意一下", text: "磁盘快满了", key: "disk" }] });
   const page = await call(told.path);
-  assert.equal(page.text.split("<form").length - 1, 1);
+  assert.equal(page.text.split("<form").length - 1, 2);
   assert.ok(page.text.includes("已处理"));
-  assert.equal((await form(told.path, "choice=0")).status, 303);
+  assert.ok(page.text.includes("记录并结案"), "a notice can be settled with a line of your own");
+  assert.equal((await form(told.path, `text=${encodeURIComponent("清了 3GB 缓存")}`)).status, 303);
   assert.equal(stored(told.id).state, "closed");
+  assert.equal(stored(told.id).answer, "清了 3GB 缓存", "the line is kept with the card");
+  assert.ok((await call(told.path)).text.includes("处理说明：清了 3GB 缓存"));
+  const silent = await linkFor(63, { notice: [{ title: "又是他", text: "群发广告", key: "ad" }] });
+  assert.equal((await form(silent.path, "choice=0")).status, 303);
+  assert.deepEqual([stored(silent.id).state, stored(silent.id).answer], ["closed", null]);
+  const long = await linkFor(64, { notice: [{ title: "太长", text: "说明太长", key: "long" }] });
+  assert.equal((await form(long.path, `text=${"字".repeat(4001)}`)).status, 400);
+  assert.equal(stored(long.id).state, "open", "too long is refused, not cut short");
 });
 
 test("someone else's webhook goes through its source's adapter: signed, or not taken", async () => {

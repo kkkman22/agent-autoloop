@@ -88,7 +88,8 @@ export function addPlugin(args: string[]) {
     .at(-1)!
     .replace(/\.git$/, "")
     .toLowerCase();
-  if (!PLUGIN_NAME.test(name)) return fail("插件仓库名要用小写字母、数字和 -");
+  if (!PLUGIN_NAME.test(name))
+    return fail(`插件名字「${name}」不能用：只能用小写字母、数字和 -，规则里的 use 也写这个名字`);
   const target = path.join(PLUGINS_DIR, name);
   mkdirSync(PLUGINS_DIR, { recursive: true, mode: 0o700 });
   const lock = loadLock();

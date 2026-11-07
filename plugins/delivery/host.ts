@@ -43,8 +43,13 @@ export type DeliveryHost = {
   syncMain(number: number, expectedHead: string): Promise<void>;
   /** A draft becomes a normal change, ready to be merged. */
   ready(number: number): Promise<void>;
-  /** The state of the change's full check: the workflow run and its required job. */
-  checks(config: Settings, head: string): Promise<"passed" | "waiting" | "failed">;
+  /** What earlier rounds wrote on a commit, in the host's status words: context and success/failure/pending. */
+  statuses(head: string): Promise<{ context: string; state: string }[]>;
+  /** The id of the newest full-check run of a commit, or 0 without one: runs up to it were a draft's. */
+  newestCheck(config: Settings, head: string): Promise<number>;
+  /** The state of the change's full check: the workflow run and its required job. A run with an id up to `after`
+   * is not counted, since a draft's run passing says nothing about the change made ready. */
+  checks(config: Settings, head: string, after?: number): Promise<"passed" | "waiting" | "failed">;
   /** The Ship runs on main, newest first: which commit they built and whether they succeeded. */
   shipRuns(config: Settings): Promise<{ sha: string; ok: boolean }[]>;
 };

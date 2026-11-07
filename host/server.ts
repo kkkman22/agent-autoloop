@@ -1,7 +1,7 @@
 // What the kernel's doors need from this machine: the clock, a timer for the next deadline, long polls to wake, the
 // rules file to watch, the log as a stream and the webhook plugins.
 import { watch } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { createLimiter, type Limits } from "./limits.ts";
 import { metricsText } from "./metrics.ts";
@@ -14,6 +14,7 @@ import { createHandler } from "../kernel/http.ts";
 
 /** Past this setTimeout fires at once. */
 const LONGEST_TIMER = 2147483647;
+const TICK_RETRY = 5_000;
 /** A turned-away upload is read this far before answering: answering mid-write resets the caller's connection. */
 const DRAIN = 8 * 1024 * 1024;
 const DRAIN_MS = 5_000;
@@ -68,7 +69,7 @@ function tooMany(request: Request, reason: string, retryAfter: number) {
 }
 
 function logStream(after: number, signal: AbortSignal, key: string) {
-  let cursor = after;
+  let position = after;
   let unsubscribe = () => {};
   let stop = () => {};
   const detach = () => {
@@ -89,8 +90,8 @@ function logStream(after: number, signal: AbortSignal, key: string) {
         if (stopped) return;
         if (!hub.whose("owner", key)) return stop();
         if (controller.desiredSize! <= 0) return;
-        for (const fact of hub.logAfter(cursor, 1)) {
-          cursor = fact.seq;
+        for (const fact of hub.logAfter(position, 1)) {
+          position = fact.seq;
           const message = `id: ${fact.seq}\nevent: fact\ndata: ${JSON.stringify(fact)}\n\n`;
           controller.enqueue(new TextEncoder().encode(message));
         }
@@ -133,9 +134,22 @@ export type HandlerOptions = { commit?: string; limits?: Limits; log?: (line: st
 export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerOptions = {}) {
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
+  let retryAt: number | undefined;
   const waiting = new Set<{ until: number; done: () => void }>();
   const wake = () => {
     for (const waiter of [...waiting]) waiter.done();
+  };
+  const fire = () => {
+    try {
+      hub.tick();
+      retryAt = undefined;
+    } catch (error) {
+      // Another process holding the database too long, say. Nobody is there to catch it, and what it brought is still due.
+      console.error(error);
+      retryAt = Date.now() + TICK_RETRY;
+    }
+    wake();
+    arm();
   };
   const arm = () => {
     clearTimeout(timer);
@@ -143,14 +157,10 @@ export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerO
     const due = hub.one<{ at: number }>(
       "SELECT MIN(json_extract(data, '$.at')) AS at FROM projections WHERE collection='due'",
     );
-    const next = Math.min(due?.at ?? Infinity, ...[...waiting].map((waiter) => waiter.until));
+    // Whatever the failed tick left is overdue, so it would go at once; and nothing else coming along may lose the retry.
+    const next = retryAt ?? Math.min(due?.at ?? Infinity, ...[...waiting].map((waiter) => waiter.until));
     if (!Number.isFinite(next)) return;
-    const delay = Math.max(0, Math.min(LONGEST_TIMER, next - Date.now()));
-    timer = setTimeout(() => {
-      hub.tick();
-      wake();
-      arm();
-    }, delay);
+    timer = setTimeout(fire, Math.max(0, Math.min(LONGEST_TIMER, next - Date.now())));
   };
   const unlisten = hub.onChange((type, facts) => {
     // Being seen wakes nobody, unless it changed a card.
@@ -159,9 +169,7 @@ export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerO
     arm();
   });
   const watcher = watch(dirname(RULES_FILE), (_event, file) => {
-    if (file !== RULES_FILE.split("/").at(-1)) return;
-    hub.tick();
-    arm();
+    if (file === basename(RULES_FILE)) fire();
   });
   const handle = createHandler({
     commit,
@@ -192,8 +200,7 @@ export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerO
     stream: logStream,
     adapt: adaptWebhook,
   });
-  hub.tick();
-  arm();
+  fire();
   const admit = limits && createLimiter(limits, log);
   return {
     async handle(request: Request) {

@@ -38,6 +38,8 @@ type World = {
   title: string;
   approved: boolean;
   pipelines: { id: number; sha: string; ref?: string; source?: string; status: string }[];
+  /** The check the change's own ready run got: only a run past this id can pass for a readied draft. */
+  runs: number;
 };
 
 function world(over: Partial<World> = {}): World {
@@ -68,6 +70,7 @@ function world(over: Partial<World> = {}): World {
     title: "新功能",
     approved: true,
     pipelines: [{ id: 1, sha: "head", source: "merge_request", status: "success" }],
+    runs: 1,
     ...over,
   };
 }
@@ -93,13 +96,23 @@ function githubIO(state: World): DeliveryIO {
         state.statuses.push({ sha: path.split("/")[1], context: body.context, state: body.state });
         return {};
       }
+      if (/^commits\/[^/]+\/status/.test(path)) {
+        const sha = path.split("/")[1];
+        return { statuses: state.statuses.filter((one) => one.sha === sha) };
+      }
       if (path.startsWith("actions/workflows/check.yml"))
         return {
           workflow_runs: [
-            { id: 1, head_sha: "head", event: "pull_request", status: "completed", conclusion: "success" },
+            {
+              id: state.runs,
+              head_sha: "head",
+              event: "pull_request",
+              status: "completed",
+              conclusion: "success",
+            },
           ],
         };
-      if (path.startsWith("actions/runs/1/jobs"))
+      if (path.startsWith("actions/runs/"))
         return { jobs: [{ name: "check", status: "completed", conclusion: "success" }] };
       if (path.startsWith("actions/workflows/ship.yml")) return { workflow_runs: [] };
       if (path.startsWith("issues/1/labels/")) {
@@ -116,9 +129,15 @@ function githubIO(state: World): DeliveryIO {
         state.pr.merged_at = "now";
         return { merged: true };
       }
-      if (path === "pulls/1/update-branch") return {};
+      if (path === "pulls/1/update-branch") {
+        // The platform pulls main in: the branch gets a new head that main is behind.
+        state.pr.head.sha = `${state.pr.head.sha}+synced`;
+        return {};
+      }
       if (path === "pulls/1/ready") {
         state.pr.draft = false;
+        // A draft's run stays the newest one until the change itself starts one.
+        state.runs += 1;
         return {};
       }
       throw new Error(`unexpected ${path} ${method ?? ""}`);
@@ -174,10 +193,6 @@ function gitlabIO(state: World): DeliveryIO {
   const withDraftTitle = (view: any) => ({ ...view, draft: isDraft(view) });
   return {
     async api(path: string, body: any, method: string) {
-      if (path === "merge_requests/1" && method === "PUT") {
-        if (body.title !== undefined) state.title = body.title;
-        return withDraftTitle(mr());
-      }
       if (path === "merge_requests/1" && method === undefined) return withDraftTitle(structuredClone(mr()));
       if (path === "repository/branches/main") return { commit: { id: state.main } };
       if (path.startsWith("repository/files/")) {
@@ -194,6 +209,10 @@ function gitlabIO(state: World): DeliveryIO {
       if (path.startsWith("statuses/")) {
         state.statuses.push({ sha: path.split("/")[1], context: body.name, state: body.state });
         return {};
+      }
+      if (/^repository\/commits\/[^/]+\/statuses$/.test(path)) {
+        const sha = path.split("/")[2];
+        return state.statuses.filter((one) => one.sha === sha).map((one) => ({ name: one.context, status: one.state }));
       }
       if (path === "merge_requests/1/labels" && method === "PUT") {
         state.writes.push(path);
@@ -219,9 +238,24 @@ function gitlabIO(state: World): DeliveryIO {
         state.pr.merged_at = "now";
         return withDraftTitle(mr());
       }
-      if (path === "merge_requests/1/rebase") return {};
+      if (path === "merge_requests/1/rebase") {
+        // The platform pulls main in: the branch gets a new head that main is behind.
+        state.pr.head.sha = `${state.pr.head.sha}+synced`;
+        return {};
+      }
       if (path === "merge_requests/1" && method === "PUT") {
-        if (body.title !== undefined) state.title = body.title;
+        if (body.title !== undefined) {
+          const wasDraft = isDraft({ title: state.title });
+          state.title = body.title;
+          // Un-drafting starts the MR's own pipeline; the draft one stays the newest until then.
+          if (wasDraft && !isDraft({ title: state.title }))
+            state.pipelines.unshift({
+              id: (state.pipelines[0]?.id ?? 0) + 1,
+              sha: "head",
+              source: "merge_request",
+              status: "success",
+            });
+        }
         return withDraftTitle(mr());
       }
       throw new Error(`unexpected ${path} ${method ?? ""}`);
@@ -323,7 +357,7 @@ for (const dialect of ["github", "gitlab"] as const) {
   );
 
   test(
-    `a moved head or a moved main stops the merge without touching the platform (${dialect})`,
+    `a moved head stops the merge; a moved main has the round carried on against the newer one (${dialect})`,
     { timeout: 2000 },
     async () => {
       // The head is pushed again while the review runs: the attestation no longer matches what is there, nothing merges.
@@ -337,16 +371,22 @@ for (const dialect of ["github", "gitlab"] as const) {
       await assert.rejects(deliver(REPO, 1, movedIO), /审查期间提交变了/);
       assert.equal(moved.mergedCalls, 0);
 
-      // Main advances while the review runs; the merge gate reads main again and refuses.
+      // Main advances while the review runs: nothing merges against the older one. The next round reviews against
+      // the newer main, reads its settings, and merges there.
       const advanced = world();
       const advancedIO = ioOf(dialect, advanced);
       const review2 = advancedIO.review.bind(advancedIO);
-      advancedIO.review = async (...args: any[]) => {
+      const seenWith: string[] = [];
+      advancedIO.review = async (pr: any, config: any, main: string) => {
         advanced.main = "main-2";
-        return review2(...(args as [any, any, string]));
+        seenWith.push(main);
+        return review2(pr, config, main);
       };
-      await assert.rejects(deliver(REPO, 1, advancedIO), /main 已前进/);
-      assert.equal(advanced.mergedCalls, 0);
+      const result = await deliver(REPO, 1, advancedIO);
+      assert.match(result.summary, /已合并/);
+      assert.equal(advanced.mergedCalls, 1);
+      assert.deepEqual(seenWith, ["main-1", "main-2"], "对着新的 main 重新审查了");
+      assert.ok(advanced.askedSettingsRef.includes("main-2"), "设置从新的 main 读");
     },
   );
 
@@ -368,7 +408,11 @@ for (const dialect of ["github", "gitlab"] as const) {
     async () => {
       const state = world();
       await drive(dialect, state);
-      assert.deepEqual(state.askedSettingsRef, [state.main], "只从 main 读设置");
+      // Settings are read once up front and again for the round's own main; never from anywhere else.
+      assert.ok(
+        state.askedSettingsRef.length >= 1 && state.askedSettingsRef.every((ref) => ref === state.main),
+        "只从 main 读设置",
+      );
       assert.equal(state.merged, true);
     },
   );

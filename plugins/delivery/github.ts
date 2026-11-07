@@ -5,10 +5,9 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import type { DeliveryIO } from "./delivery.ts";
 import type { Change, DeliveryHost } from "./host.ts";
-import { changedFiles, git, liveRelease, releaseRequired, type Settings } from "./project.ts";
+import { changedFiles, git, liveRelease, releaseRequired, REPO, type Settings } from "./project.ts";
 import { reviewSnapshot } from "./review.ts";
 
-const REPO = /^[\w.-]+\/[\w.-]+$/;
 const LONGEST_WAIT = 1800000;
 
 export function gh(args: string[], input?: object) {
@@ -50,9 +49,20 @@ export function githubHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
   const contents = async (ref: string, path: string) => {
     try {
       return await io.api(`contents/${path}?ref=${ref}`);
-    } catch {
-      return null; // 404s are answers here: a missing file or blob reads as null, like the host interface says.
+    } catch (error) {
+      // A missing file or blob reads as null, like the host interface says; anything else (502, say) is the platform
+      // failing, and swallowing it here would turn an outage into "no settings on main".
+      if (/404|not found/i.test(String((error as Error).message))) return null;
+      throw error;
     }
+  };
+  // Only the change's own pull_request run is its check: a workflow_dispatch of the same commit is somebody else's doing.
+  const newestRun = async (config: Settings, head: string) => {
+    const query = `head_sha=${head}&event=pull_request&per_page=100`;
+    const { workflow_runs: runs } = await io.api(`actions/workflows/${config.check.workflow}/runs?${query}`);
+    return runs
+      .filter((one: any) => one.head_sha === head && one.event === "pull_request")
+      .sort((a: any, b: any) => b.id - a.id)[0];
   };
   return {
     async change(number) {
@@ -98,16 +108,19 @@ export function githubHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
     async ready(number) {
       await io.api(`pulls/${number}/ready`, {}, "POST");
     },
-    async checks(config: Settings, head) {
-      const { workflow, job } = config.check;
-      const query = `head_sha=${head}&event=pull_request&per_page=100`;
-      const { workflow_runs: runs } = await io.api(`actions/workflows/${workflow}/runs?${query}`);
-      const run = runs
-        .filter((one: any) => one.head_sha === head && one.event === "pull_request")
-        .sort((a: any, b: any) => b.id - a.id)[0];
-      if (!run) return "waiting";
+    async statuses(head) {
+      const { statuses } = await io.api(`commits/${head}/status?per_page=100`);
+      return statuses.map((item: any) => ({ context: item.context, state: item.state }));
+    },
+    async newestCheck(config, head) {
+      return (await newestRun(config, head))?.id ?? 0;
+    },
+    async checks(config: Settings, head, after = 0) {
+      const { job } = config.check;
+      const run = await newestRun(config, head);
+      if (!run || run.id <= after) return "waiting";
       const jobs = (await io.api(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`)).jobs.filter(
-        (candidate: any) => candidate.name === job,
+        (candidate: any) => candidate.name === job || candidate.name.startsWith(`${job} (`),
       );
       if (!jobs.length) return "waiting";
       if (run.status === "completed" && run.conclusion !== "success") return "failed";
@@ -169,12 +182,15 @@ export function createIO(repo: string, folder: string): DeliveryIO {
       return ancestors.get(key)!;
     },
     async releaseRequired(base, head, patterns) {
+      let full = base;
       try {
-        fetchObjects(base, head);
+        // A health check may report a short commit, and a fetch only takes a full one.
+        if (base.length < 40) full = (await api(`commits/${base}`)).sha;
+        fetchObjects(full, head);
       } catch {
         return true;
       }
-      return releaseRequired(bare, base, head, patterns);
+      return releaseRequired(bare, full, head, patterns);
     },
     async changedFiles(base, head) {
       if (base === head) return [];

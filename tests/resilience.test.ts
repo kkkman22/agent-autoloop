@@ -128,7 +128,7 @@ test("a hub that asks the worker to slow down is not a hub that can't be reached
   assert.ok(!existsSync(told), "中台还在回话，不该告诉本人连不上");
 });
 
-test("one run its plugin can't read doesn't hold up the others, and goes on once the plugin is fixed", async () => {
+test("one run its plugin can't read doesn't hold up the others, and the next one goes once the plugin is fixed", async () => {
   clean();
   const hub = fakeHub();
   const lines: string[] = [];
@@ -140,20 +140,21 @@ test("one run its plugin can't read doesn't hold up the others, and goes on once
   await worker.tick();
   hub.jobs.push(fine);
   await until(worker, () => hub.results.some((result) => result.run === fine.run));
-  assert.ok(!hub.results.some((result) => result.run === stuck.run), "读不懂的那一轮没被当成跑完");
-  assert.ok(
-    worker.entries().some((entry) => entry.run === stuck.run),
-    "它还在手上",
-  );
+  // The unreadable one is handed in as failed on its own words, not held for ever and not losing the other run.
+  await until(worker, () => hub.results.some((item) => item.run === stuck.run));
+  const result = hub.results.find((item) => item.run === stuck.run)!;
+  assert.equal(result.outcome, "failed");
+  assert.match(String(result.error), /插件读不懂/);
   assert.ok(
     lines.some((line) => line.includes(`run ${stuck.run}`) && line.includes("插件读不懂")),
     lines.join("\n"),
   );
 
   rmSync(broken);
-  await until(worker, () => hub.results.some((result) => result.run === stuck.run));
-  const result = hub.results.find((item) => item.run === stuck.run);
-  assert.equal(result.outcome, "done");
+  const next = job("flaky");
+  hub.jobs.push(next);
+  await until(worker, () => hub.results.some((item) => item.run === next.run));
+  assert.equal(hub.results.find((item) => item.run === next.run)!.outcome, "done");
 });
 
 test("a channel that keeps stopping is started again later each time, and sooner again once it has run a while", async () => {

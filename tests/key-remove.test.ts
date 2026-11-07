@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { setup } from "./helpers.ts";
 setup("key-remove");
-const hub = await import("../host/runtime.ts");
+const hub = await import("./hub.ts");
 const { makeHandler } = await import("../host/server.ts");
 const runtime = makeHandler();
 after(runtime.close);

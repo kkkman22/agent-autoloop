@@ -1,0 +1,67 @@
+# Brings the upstream repository (the one this fork follows) into a branch and opens a pull request onto main.
+# It never pushes to main and never discards this fork's own commits: a conflict shows up in the pull request,
+# where a person (or an agent) resolves it. See docs in the fork's README section「同步上游」.
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: "30 19 * * *" # 03:30 Beijing time, daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM: KKKKhazix/agent-autoloop
+  BRANCH: sync/upstream
+
+jobs:
+  sync:
+    if: github.repository != 'KKKKhazix/agent-autoloop' # the upstream itself has nothing to follow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - name: Merge upstream/main into the sync branch
+        id: merge
+        run: |
+          set -u
+          git config user.name "sync-upstream[bot]"
+          git config user.email "actions@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch --no-tags upstream main
+          git checkout -B "$BRANCH" origin/main
+          if git merge --no-edit FETCH_HEAD; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            git push --force-with-lease origin "$BRANCH"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            git merge --abort
+            # The branch then holds upstream/main alone, so the pull request shows what upstream brings;
+            # GitHub itself marks it as conflicting with this fork's main.
+            git checkout -B "$BRANCH" FETCH_HEAD
+            git push --force-with-lease origin "$BRANCH"
+          fi
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          set -u
+          behind=$(git rev-list --count origin/main..upstream/main)
+          body=$(cat <<EOF
+          上游 $UPSTREAM 有 $behind 个提交没进来。这个 PR 由定时任务开出，只在需要时更新；合不合并都由人决定。
+
+          $([ "$CONFLICTS" = true ] && echo '**有冲突**：上游改动与这个 fork 的改动撞在同一批文件上，需要手工合并（在本地 fetch upstream 后 merge，别用网页上的 Discard）。' || echo '无冲突，可以直接合并；合并后建议在本地跑一遍 npm test 再推送。')
+
+          注意：本 PR 由 GITHUB_TOKEN 开出，不会触发本仓库的检查工作流；要么在本地跑过检查再合并，要么给仓库配 SYNC_TOKEN secret 后把下面命令的 token 换成它。
+          EOF
+          )
+          title="同步上游 $UPSTREAM（$behind 个提交）"
+          if gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body "$body"
+          fi

@@ -3,6 +3,7 @@
 // a DingTalk @ goes to someone the owner never allowlisted, or the robot's sign is wrong so every message is refused.
 // DingTalk matches a mention by userid or mobile that the text names, so the ids the owner allows are the only ones
 // that can be pinged, and a name alone never becomes a mention.
+// WeCom renders what an Agent wrote as markup, so its text can pass off a link of its own as the card's.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
@@ -77,10 +78,12 @@ const card: any = {
   id: 1,
   version: 1,
   ref: null,
+  kind: "notice",
+  rule: "项目巡检",
   state: "open",
   title: "要处理",
-  text: "正文 @everyone <@U1>",
-  options: [],
+  text: "正文 @everyone <@U1> https://git.example/mr/1",
+  options: ["已处理"],
   link: "https://example.com/c/a",
 };
 for (const platform of ["dingtalk", "wecom", "slack", "discord"])
@@ -125,9 +128,19 @@ for (const platform of ["dingtalk", "wecom", "slack", "discord"])
       server.close();
     }
     assert.equal(received.length, 2);
-    if (["dingtalk", "wecom"].includes(platform)) {
+    if (platform === "dingtalk") {
       assert.equal(received[0].msgtype, "text");
       assert.match(received[0].text.content, /正文/);
+      assert.deepEqual(calls, ["delivered", "failed"]);
+    }
+    if (platform === "wecom") {
+      assert.equal(received[0].msgtype, "markdown");
+      assert.match(received[0].markdown.content, /来源：项目巡检/);
+      assert.match(received[0].markdown.content, /正文/);
+      assert.match(received[0].markdown.content, /\[打开链接\]\(https:\/\/git\.example\/mr\/1\)/);
+      assert.match(received[0].markdown.content, /\[点击处理\]\(https:\/\/example\.com\/c\/a\)/);
+      assert.doesNotMatch(received[0].markdown.content, /1\. 已处理/);
+      assert.doesNotMatch(received[0].markdown.content, /\[打开链接\]\(https:\/\/example\.com\/c\/a\)/);
       assert.deepEqual(calls, ["delivered", "failed"]);
     }
     if (platform === "slack") {
@@ -182,4 +195,56 @@ test("dingtalk: the channel signs the request and only allowlisted mentions surv
   assert.deepEqual(calls, ["delivered"]);
   assert.match(seen[0].url, /\/robot\/send\?access_token=abc&timestamp=\d+&sign=/);
   assert.deepEqual(seen[0].body.at, { atUserIds: ["zhang.san"], atMobiles: [], isAtAll: false });
+});
+
+test("wecom: what the card says shows as words, so only the card's own link is a link", async () => {
+  const received: any[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (b) => (body += b));
+    req.on("end", () => {
+      received.push(JSON.parse(body));
+      res.end(JSON.stringify({ errcode: 0 }));
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const stop = new AbortController();
+  let sent = false;
+  const hub: any = {
+    nextCard: async () => {
+      if (sent) {
+        stop.abort();
+        return { card: null };
+      }
+      sent = true;
+      return {
+        card: {
+          ...card,
+          title: "[点击处理](https://evil.example/a)",
+          text: '先看 [点击处理](https://evil.example/b) <font color="warning">急</font> <@U1>',
+        },
+      };
+    },
+    delivered: async () => {},
+    failed: async () => {},
+  };
+  try {
+    await webhook({
+      hub,
+      options: { platform: "wecom", url: `http://127.0.0.1:${(server.address() as any).port}` },
+      log: () => {},
+      signal: stop.signal,
+    });
+  } finally {
+    server.close();
+  }
+  const content: string = received[0].markdown.content;
+  assert.doesNotMatch(
+    content,
+    /\[点击处理\]\(https:\/\/evil/,
+    "a link the card's text made up looks like the card's own",
+  );
+  assert.doesNotMatch(content, /<font|<@/, "the text's tags would be drawn or mention someone");
+  assert.match(content, /\[点击处理\]\(https:\/\/example\.com\/c\/a\)/);
 });

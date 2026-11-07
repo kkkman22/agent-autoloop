@@ -18,7 +18,8 @@ const log = (who: string) => (line: string) => console.log(`${new Date().toISOSt
 /** Only one of these per install: a second would take work beside the first. */
 function lock() {
   const running = runningUp();
-  if (running !== null) throw new Error(`已经在跑了（进程 ${running}）`);
+  // Its own number is what was left behind: pid 1 every time in a container, and a matter of luck after a restart.
+  if (running !== null && running !== process.pid) throw new Error(`已经在跑了（进程 ${running}）`);
   const file = path.join(HOME, "up.pid");
   writeFileSync(file, String(process.pid));
   return () => {
@@ -77,10 +78,31 @@ export async function keepChannelRunning(
   }
 }
 
+/** What runs beside the hub is started again however it stops, after a pause: one that returned at once would hog it. */
+async function keepRunning(say: (line: string) => void, run: () => Promise<unknown>, signal: AbortSignal) {
+  while (!signal.aborted) {
+    try {
+      await run();
+      if (signal.aborted) return;
+      say("stopped; starting again in 30 seconds");
+    } catch (error) {
+      say(`stopped: ${error}; starting again in 30 seconds`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30_000));
+  }
+}
+
 export async function up() {
   const config = readConfig();
   mkdirSync(HOME, { recursive: true, mode: 0o700 });
   const unlock = lock();
+  // Plugins run in this process, and an `error` event or a promise nobody handled is theirs to answer for, not the hub's.
+  // Everything that matters is in transactions, so the rest can carry on.
+  const stray = log("up");
+  process.on("uncaughtException", (error) => stray(`stray error: ${error?.stack ?? error}`));
+  process.on("unhandledRejection", (error) => stray(`stray error: ${(error as Error)?.stack ?? error}`));
+  // Except losing where the log goes: writing that down fails the same way, for ever. It stops, and a service brings it back.
+  for (const output of [process.stdout, process.stderr]) output.on("error", () => process.exit(1));
   const stop = new AbortController();
   const jobs: Promise<unknown>[] = [];
   let close = () => {};
@@ -108,8 +130,9 @@ export async function up() {
   }
   if (config.worker) {
     const { key, name, capacity, unreachable } = config.worker;
-    const worker = createWorker({ hub: hubClient(config.url, key), name, capacity, unreachable, log: log("worker") });
-    jobs.push(worker.run(stop.signal));
+    const say = log("worker");
+    const worker = createWorker({ hub: hubClient(config.url, key), name, capacity, unreachable, log: say });
+    jobs.push(keepRunning(say, () => worker.run(stop.signal), stop.signal));
   }
   for (const [id, channel] of Object.entries(config.channels ?? {})) {
     jobs.push(keepChannelRunning(id, channel, config.url, stop.signal));

@@ -1,14 +1,19 @@
 // Reading the view: what the decisions and the doors ask of it, and the shapes they hand out.
 import { credential, type Environment } from "./credentials.ts";
-import { decide } from "./decide.ts";
 import { rows, type Fact, type Row, type View } from "./evolve.ts";
+import { ruleOf, type Rule, type Rules } from "./rules.ts";
 import type { Job } from "../protocol/job.ts";
-import type { Rule, Rules } from "./rules.ts";
 
 export function configuration(view: View, version?: number): Rules {
   const current = view.get("config", "rules");
   return (version === undefined || version === current?.version ? current : view.get("config", version))?.value;
 }
+/** The owner's pause that keeps a rule from taking work at this moment, if there is one. */
+export function pauseOf(view: View, rule: Rule, now: number): Row | null {
+  const row = view.get("pauses", rule.name);
+  return row && (row.until === null || Date.parse(row.until) > now) ? row : null;
+}
+
 export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
@@ -22,9 +27,8 @@ export const workers = (view: View) =>
 
 /** What a worker's agents have on: runs in hand and runs ready to be claimed. */
 export function waitingOn(view: View, worker: string, now: number) {
-  const ready = (run: Row) => run.state === "queued" && Date.parse(run.not_before) <= now;
   return rows(view, "runs", { state: ["queued", "claimed"] }).filter(
-    (run) => workerOf(view, run) === worker && (run.state === "claimed" || ready(run)),
+    (run) => workerOf(view, run) === worker && (run.state === "claimed" || Date.parse(run.not_before) <= now),
   );
 }
 
@@ -42,8 +46,9 @@ export function sourceOf(view: View, runId: number) {
 export function openInScope(view: View, run: Row) {
   const source = sourceOf(view, run.id);
   if (!source || !run.claimed_at) return [];
-  const inScope = (card: Row) => card.grp === run.grp && card.source === source && card.created_at <= run.claimed_at;
-  return rows(view, "cards", { state: "open", grp: run.grp, source }).filter(inScope);
+  return rows(view, "cards", { state: "open", grp: run.grp, source }).filter(
+    (card) => card.created_at <= run.claimed_at,
+  );
 }
 
 export function cardView(card: Row, env: Environment, ref: string | null = null, links = false) {
@@ -74,7 +79,7 @@ export function cardView(card: Row, env: Environment, ref: string | null = null,
 
 export function jobOf(view: View, run: Row, env: Environment): Job {
   const rules = configuration(view, run.rules_version);
-  const { name, cwd, skill, prompt, emits } = rules.rules.find((rule) => rule.name === run.rule)!;
+  const { name, cwd, skill, prompt, emits } = ruleOf(rules, run.rule)!;
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
   const thread = { rule: run.rule, lane: run.lane };
@@ -102,7 +107,7 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
       answers: answers.map(({ id: card, title, options, choice, answer: text, about, by, decided_at: at }) => {
         return { card, title, options: JSON.parse(options), choice, text, about, by, at };
       }),
-      timers: timers.filter((timer) => eventIds.includes(timer.event_id)).map(timerView),
+      timers: timers.map(timerView),
       waiting: waiting.sort((a, b) => a.at.localeCompare(b.at)).map(timerView),
       open: openInScope(view, run).map(({ id, title, text, created_at }) => ({
         card: id,
@@ -120,9 +125,8 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
 }
 
 export function cancels(view: View, worker: string): number[] {
-  const stopping = (run: Row) => run.state === "claimed" && run.cancel_at !== null && workerOf(view, run) === worker;
   return rows(view, "runs", { state: "claimed" })
-    .filter(stopping)
+    .filter((run) => run.cancel_at !== null && workerOf(view, run) === worker)
     .map((run) => run.id);
 }
 
@@ -131,69 +135,3 @@ export function unrouted(view: View, limit = 20) {
 }
 
 export const safeFact = (fact: Fact) => ({ ...fact, changes: fact.changes.filter(({ table }) => table !== "keys") });
-
-export type Preview = {
-  added: string[];
-  removed: string[];
-  renamed: { from: string; to: string }[];
-  changed: string[];
-  cancels: { rule: string; count: number; runs: number[] }[];
-  closes: { rule: string; count: number; cards: { id: number; title: string }[] }[];
-  claimed: { run: number; rule: string }[];
-};
-const WITHOUT_NAME = (rule: Rule) => JSON.stringify({ ...rule, name: null });
-const CAP = 20;
-
-/** What applying these rules would do: decided on a fork of the view and never committed, so reading writes nothing. */
-export function previewRules(view: View, candidate: Rules, now: number, env: Environment): Preview {
-  const current = configuration(view);
-  const before = new Map(current.rules.map((rule) => [rule.name, rule]));
-  const after = new Map(candidate.rules.map((rule) => [rule.name, rule]));
-  const added: string[] = [];
-  const renamed: { from: string; to: string }[] = [];
-  const changed: string[] = [];
-  for (const [name, rule] of after) {
-    const old = before.get(name);
-    if (old === undefined) {
-      const twin = [...before].find(([, other]) => WITHOUT_NAME(other) === WITHOUT_NAME(rule));
-      if (twin) renamed.push({ from: twin[0], to: name });
-      else added.push(name);
-    } else if (WITHOUT_NAME(old) !== WITHOUT_NAME(rule)) changed.push(name);
-  }
-  const removed = [...before.keys()].filter((name) => {
-    const twin = [...after].find(([, rule]) => WITHOUT_NAME(rule) === WITHOUT_NAME(before.get(name)!));
-    return !after.has(name) && !twin;
-  });
-  const { facts } = decide(view, { type: "rules", args: [candidate] }, now, env);
-  const cancels = new Map<string, { count: number; runs: number[] }>();
-  const closes = new Map<string, { count: number; cards: { id: number; title: string }[] }>();
-  for (const fact of facts)
-    for (const { table, key, row } of fact.changes) {
-      if (row === null) continue;
-      if (table === "runs" && row.state === "cancelled" && String(row.summary ?? "").includes("规则已删除")) {
-        const entry = cancels.get(row.rule) ?? { count: 0, runs: [] };
-        entry.count += 1;
-        if (entry.runs.length < CAP) entry.runs.push(Number(key));
-        cancels.set(row.rule, entry);
-      }
-      if (table === "cards" && row.state === "closed" && row.result === "对应规则已删除") {
-        const entry = closes.get(row.rule) ?? { count: 0, cards: [] };
-        entry.count += 1;
-        if (entry.cards.length < CAP) entry.cards.push({ id: Number(key), title: row.title });
-        closes.set(row.rule, entry);
-      }
-    }
-  const kept = new Set(after.keys());
-  const claimed = rows(view, "runs", { state: "claimed" })
-    .filter((run) => !kept.has(run.rule))
-    .map((run) => ({ run: run.id, rule: run.rule }));
-  return {
-    added,
-    removed,
-    renamed,
-    changed,
-    cancels: [...cancels].map(([rule, { count, runs }]) => ({ rule, count, runs })),
-    closes: [...closes].map(([rule, { count, cards }]) => ({ rule, count, cards })),
-    claimed,
-  };
-}

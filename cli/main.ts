@@ -6,9 +6,20 @@ import { homedir, hostname } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { hubClient } from "../protocol/client.ts";
+import { parseRules } from "../protocol/rules.ts";
 import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/config.ts";
 import { HOME, RULES_FILE } from "../host/home.ts";
-import { installService, removeService, serviceRunning } from "../host/service.ts";
+import { findOnPath, psQuote } from "../host/command.ts";
+import { privateDirectory } from "../host/files.ts";
+import {
+  installService,
+  removeService,
+  restartService,
+  serviceLogs,
+  serviceRunning,
+  systemUnit,
+  untilAnswering,
+} from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
 import { flags, text, type Flags } from "./flags.ts";
 import { printer } from "./plain-text.ts";
@@ -30,33 +41,43 @@ const HELP = `Agent 自动化中台
                                     查看时间线；--json 输出原始事实，--raw 不过滤文字里的控制字符
   agent-autoloop conformance <地址> --config <测试凭据文件>
                                     在测试中台上检查协议
-  agent-autoloop status [--raw]          现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少
+  agent-autoloop status [--raw|--json]   现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少
+                                     --json 输出 /v1/state 的原始结构，给脚本用
   agent-autoloop answer <卡片> [序号] [--text 别的想法]
                                     回答一张卡片；通知不用写序号
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
   agent-autoloop doctor                  查哪里没配好
   agent-autoloop rules validate [文件]   校验规则文件并给出警告；check 是它的别名
+  agent-autoloop rules explain           按本机 rules.json 说明生效的规则、Agent、通道和下次定时
   agent-autoloop rules explain <来源> <事件类型>
                                     列出会接这条事件的规则
   agent-autoloop rules explain <规则名>  一条规则的完整说明，定时规则带上接下来 3 次到点
   agent-autoloop rules diff [文件]       候选文件和正在用的规则对比，并列出影响（要中台在跑）
   agent-autoloop rules disable|enable <规则名>
-                                    暂停、恢复一条规则；先预览，确认后写回
+                                    在规则文件里暂停、恢复一条规则；先预览，确认后写回
   agent-autoloop rules remove <规则名>   删掉一条规则；先预览要取消和关闭的东西
   agent-autoloop rules edit             用 $EDITOR 编辑；保存后校验、预览，确认后替换
-  agent-autoloop check                   检查 rules.json
-  agent-autoloop emit <类型> [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]
-                                    发一条事件
+  agent-autoloop check [文件]            检查规则文件，不碰中台；不写文件就查 rules.json
+  agent-autoloop pause <规则> [--reason 原因] [--until 时间]
+                                    暂停一条规则：到点不跑、来事件不接，直到恢复；不改规则文件
+  agent-autoloop resume <规则>
+                                    恢复；错过的时段不补跑
+  agent-autoloop run <规则> [--subject 对象] [--reason 说明]
+                                    立即运行一轮，照常排队派活
+  agent-autoloop emit <类型> [--dry-run] [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]
+                                    发一条事件；--dry-run 只预演会派给谁，不连接中台
   agent-autoloop tell <编号> [--task 定时任务名]
                                     直接告诉你一件事，内容从标准输入读
+  agent-autoloop ask --task <定时任务名>
+                                    定时任务问你一件事：标准输入传回执那样的 ask；你答了，它的 Agent 在 cwd 接着做
   agent-autoloop stop <第几轮>           停掉一轮
   agent-autoloop key new <source|worker|channel|owner> <名字>
                                     新建一把密钥（只显示这一次）
   agent-autoloop key list                有哪些密钥
   agent-autoloop key remove <种类> <名字>  立即收回一把密钥
   agent-autoloop key rotate [--yes]      换主密钥；旧的卡片链接和轮次凭据立刻失效
-  agent-autoloop backup [目录]           把数据库、主密钥、配置和规则备份到一个空目录
-  agent-autoloop restore <目录> [--yes]  用备份换掉现在的数据；中台要先停掉
+  agent-autoloop backup [目录]           备份数据库、主密钥、配置、规则和 secrets.env 到一个空目录；不填就放在 ~/.agent-autoloop/backups
+  agent-autoloop restore <目录> [--yes]  停掉中台后，用一次备份换掉现在的数据
   agent-autoloop add <git 地址> [--ref v版本]
                                     安装插件：读清单、核对兼容和签名，记录版本，不自动更新
   agent-autoloop plugins list             装了哪些插件：版本、提交、签名人、是否兼容
@@ -66,22 +87,134 @@ const HELP = `Agent 自动化中台
                                     登记签名人公钥；以后安装更新都要签名
   agent-autoloop plugins remove <名字>    删掉插件和安装记录
   agent-autoloop mcp [--allow-writes]     用标准输入输出连接 MCP 客户端；默认只读
-  agent-autoloop join <中台地址> --worker <名字> --key <密钥>
+  agent-autoloop join <中台地址> --worker <名字> --key <密钥> [--no-service]
                                     另一台电脑只接活时用
   agent-autoloop update [版本]           更新到最新，或者换到某个版本（标签）
   agent-autoloop update --check          看看有没有更新，不改任何东西
   agent-autoloop update --rollback       换回上一次更新之前的版本
   agent-autoloop uninstall [--yes]       卸载程序并保留数据；--yes 跳过确认
   agent-autoloop --version               版本和当前提交
+  agent-autoloop help                    这份说明
   agent-autoloop up                      启动（平时由系统服务调用）
   agent-autoloop service install|remove  系统服务
 
 配置和数据在 ${HOME}。规则在 ${RULES_FILE}，改了自动生效。`;
 
+const INIT_USAGE = `用法：agent-autoloop init [--agent claude|codex] [--command '某个命令 {prompt}'] [--port 3350] [--no-service]
+
+  --agent      只接这个 Agent：claude 或 codex。不写就接本机装好的全部
+  --command    改用别的命令行 Agent；{prompt} 会作为一个独立参数传进去
+  --port       中台监听的端口，默认 3350
+  --no-service 先不装系统服务，之后手动运行 agent-autoloop up`;
+
+const TRY_USAGE = `用法：agent-autoloop try
+
+用本机接好的 Agent 跑一遍完整流程：提问，进程退出等你回复，你拍板，它接着干完。`;
+
+const STATUS_USAGE = `用法：agent-autoloop status [--raw|--json]
+
+现在什么情况：谁在线、等你什么、在做什么、做过什么、花了多少。
+  --raw   只输出纯文字，不带颜色和装饰
+  --json  输出 /v1/state 的原始结构，给脚本和看板用`;
+
+const UPDATE_USAGE = `用法：agent-autoloop update [版本] [--check] [--rollback]
+
+更新到最新，或者换到某个版本（标签）。
+  --check     看看有没有更新，不改任何东西
+  --rollback  换回上一次更新之前的版本`;
+
+const UNINSTALL_USAGE = `用法：agent-autoloop uninstall [--yes]
+
+卸载程序并保留规则、密钥和记录。
+  --yes  跳过确认`;
+
+const RESTORE_USAGE = `用法：agent-autoloop restore <目录> [--yes]
+
+恢复会替换本机的数据库、主密钥、配置、规则和 secrets.env；先停掉中台，--yes 跳过确认。`;
+
+const RULES_USAGE = `用法：agent-autoloop rules validate [文件]
+      agent-autoloop rules explain [<来源> <事件类型> | <规则名>]
+      agent-autoloop rules diff [文件]
+      agent-autoloop rules disable|enable|remove <规则名> [--yes]
+      agent-autoloop rules edit [--yes]`;
+
+/** What each command reads besides its own words, and how to use it. */
+const TAKES: Record<string, { flags: string[]; usage: string }> = {
+  add: { flags: ["ref"], usage: "用法：agent-autoloop add <git 地址> [--ref v版本]" },
+  answer: { flags: ["text"], usage: "用法：agent-autoloop answer <卡片> [序号] [--text 别的想法]" },
+  ask: {
+    flags: ["task"],
+    usage: `用法：agent-autoloop ask --task <定时任务名>，问题从标准输入读：
+  { "title": "…", "text": "…", "options": ["…", "…"], "recommend": 0, "about": "留给接着做的", "key": "这件事的固定名字" }
+rules.json 里这个定时任务要写 cwd；你答了，中台叫醒它的 Agent 在 cwd 照 skill、prompt 接着做。`,
+  },
+  backup: { flags: [], usage: "用法：agent-autoloop backup [目录]" },
+  check: { flags: [], usage: "用法：agent-autoloop check [文件]" },
+  conformance: { flags: ["config"], usage: "用法：agent-autoloop conformance <测试中台地址> --config <测试凭据文件>" },
+  doctor: { flags: [], usage: "用法：agent-autoloop doctor" },
+  emit: {
+    flags: ["dry-run", "subject", "summary", "detail", "link", "id", "key"],
+    usage:
+      "用法：agent-autoloop emit <类型> [--dry-run] [--subject x] [--summary x] [--detail x] [--link x] [--id x] [--key 来源密钥]",
+  },
+  init: { flags: ["agent", "command", "port", "no-service"], usage: INIT_USAGE },
+  join: {
+    flags: ["worker", "key", "no-service"],
+    usage: "用法：agent-autoloop join <中台地址> --worker <名字> --key <密钥> [--no-service]",
+  },
+  key: {
+    flags: ["yes"],
+    usage: `用法：agent-autoloop key new <source|worker|channel|owner> <名字>
+      agent-autoloop key list
+      agent-autoloop key remove <种类> <名字>
+      agent-autoloop key rotate [--yes]`,
+  },
+  mcp: { flags: ["allow-writes"], usage: "用法：agent-autoloop mcp [--allow-writes]" },
+  pause: {
+    flags: ["reason", "until"],
+    usage: "用法：agent-autoloop pause <规则> [--reason 原因] [--until 时间]",
+  },
+  plugins: {
+    flags: ["check"],
+    usage: `用法：agent-autoloop plugins list
+      agent-autoloop plugins update <名字> [--check]
+      agent-autoloop plugins trust <名字> <公钥文件>
+      agent-autoloop plugins remove <名字>`,
+  },
+  // Only its first word is read as anything: the rest is a result in someone's own words, dashes and all.
+  resolve: { flags: [], usage: "用法：agent-autoloop resolve <卡片> <结果>" },
+  restore: { flags: ["yes"], usage: RESTORE_USAGE },
+  resume: { flags: [], usage: "用法：agent-autoloop resume <规则>" },
+  rules: { flags: ["yes"], usage: RULES_USAGE },
+  run: { flags: ["subject", "reason"], usage: "用法：agent-autoloop run <规则> [--subject 对象] [--reason 说明]" },
+  service: { flags: [], usage: "用法：agent-autoloop service install|remove" },
+  status: { flags: ["raw", "json"], usage: STATUS_USAGE },
+  stop: { flags: [], usage: "用法：agent-autoloop stop <第几轮>" },
+  tell: { flags: ["task"], usage: "用法：agent-autoloop tell <编号> [--task 定时任务名]，内容从标准输入读" },
+  try: { flags: [], usage: TRY_USAGE },
+  uninstall: { flags: ["yes"], usage: UNINSTALL_USAGE },
+  up: { flags: [], usage: "用法：agent-autoloop up" },
+  update: { flags: ["check", "rollback"], usage: UPDATE_USAGE },
+  why: { flags: ["json", "raw"], usage: "用法：agent-autoloop why <第几轮> [--json|--raw]" },
+};
+
 const fail = (words: string): never => {
   console.error(words);
   process.exit(1);
 };
+
+/**
+ * Stops at a flag the command doesn't read. A misspelt --port would otherwise install with the default in silence, and
+ * --help would install at all.
+ */
+function refuseUnknownFlags(args: string[], { flags: known, usage }: { flags: string[]; usage: string }) {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(usage);
+    process.exit(0);
+  }
+  const unknown = Object.keys(flags(args).named).filter((name) => !known.includes(name));
+  if (unknown.length) fail(`不认识的参数：${unknown.map((name) => `--${name}`).join("、")}\n\n${usage}`);
+}
 
 const client = (key: string, config = readConfig()) => hubClient(config.url, key);
 const ownerClient = (config = readConfig()) =>
@@ -118,12 +251,18 @@ function linkSkill() {
     const link = path.join(homedir(), agent, "skills", "agent-autoloop");
     if (lstatSync(link, { throwIfNoEntry: false })) continue;
     mkdirSync(path.dirname(link), { recursive: true });
-    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link);
+    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link, process.platform === "win32" ? "junction" : "dir");
   }
 }
 
 /** What to type to run this program: its name if that's what a shell finds, otherwise where it is. */
 function howToRun() {
+  if (process.platform === "win32") {
+    const found = findOnPath("agent-autoloop");
+    if (found && realpathSync(found) === realpathSync(path.join(ROOT, "bin", "agent-autoloop.cmd")))
+      return "agent-autoloop";
+    return `& ${psQuote(process.execPath)} ${psQuote(PROGRAM)}`;
+  }
   const found = spawnSync("/bin/sh", ["-c", "command -v agent-autoloop"], { encoding: "utf8" }).stdout.trim();
   if (found && realpathSync(found) === realpathSync(PROGRAM)) return "agent-autoloop";
   return /\s/.test(PROGRAM) ? `'${PROGRAM}'` : PROGRAM;
@@ -161,9 +300,11 @@ async function agentsToUse(named: Flags, worker: string) {
 }
 
 async function init(args: string[]) {
-  const { named } = flags(args);
+  const { named, rest } = flags(args);
+  // `init -p 4000` would otherwise install on the default port in silence.
+  if (rest.length) return fail(`不认识的参数：${rest.join(" ")}\n\n${INIT_USAGE}`);
   if (existsSync(CONFIG_FILE)) return fail(`已经装过了：${CONFIG_FILE}`);
-  mkdirSync(HOME, { recursive: true, mode: 0o700 });
+  privateDirectory(HOME);
   mkdirSync(path.join(HOME, "try"), { recursive: true });
   const hostName = hostname()
     .toLowerCase()
@@ -173,7 +314,7 @@ async function init(args: string[]) {
   if (!Object.keys(agents).length) {
     return fail(
       "这台电脑上没找到 Claude Code 或 Codex。先装好并登录，" +
-        "或者用 --command 指定别的命令行 Agent，比如 --command 'hermes chat -q {prompt}'",
+        "或者用 --command 指定别的命令行 Agent，比如 --command 'hermes chat -Q -q {prompt}'",
     );
   }
   const port = text(named.port) ?? "3350";
@@ -194,7 +335,10 @@ async function init(args: string[]) {
   };
   writeConfig(config);
   linkSkill();
-  if (!named["no-service"]) installService();
+  if (!named["no-service"]) {
+    installService();
+    await waitForHub();
+  }
   const names = Object.values(agents).map((agent) => agent.name);
   const reach = ownRules ? "  通道：桌面通知\n" : "";
   const run = howToRun();
@@ -209,7 +353,7 @@ async function join(args: string[]) {
   const [url] = rest;
   const name = text(named.worker);
   const key = text(named.key);
-  if (!url || !name || !key) return fail("用法：agent-autoloop join <中台地址> --worker <名字> --key <密钥>");
+  if (!url || !name || !key) return fail(TAKES.join.usage);
   let target: URL;
   try {
     target = new URL(url);
@@ -226,7 +370,8 @@ async function join(args: string[]) {
   }
   writeConfig({ url, worker: { name, key } });
   if (!named["no-service"]) installService();
-  console.log(`这台电脑以 ${name} 的身份接活了。`);
+  const next = named["no-service"] ? `运行 ${howToRun()} up 开始。` : "";
+  console.log(`这台电脑以 ${name} 的身份接活了。${next}`);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -317,10 +462,11 @@ const RUN_STATES: Record<string, string> = {
   cancelled: "停了",
 };
 
-async function status(raw = false) {
+async function status(named: Flags) {
   const owner = ownerClient();
-  const say = printer(raw);
+  const say = printer(named.raw !== undefined);
   const state = await owner.state();
+  if (named.json !== undefined) return console.log(JSON.stringify(state, null, 2));
   const { totals } = state;
   const clock = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
   const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { timeZone: state.timezone, ...clock });
@@ -328,6 +474,9 @@ async function status(raw = false) {
   say(`${spendLine(state.spending)}\n`);
   for (const agent of state.agents) say(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
   for (const channel of state.channels) say(`${channel.online ? "●" : "○"} ${channel.name}`);
+  const paused = state.lines.filter((line: { paused?: unknown }) => line.paused);
+  if (paused.length) say("\n暂停中（恢复：agent-autoloop resume <规则>）");
+  for (const line of paused) say(`  ${line.name}${line.paused.reason ? `：${line.paused.reason}` : ""}`);
   for (const card of state.cards) {
     showCard(card, say);
     say(howToAnswer(card));
@@ -357,7 +506,7 @@ async function status(raw = false) {
 async function answer(args: string[]) {
   const { named, rest } = flags(args);
   const card = Number(rest[0]);
-  if (!Number.isInteger(card) || card < 1) return fail("用法：agent-autoloop answer <卡片> [序号] [--text 别的想法]");
+  if (!Number.isInteger(card) || card < 1) return fail(TAKES.answer.usage);
   const words = text(named.text);
   const done = await ownerClient().answer(card, {
     ...(rest[1] !== undefined && { choice: Number(rest[1]) - 1 }),
@@ -375,9 +524,38 @@ async function answer(args: string[]) {
 async function resolve(args: string[]) {
   const [id, ...words] = args;
   const card = Number(id);
-  if (!Number.isInteger(card) || card < 1 || !words.length) return fail("用法：agent-autoloop resolve <卡片> <结果>");
+  if (!Number.isInteger(card) || card < 1 || !words.length) return fail(TAKES.resolve.usage);
   const { changed } = await ownerClient().resolve(card, words.join(" "));
   console.log(changed ? "结案了。" : "这张卡片已经处理过了，这次没有改动。");
+}
+
+async function pause(args: string[]) {
+  const { named, rest } = flags(args);
+  const body = {
+    ...(text(named.reason) && { reason: text(named.reason) }),
+    ...(text(named.until) && { until: text(named.until) }),
+  };
+  if (!rest[0]) return fail(TAKES.pause.usage);
+  const done = await ownerClient().pause(rest[0], body);
+  console.log(done.changed ? `暂停了「${done.rule}」。` : `「${done.rule}」本来就暂停着。`);
+}
+
+async function resume(args: string[]) {
+  const { rest } = flags(args);
+  if (!rest[0]) return fail(TAKES.resume.usage);
+  const done = await ownerClient().resume(rest[0]);
+  console.log(done.changed ? `恢复了「${done.rule}」。` : `「${done.rule}」本来就没暂停。`);
+}
+
+async function runNow(args: string[]) {
+  const { named, rest } = flags(args);
+  if (!rest[0]) return fail(TAKES.run.usage);
+  const body = {
+    ...(text(named.subject) && { subject: text(named.subject) }),
+    ...(text(named.reason) && { reason: text(named.reason) }),
+  };
+  const done = await ownerClient().run(rest[0], body);
+  console.log(`排上了：第 ${done.run} 轮。`);
 }
 
 async function doctor() {
@@ -390,20 +568,27 @@ async function doctor() {
   if (!existsSync(CONFIG_FILE)) return say(false, "还没装好：运行 agent-autoloop init");
   const config = readConfig();
   if (config.hub) {
-    const { parseRules } = await importRules();
     try {
-      parseRules(readFileSync(RULES_FILE, "utf8"));
+      const { channels } = checkRulesFile(RULES_FILE);
       say(true, `规则 ${RULES_FILE}`);
+      for (const [id, channel] of Object.entries(channels)) {
+        // Nobody answers from a desktop notification, and a link goes only to whoever it's sent to.
+        if (id !== "desktop" && !channel.links && !channel.answerers) {
+          console.log(`○ ${channel.name}没写 answerers：这个通道里谁都能回答卡片。`);
+        }
+      }
     } catch (error) {
       say(false, (error as Error).message);
     }
   }
-  say(serviceRunning(), serviceRunning() ? "系统服务在跑" : "系统服务没在跑：agent-autoloop service install");
+  if (serviceRunning()) say(true, "系统服务在跑");
+  else if (systemUnit()) say(true, "系统级服务在跑");
+  else say(false, "系统服务没在跑：agent-autoloop service install");
   try {
     const health = await (await fetch(`${config.url}/healthz`, { signal: AbortSignal.timeout(5000) })).json();
     say(health.ok === true, `中台 ${config.url}（${String(health.commit).slice(0, 12)}）`);
   } catch (error) {
-    say(false, `连不上中台 ${config.url}：${(error as Error).message}`);
+    say(false, `连不上中台 ${config.url}：${(error as any).cause?.code ?? (error as Error).message}`);
   }
   if (config.owner) {
     try {
@@ -413,7 +598,7 @@ async function doctor() {
         if (agent.worker === config.worker?.name) {
           const { adapterFor } = await import("../worker/agents.ts");
           const problem = await adapterFor(agent.use).then(
-            (adapter) => adapter.check?.() ?? null,
+            (adapter) => adapter.check?.(agent.program) ?? null,
             (error) => String(error.message),
           );
           say(!problem, problem ?? `${agent.name} 可以用`);
@@ -439,14 +624,21 @@ async function doctor() {
   if (bad) process.exit(1);
 }
 
-/** The rules module reads the rules file as it loads; the checks here need to survive a bad one. */
-async function importRules() {
+/** Only reads the file: checking a draft must not open the hub's database or load the draft into it. */
+function checkRulesFile(file: string) {
+  let json: string;
   try {
-    return await import("../host/runtime.ts");
+    json = readFileSync(file, "utf8");
   } catch (error) {
-    fail((error as Error).message);
-    throw error;
+    throw new Error(`读不到 ${file}：${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`);
   }
+  return parseRules(json, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+}
+
+function check(args: string[]) {
+  const file = path.resolve(args[0] ?? RULES_FILE);
+  checkRulesFile(file);
+  console.log(`规则没问题：${file}`);
 }
 
 async function key(args: string[]) {
@@ -487,23 +679,42 @@ async function key(args: string[]) {
 async function emit(args: string[]) {
   const { named, rest } = flags(args);
   const config = readConfig();
-  const type = rest[0] ?? fail("用法：agent-autoloop emit <类型>");
-  const secret = text(named.key) ?? config.source?.key ?? fail("这台电脑上没有来源的密钥：用 --key");
-  const answer = await client(secret, config).event({
+  const type = rest[0] ?? fail(TAKES.emit.usage);
+  const event = {
     id: text(named.id) ?? randomUUID(),
     type,
     ...(text(named.subject) && { subject: text(named.subject) }),
     ...(text(named.summary) && { summary: text(named.summary) }),
     ...(text(named.detail) && { detail: text(named.detail) }),
     ...(text(named.link) && { link: text(named.link) }),
-  });
-  console.log(answer.routed.length ? `交给了：${answer.routed.join("、")}` : "记下了，没有规则接它。");
+  };
+  if (named["dry-run"] !== undefined) {
+    // The hub tells a source by its key, and only the key's own source is known here.
+    if (text(named.key)) return fail("--dry-run 按这台电脑的来源预演，不能和 --key 一起用");
+    if (!config.source) return fail("这台电脑上没有来源的密钥：--dry-run 需要知道来源名");
+    const { previewEvent } = await import("./explain.ts");
+    console.log("预演（按本机 rules.json，不连接中台、不写日志）：");
+    for (const line of previewEvent(readFileSync(RULES_FILE, "utf8"), config.source.name, event)) console.log(line);
+    return;
+  }
+  const secret = text(named.key) ?? config.source?.key ?? fail("这台电脑上没有来源的密钥：用 --key");
+  const answer = await client(secret, config).event(event);
+  const paused = answer.paused?.length ? `暂停中没接：${answer.paused.join("、")}` : "";
+  if (answer.routed.length) console.log(`交给了：${answer.routed.join("、")}${paused && `；${paused}`}`);
+  else console.log(paused ? `记下了，${paused}。` : "记下了，没有规则接它。");
+}
+
+async function rulesCommand(args: string[]) {
+  const { rest } = flags(args);
+  if (rest[0] !== "explain" || rest.length > 1) return fail(TAKES.rules.usage);
+  const { explainRules } = await import("./explain.ts");
+  for (const line of explainRules(readFileSync(RULES_FILE, "utf8"), Date.now())) console.log(line);
 }
 
 async function tell(args: string[]) {
   const { named, rest } = flags(args);
   const config = readConfig();
-  const matter = rest[0] ?? fail("用法：agent-autoloop tell <编号> [--task 定时任务名]，内容从标准输入读");
+  const matter = rest[0] ?? fail(TAKES.tell.usage);
   const words = readFileSync(0, "utf8").trim();
   if (!words) return fail("要说的话从标准输入传，不能为空。");
   const task = text(named.task);
@@ -513,8 +724,34 @@ async function tell(args: string[]) {
   console.log(answer.duplicate ? "这件事已经说过了，这次没再发。" : "说了。");
 }
 
+async function ask(args: string[]) {
+  const { named, rest } = flags(args);
+  const task = text(named.task);
+  if (!task || rest.length) return fail(TAKES.ask.usage);
+  let question: unknown;
+  try {
+    question = JSON.parse(readFileSync(0, "utf8"));
+  } catch {
+    return fail("问题从标准输入传，是一段 JSON：和回执里的 ask 一样");
+  }
+  const config = readConfig();
+  if (!config.worker) return fail("这台电脑不是接单程序");
+  const answer = await client(config.worker.key, config).tell({ task, ask: question });
+  console.log(answer.duplicate ? "同一件事还在等你回答，这次没再问。" : "问了。");
+}
+
+/** A run is named by its number; anything else would reach the hub as /v1/runs/NaN and come back as "没有这个地址". */
+function runOf(word: string | undefined, usage: string) {
+  const id = Number(word);
+  if (word === undefined || !/^[1-9][0-9]*$/.test(word) || !Number.isSafeInteger(id)) return fail(usage);
+  return id;
+}
+
 async function why(args: string[]) {
-  const id = Number(args[0]);
+  const id = runOf(
+    args.find((arg) => !arg.startsWith("--")),
+    "用法：agent-autoloop why <第几轮> [--json]",
+  );
   const facts = await ownerClient().why(id);
   if (args.includes("--json")) return console.log(JSON.stringify(facts, null, 2));
   const { formatWhy } = await import("./why.ts");
@@ -524,20 +761,55 @@ async function why(args: string[]) {
 async function checkConformance(args: string[]) {
   const { named, rest } = flags(args);
   const file = text(named.config) ?? process.env.AGENT_AUTOLOOP_CONFORMANCE;
-  if (!rest[0] || !file) return fail("用法：agent-autoloop conformance <测试中台地址> --config <测试凭据文件>");
+  if (!rest[0] || !file) return fail(TAKES.conformance.usage);
   const { conformance } = await import("../protocol/conformance.ts");
   console.log(JSON.stringify(await conformance(rest[0], JSON.parse(readFileSync(file, "utf8"))), null, 2));
 }
 
 async function stop(args: string[]) {
-  await ownerClient().cancel(Number(args[0]));
+  const id = runOf(args[0], "用法：agent-autoloop stop <第几轮>");
+  await ownerClient().cancel(id);
   console.log("通知它停了。");
 }
 
-function service(args: string[]) {
-  if (args[0] === "install") return installService();
+/** A command run right after starting the service would find no hub yet: this machine's is waited for, if it has one. */
+async function waitForHub() {
+  // An update runs on machines that only take work too, where there is no config and nothing to wait for.
+  let config: ReturnType<typeof readConfig>;
+  try {
+    config = readConfig();
+  } catch {
+    return;
+  }
+  if (config.hub && (await untilAnswering(config.url)) === false) {
+    console.error(`系统服务起了，但中台 20 秒内没有应答。看看日志：${serviceLogs()}`);
+  }
+}
+
+/** fetch says only "fetch failed" when no hub answers; which hub, why and what to do are what a person can act on. */
+function plainly(error: any): string {
+  if (!(error instanceof TypeError && error.message === "fetch failed")) return error?.message ?? String(error);
+  let url = "";
+  try {
+    url = readConfig().url;
+  } catch {}
+  const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+  const why = cause?.code ?? cause?.message;
+  return (
+    `连不上中台 ${url}${why ? `（${why}）` : ""}：中台没在运行，或者刚启动还没好。` +
+    "在中台那台电脑上运行 agent-autoloop service install 启动它；刚装好、刚更新的等几秒再试。"
+  );
+}
+
+async function service(args: string[]) {
+  if (args[0] === "install") {
+    // Installing over kept data comes here and not to init, and uninstalling took the links away.
+    linkSkill();
+    installService();
+    return waitForHub();
+  }
   if (args[0] === "remove") return removeService();
-  fail("用法：agent-autoloop service install|remove");
+  fail(TAKES.service.usage);
 }
 
 async function update(args: string[]) {
@@ -555,10 +827,11 @@ async function update(args: string[]) {
   }
   const moved = named.rollback !== undefined ? rollBack() : updateTo(rest[0]);
   if (moved.before === moved.after) return console.log("已经是这个版本了。");
-  if (serviceRunning()) installService();
+  const told = restartService();
+  if (told === undefined) await waitForHub();
   console.log(
     `更新好了：${moved.before.slice(0, 12)} → ${moved.after.slice(0, 12)}。\n` +
-      "要换回去：agent-autoloop update --rollback",
+      `要换回去：agent-autoloop update --rollback${told ? `\n${told}` : ""}`,
   );
 }
 
@@ -616,18 +889,23 @@ const commands: Record<string, () => unknown> = {
   init: () => init(args),
   join: () => join(args),
   up: async () => (await import("../host/up.ts")).up(),
-  try: tryIt,
-  status: () => status(args.includes("--raw")),
+  try: () => tryIt(),
+  status: () => status(flags(args).named),
   why: () => why(args),
   conformance: () => checkConformance(args),
   answer: () => answer(args),
   resolve: () => resolve(args),
   doctor,
-  check: () => rules(["validate"]),
-  rules: () => rules(args),
+  check: () => check(args),
+  // With a bare `explain` it is the whole-file overview; every other shape goes to the fuller rules command.
+  rules: () => (args[0] === "explain" && args.length === 1 ? rulesCommand(args) : rules(args)),
+  pause: () => pause(args),
+  resume: () => resume(args),
+  run: () => runNow(args),
   key: () => key(args),
   emit: () => emit(args),
   tell: () => tell(args),
+  ask: () => ask(args),
   stop: () => stop(args),
   backup: () => backup(args),
   restore: () => restore(args),
@@ -638,13 +916,16 @@ const commands: Record<string, () => unknown> = {
   },
   service: () => service(args),
   help: () => console.log(HELP),
+  "--help": () => console.log(HELP),
+  "-h": () => console.log(HELP),
   "--version": () => console.log(versionLine()),
 };
 if (!command || !commands[command]) {
   console.log(HELP);
   if (command) process.exit(1);
 } else {
+  if (TAKES[command]) refuseUnknownFlags(command === "resolve" ? args.slice(0, 1) : args, TAKES[command]);
   Promise.resolve()
     .then(commands[command])
-    .catch((error) => fail(error.message ?? String(error)));
+    .catch((error) => fail(plainly(error)));
 }

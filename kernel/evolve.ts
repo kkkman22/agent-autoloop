@@ -13,6 +13,7 @@ export const TABLES = [
   "keys",
   "config",
   "due",
+  "pauses",
 ] as const;
 export type Table = (typeof TABLES)[number];
 export type Change = { table: Table; key: string; row: Row | null };
@@ -20,7 +21,7 @@ export type Fact = { version: 1; seq: number; at: number; type: string; changes:
 export type Match = Record<string, SQLInputValue | SQLInputValue[] | { not: null }>;
 const NUMBERED = new Set<Table>(["events", "runs", "cards", "timers"]);
 const indexes: Partial<Record<Table, string[][]>> = {
-  events: [["source", "key"], ["routed", "id"], ["id"]],
+  events: [["source", "key"], ["routed", "id"], ["paused", "id"], ["id"]],
   runs: [["state", "id"], ["rule", "lane", "state", "id"], ["id"], ["finished_at"]],
   run_events: [["run_id"], ["event_id"]],
   cards: [
@@ -89,6 +90,8 @@ export class View {
   readonly format: string;
   private base?: View;
   private changes = new Map<Table, Map<string, Row | null>>();
+  // The biggest row there is, and every queued run asks for it. Facts bring a new view, so this can't go stale.
+  private configs = new Map<string, Row | undefined>();
   constructor(db: DatabaseSync, seq = 0, next: Record<string, number> = {}, format = "") {
     this.db = db;
     this.seq = seq;
@@ -100,8 +103,11 @@ export class View {
       changes = this.changes.get(table);
     if (changes?.has(id)) return changes.get(id) ?? undefined;
     if (this.base) return this.base.get(table, id);
+    if (table === "config" && this.configs.has(id)) return this.configs.get(id);
     const row = statement(this.db, "SELECT data FROM projections WHERE collection=? AND key=?").get(table, id);
-    return row ? freeze(JSON.parse(String(row.data))) : undefined;
+    const found = row ? freeze(JSON.parse(String(row.data))) : undefined;
+    if (table === "config") this.configs.set(id, found);
+    return found;
   }
 
   select(table: Table, match: Match = {}, limit?: number, reverse = false): Row[] {
@@ -177,6 +183,7 @@ export function keyOf(table: Table, row: Row): string {
   if (table === "schedules") return row.rule;
   if (table === "seen" || table === "keys") return `${row.kind}:${row.name}`;
   if (table === "due") return `${row.kind}:${row.key}`;
+  if (table === "pauses") return row.name;
   return "rules";
 }
 export function empty(db = new DatabaseSync(":memory:")) {

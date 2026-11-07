@@ -3,28 +3,37 @@
 export type Access = "read" | "edit" | "full";
 export type Severity = "low" | "normal" | "urgent";
 export type Source = { name: string; adapter?: string };
-type AgentOptions = { model?: string; effort?: string; command?: string[]; timeout?: number };
+type AgentOptions = { model?: string; effort?: string; command?: string[]; program?: string; timeout?: number };
 export type Agent = AgentOptions & { name: string; worker: string; use: string; access: Access };
 export type Channel = { name: string; answerers?: string[]; links?: boolean; quiet?: { from: string; to: string } };
 export type Tell = "always" | "needed" | "never";
 type EventFilter = { source: string; types: string[] };
 type When = EventFilter | { cron: string };
-type RuleOptions = {
-  skill?: string;
-  prompt?: string;
+type RuleWords = { skill?: string; prompt?: string };
+type RuleOptions = RuleWords & {
   parallel?: number;
+  resume?: boolean;
   emits?: EventFilter;
   disabled?: boolean;
-  /** The cards this rule makes go to these channels only; without it, to every channel there is. */
-  channels?: string[];
   severity?: Severity;
   /** People who may answer these cards through a channel: plain names, or "role:" plus a name in rules.roles. */
   answerers?: string[];
 };
+/** Without channels a rule's cards reach every channel; with them, only those. */
+type Reach = { channels?: string[] };
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
-export type Rule = RuleOptions & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };
-/** A scheduled task that runs elsewhere (say, in the Claude app): the hub neither starts nor records it. */
-export type Elsewhere = { name: string; source: string; to: string; cron: string; where: string };
+export type Rule = RuleOptions &
+  Reach & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };
+/** A scheduled task that runs elsewhere (say, in the Claude app): the hub neither starts nor records it. With a cwd it can
+ * also ask, and your answer goes on there like a round of a rule. */
+export type Elsewhere = RuleWords & {
+  name: string;
+  source: string;
+  to: string;
+  cron: string;
+  where: string;
+  cwd?: string;
+};
 type Registered = { sources: Record<string, Source>; agents: Record<string, Agent>; channels: Record<string, Channel> };
 /** Where the cards that belong to no rule go; without channels, to every channel there is. */
 type Notices = { channels?: string[] };
@@ -63,4 +72,15 @@ export function inQuietHours(quiet: Channel["quiet"], now: number, zone: string)
   const from = minuteOf(quiet.from);
   const to = minuteOf(quiet.to);
   return from < to ? at >= from && at < to : at >= from || at < to;
+}
+
+/** The rule a run, card or timer names: a rule's own, or a task elsewhere's, which only your answers to it start. */
+export function ruleOf(rules: Rules, name: string): Rule | undefined {
+  const rule = rules.rules.find((rule) => rule.name === name);
+  if (rule) return rule;
+  const task = rules.elsewhere.find((task) => task.name === name);
+  if (!task?.cwd) return undefined;
+  const { source, to, cwd, skill, prompt } = task;
+  // No event type matches none: nothing that comes in starts it.
+  return { name, when: { source, types: [] }, to, cwd, skill, prompt, group: name, tell: "needed" };
 }

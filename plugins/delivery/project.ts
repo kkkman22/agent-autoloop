@@ -14,6 +14,9 @@ export type Settings = {
 };
 export type Live = { sha: string; release: string };
 
+export const REPO = /^[\w.-]+\/[\w.-]+$/;
+/** A file that isn't executable or a link, or isn't there: only such a change can be left out of a review or a release. */
+export const PLAIN_FILE_MODES = ["000000", "100644"];
 const SETTINGS_KEYS = ["repo", "internal", "protected", "admin_merge", "check", "ship", "review", "health"];
 /** What a pull request must not change by itself: it decides what CI and delivery run, so it changes by hand. */
 export const PROTECTED = [
@@ -35,7 +38,7 @@ export function settings(value: any, testLocalHealth = false): Settings {
   const bad = () => {
     throw new Error("ops/delivery.json 的设置不正确");
   };
-  if (!value || !/^[\w.-]+\/[\w.-]+$/.test(value.repo ?? "") || !isPaths(value.internal)) bad();
+  if (!value || !REPO.test(value.repo ?? "") || !isPaths(value.internal)) bad();
   if (Object.keys(value).some((key) => !SETTINGS_KEYS.includes(key))) bad();
   const { review, health } = value;
   if (!review || !isPaths([review.points]) || (review.xhigh !== undefined && !isPaths(review.xhigh))) bad();
@@ -70,7 +73,8 @@ export function settings(value: any, testLocalHealth = false): Settings {
 }
 
 export function git(root: string, ...args: string[]) {
-  return execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], {
+  const options = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false"];
+  return execFileSync("git", [...options, ...args], {
     cwd: root,
     encoding: "utf8",
     timeout: 60000,
@@ -112,7 +116,7 @@ export function releaseRequired(root: string, base: string, head: string, patter
   ).split("\0");
   for (let index = 0; index + 1 < records.length; index += 2) {
     const modes = records[index].replace(/^:/, "").split(" ").slice(0, 2);
-    const plainFile = modes.every((mode) => ["000000", "100644"].includes(mode));
+    const plainFile = modes.every((mode) => PLAIN_FILE_MODES.includes(mode));
     if (!plainFile || !matches(records[index + 1], patterns)) return true;
   }
   return false;

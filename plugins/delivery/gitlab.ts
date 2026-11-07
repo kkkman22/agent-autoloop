@@ -42,6 +42,8 @@ const labels = (mr: any) =>
 const isDraft = (mr: any) => mr.draft === true || DRAFT.test(mr.title ?? "");
 const toGitlabStatus = (state: string) =>
   state === "success" ? "success" : state === "failure" ? "failed" : "running";
+const fromGitlabStatus = (status: string) =>
+  status === "success" ? "success" : status === "failed" ? "failure" : "pending";
 
 /** GitLab's REST dialect, spoken once: the host's words go in, the project's paths come out. */
 export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryHost {
@@ -49,9 +51,17 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
   const fileAt = async (ref: string, path: string) => {
     try {
       return await io.api(`repository/files/${Buffer.from(path).toString("base64url")}?ref=${encodeURIComponent(ref)}`);
-    } catch {
-      return null; // a missing file is an answer here, like the host interface says
+    } catch (error) {
+      // A missing file is an answer here, like the host interface says; other failures must reach the round's caller.
+      if (/404|not found/i.test(String((error as Error).message))) return null;
+      throw error;
     }
+  };
+  // Only the merge request's own pipeline is the full check: with the same sha, an api- or trigger-run of it is
+  // somebody's own doing, not the change's.
+  const newestPipeline = async (head: string) => {
+    const pipelines = await io.api(`pipelines?sha=${encodeURIComponent(head)}&source=merge_request`);
+    return [...pipelines].sort((a: any, b: any) => b.id - a.id)[0];
   };
   return {
     async change(number) {
@@ -102,12 +112,17 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
       const stripped = (mr.title ?? "").replace(DRAFT, "");
       if (stripped !== mr.title) await io.api(`merge_requests/${number}`, { title: stripped }, "PUT");
     },
-    async checks(_config, head) {
-      // Only the merge request's own pipeline is the full check: with the same sha, an api- or trigger-run of it is
-      // somebody's own doing, not the change's. Manual and skipped are waits, never a pass.
-      const pipelines = await io.api(`pipelines?sha=${encodeURIComponent(head)}&source=merge_request`);
-      const newest = [...pipelines].sort((a: any, b: any) => b.id - a.id)[0];
-      if (!newest) return "waiting";
+    async statuses(head) {
+      const items = await io.api(`repository/commits/${encodeURIComponent(head)}/statuses`);
+      return [...items].map((item: any) => ({ context: item.name, state: fromGitlabStatus(item.status) }));
+    },
+    async newestCheck(_config, head) {
+      return (await newestPipeline(head))?.id ?? 0;
+    },
+    async checks(_config, head, after = 0) {
+      // Manual and skipped are waits, never a pass.
+      const newest = await newestPipeline(head);
+      if (!newest || newest.id <= after) return "waiting";
       if (newest.status === "success") return "passed";
       if (newest.status === "failed") return "failed";
       return "waiting";

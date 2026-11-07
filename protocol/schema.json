@@ -163,6 +163,9 @@
         "key": {
           "type": "string",
           "maxLength": 100
+        },
+        "fyi": {
+          "type": "boolean"
         }
       },
       "required": ["title", "text"],
@@ -336,7 +339,8 @@
           "minimum": 1
         },
         "ref": {
-          "type": ["string", "null"]
+          "type": ["string", "null"],
+          "maxLength": 500
         }
       },
       "required": ["version"],
@@ -395,6 +399,20 @@
         }
       },
       "required": ["key", "text", "task"],
+      "additionalProperties": false
+    },
+    "ask-worker": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "ask": { "$ref": "#/$defs/ask" }
+      },
+      "required": ["task", "ask"],
       "additionalProperties": false
     },
     "job": {
@@ -474,6 +492,9 @@
               "items": {
                 "type": "string"
               }
+            },
+            "program": {
+              "type": "string"
             },
             "timeout": {
               "type": "integer",
@@ -676,6 +697,14 @@
           "type": "boolean"
         },
         "routed": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "paused": {
+          "description": "Rules that match the event but are paused, so it was recorded for them and not dispatched.",
           "type": "array",
           "items": {
             "type": "string",

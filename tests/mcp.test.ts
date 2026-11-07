@@ -7,7 +7,7 @@ import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { createServer } from "node:http";
+import { createServer, type RequestListener } from "node:http";
 import { after } from "node:test";
 import { setup } from "./helpers.ts";
 const home = setup("mcp");
@@ -122,4 +122,102 @@ test("the environment can also say writes are allowed", async () => {
   const tools = responses.find((r: any) => r.id === 2).result.tools.map((t: any) => t.name);
   assert.ok(tools.includes("answer") && tools.includes("emit"));
   assert.deepEqual(made, []);
+});
+
+/** The MCP server for real, against a stand-in hub, past its handshake. */
+async function connect(hub: RequestListener, args: string[] = []) {
+  const server = createServer(hub);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  writeFileSync(
+    join(home, "config.json"),
+    JSON.stringify({
+      url: `http://127.0.0.1:${(server.address() as any).port}`,
+      owner: "owner-key",
+      source: { name: "app", key: "source-key" },
+    }),
+  );
+  const child = spawn(process.execPath, ["bin/agent-autoloop.ts", "mcp", ...args], {
+    cwd: join(import.meta.dirname, ".."),
+    env: process.env,
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  // Watched from the start: it can be gone by the time a test looks.
+  const closed = once(child, "close");
+  let output = "";
+  child.stdout.on("data", (b) => (output += b));
+  const answers = () =>
+    output
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  const send = (message: object) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+  const answered = async (id: number) => {
+    const end = Date.now() + 5_000;
+    for (;;) {
+      const answer = answers().find((answer) => answer.id === id);
+      if (answer) return answer;
+      if (Date.now() > end) assert.fail(`nothing came back for ${id}`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
+  const close = async () => {
+    child.kill();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  };
+  send({
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+  });
+  send({ method: "notifications/initialized" });
+  await answered(1);
+  return { child, closed, send, answers, answered, close };
+}
+
+test("U+2028 and U+2029 in a request are part of the line", async () => {
+  let told = "";
+  // tell writes, and this mcp is read-only until it is told otherwise.
+  const mcp = await connect(
+    async (req, res) => {
+      for await (const chunk of req) told += chunk;
+      res.end(JSON.stringify({ ok: true }));
+    },
+    ["--allow-writes"],
+  );
+  try {
+    const text = "第一行 第二行 第三行";
+    mcp.send({ id: 2, method: "tools/call", params: { name: "tell", arguments: { key: "k", text } } });
+    assert.equal((await mcp.answered(2)).result.isError, undefined);
+    assert.deepEqual(JSON.parse(told), { key: "k", text });
+    assert.ok(!mcp.answers().some((answer) => answer.error), "and no pieces of it were taken for requests");
+  } finally {
+    await mcp.close();
+  }
+});
+
+test("a slow tool call holds up neither a ping nor another call, and is still answered after the input ends", async () => {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const mcp = await connect(async (req, res) => {
+    if (req.url === "/v1/state") await held;
+    res.end(JSON.stringify({ asked: req.url }));
+  });
+  try {
+    mcp.send({ id: 2, method: "tools/call", params: { name: "status", arguments: {} } });
+    mcp.send({ id: 3, method: "ping" });
+    assert.deepEqual((await mcp.answered(3)).result, {});
+    mcp.send({ id: 4, method: "tools/call", params: { name: "why", arguments: { run: 1 } } });
+    assert.match((await mcp.answered(4)).result.content[0].text, /runs\/1\/why/);
+    assert.ok(!mcp.answers().some((answer) => answer.id === 2), "it's still with the hub");
+    mcp.child.stdin.end();
+    release();
+    assert.match((await mcp.answered(2)).result.content[0].text, /v1\/state/);
+    await mcp.closed;
+    assert.equal(mcp.child.exitCode, 0);
+  } finally {
+    release();
+    await mcp.close();
+  }
 });

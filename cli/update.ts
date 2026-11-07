@@ -1,5 +1,7 @@
 // Updating this install, checking for an update, and going back to the version before the last update. The install is a
-// git clone; the commit an update left is remembered in the home, so going back needs nothing else.
+// git clone; the commit an update left is remembered in the home, so going back needs nothing else. What came from the
+// public repository follows its releases, which have passed every check, not main, which may not have yet; a copy from
+// anywhere else follows that place.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -10,6 +12,8 @@ const REMEMBERED = () => path.join(HOME, "update.json");
 /** A tag name as git allows it, and never one that starts like an option. */
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
+const PUBLISHED = "https://github.com/KKKKhazix/agent-autoloop.git";
+const RELEASE = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))$/;
 
 function git(...args: string[]) {
   const done = spawnSync("git", ["-C", ROOT, ...args], { encoding: "utf8" });
@@ -21,6 +25,12 @@ function must(args: string[], words: string) {
   return done.out;
 }
 const here = () => must(["rev-parse", "HEAD"], "读不了现在的版本");
+
+function run(root: string, args: string[]) {
+  const done = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  if (done.status !== 0) throw new Error(`git ${args[0]} 没成功：${done.stderr?.trim() || done.error?.message}`);
+  return done.stdout.trim();
+}
 
 /** Where the newest is: the branch this follows, or the remote's default branch while a version is checked out. */
 function upstream() {
@@ -79,4 +89,28 @@ export function rollBack() {
   must(["checkout", "--quiet", previous], "回不到上一个版本");
   remember(before);
   return { before, after: previous };
+}
+
+function latestRelease(root: string) {
+  const origin = spawnSync("git", ["-C", root, "config", "--get", "remote.origin.url"], { encoding: "utf8" });
+  if (origin.stdout?.trim() !== PUBLISHED) return null;
+  const releases = run(root, ["ls-remote", "--refs", "--tags", "origin", "v*"])
+    .split("\n")
+    .flatMap((line) => {
+      const found = RELEASE.exec(line);
+      return found ? [{ tag: found[1], version: found.slice(2).map(Number) }] : [];
+    });
+  const newer = (a: number[], b: number[]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  return releases.sort((a, b) => newer(a.version, b.version)).at(-1)?.tag ?? null;
+}
+
+/** Brings a copy up to date: a public one to its newest release, any other with a plain pull. */
+export function updateCode(root: string) {
+  const before = run(root, ["rev-parse", "HEAD"]);
+  const to = latestRelease(root);
+  if (to) {
+    run(root, ["fetch", "--quiet", "--depth", "1", "origin", `refs/tags/${to}:refs/tags/${to}`]);
+    run(root, ["checkout", "--quiet", "--detach", to]);
+  } else run(root, ["pull", "--quiet", "--ff-only"]);
+  return { changed: run(root, ["rev-parse", "HEAD"]) !== before, to };
 }

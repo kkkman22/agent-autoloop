@@ -9,7 +9,11 @@ import { parseResult, type Result } from "../protocol/validate.ts";
 const FAILED = ["没跑成", "FAILED"];
 const NOTHING = ["没事可做", "NOTHING"];
 const RECEIPT_FIELDS = ["ask", "notice", "resolve", "later", "events"];
-const BLOCK = /```agent-autoloop[ \t]*\r?\n([\s\S]*?)```/g;
+// A fence closes only on a line of its own. A JSON string can't hold a raw newline, so a ``` inside one, as in an issue
+// body carried in an event's detail, is never the end of the block.
+const BLOCK = /(?<=^|\n)[ \t]*```agent-autoloop[ \t]*\r?\n((?:[^\n]*\n)*?)[ \t]*```[ \t]*(?=\r?\n|$)/g;
+const JSON_BLOCK = /(?<=^|\n)[ \t]*```json[ \t]*\r?\n((?:[^\n]*\n)*?)[ \t]*```[ \t]*(?=\r?\n|$)/g;
+const OPENED = /(?<=^|\n)[ \t]*```agent-autoloop[ \t]*\r?\n/;
 const unique = <T>(items: T[]) => [...new Set(items)];
 
 function describeEvent({ sourceName, type, subject, link }: Job["context"]["events"][number]) {
@@ -17,7 +21,13 @@ function describeEvent({ sourceName, type, subject, link }: Job["context"]["even
 }
 
 export function promptFor(job: Job, contextFile: string) {
-  const { rule, context, askFirst } = job;
+  const { rule, context, askFirst, session } = job;
+  // A session carried on has the skill it read before in its history, and goes by that copy unless told it may be stale.
+  const skill = !rule.skill
+    ? ""
+    : session
+      ? `重新加载 Skill ${rule.skill}：它可能改过，照现在的版本做。`
+      : `加载 Skill ${rule.skill}。`;
   const happened = unique(context.events.map(describeEvent));
   const emits = rule.emits
     ? `,\n "events":[{"id":"这件事的固定编号","type":"${rule.emits.types.join(" 或 ")}",` +
@@ -27,7 +37,7 @@ export function promptFor(job: Job, contextFile: string) {
     `Agent 自动化中台按规则「${rule.name}」把这件活派给你。发生了：`,
     ...(happened.length ? happened : ["- 定时到了"]),
     "",
-    [rule.skill ? `加载 Skill ${rule.skill}。` : "", rule.prompt ?? ""].join("").trim(),
+    [skill, rule.prompt ?? ""].join("").trim(),
     "",
     `这一轮的资料在 ${contextFile}：events 是事件的详情，answers 是人对你之前的问题的回答，` +
       "timers 是这一轮到期的复查，waiting 是这件事还没到期的复查，open 是同一组还没收尾的卡片，" +
@@ -46,7 +56,7 @@ export function promptFor(job: Job, contextFile: string) {
     "- 同一阻塞已有 open 卡片时不重复提问；不用 later 定时重试，waiting 里同一阻塞已有的复查用 later 的 cancel 取消。",
     "- 等自己的改动检查、合并或发布不算没跑成；等不到结果就用 later 约好下次核实。",
     "",
-    "最后一条消息的第一行写结论（只进记录，不发给人）：",
+    "最后一条消息的第一行写结论（一般只进记录；规则要求每轮都通知时会发给人）：",
     "- 可以自动重试的临时失败：写“没跑成：”加一句大白话原因，过几分钟会重派。要人决定或恢复的事不写“没跑成”。",
     "- 看过了，没有要做的：写“没事可做：”加一句原因。",
     "- 其余：一句话说做成了什么。",
@@ -62,7 +72,8 @@ export function promptFor(job: Job, contextFile: string) {
 "about":"到时候查什么、怎么算过"}]${emits}}`,
     "```",
     "- ask 和 notice 会打断人，能不发就不发。写给不看代码、也看不到这一轮对话的人：" +
-      "出了什么事，现在恢复没有，有什么影响，要他做什么或你的建议。不写技术缩写、状态码、文件路径和内部编号。",
+      "出了什么事，现在恢复没有，有什么影响，要他做什么或你的建议。不写技术缩写、状态码、文件路径和内部编号。" +
+      '确实要让他知道、但不用他做什么的 notice 才加 "fyi":true：它一样会推送，发完就结案，下一轮看不到。还没解决的事、没跑成的一轮不要加。',
     "- resolve 只结 open 里列出的卡片，要到原处核实过；一条里有几件事要全部核实才能结。" +
       "读不到依据、只是另一件事做成了，都不能算解决。还在等人的卡片不用重发，它一直开着。",
   ].join("\n");
@@ -104,7 +115,29 @@ export function readMessage(said: string): Message {
   if (failed) message = { outcome: "failed", error: rest(failed) || "没说原因" };
   else if (nothing) message = { outcome: "nothing", summary: rest(nothing) };
   const block = blocks.at(-1)?.[1];
-  if (block === undefined) return message;
+  if (block === undefined && OPENED.test(said)) {
+    return { ...message, problem: "回执的代码块没有结尾：结尾的 ``` 要单独占一行" };
+  }
+  if (block === undefined) {
+    const candidate = [...said.matchAll(JSON_BLOCK)].at(-1)?.[1];
+    if (candidate !== undefined) {
+      try {
+        const value = JSON.parse(candidate);
+        const keys = value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+        if (
+          value &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          keys.length > 0 &&
+          keys.every((key) => RECEIPT_FIELDS.includes(key))
+        )
+          return { ...message, problem: "疑似回执的 JSON 代码块必须标记为 agent-autoloop" };
+      } catch {
+        // Unrelated JSON remains ordinary output.
+      }
+    }
+    return message;
+  }
   let receipt: unknown;
   try {
     receipt = JSON.parse(block);

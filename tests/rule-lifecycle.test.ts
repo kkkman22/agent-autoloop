@@ -54,7 +54,7 @@ test("deleting a rule cancels its queued runs and says so once per run", () => {
     [queued.id],
   )!;
   assert.deepEqual([run.state, run.finished_at !== null], ["cancelled", true]);
-  assert.match(run.summary, /规则已删除/);
+  assert.match(run.summary, /不在了|规则已删除/);
   assert.equal(hub.claimNext("w1", "after-delete", at(2)), null, "nothing can claim it any more");
   const notices = () => all("SELECT id FROM cards WHERE key = ?", [`run:${queued.id}:rule-gone`]);
   assert.equal(notices().length, 1);
@@ -113,7 +113,7 @@ test("a failed run whose rule was deleted stops instead of waiting for ever in t
   hub.finish(job.run, job.token, { outcome: "failed", error: "断了" }, at(2));
   const run = one<{ state: string; summary: string }>("SELECT state, summary FROM runs WHERE id = ?", [job.run])!;
   assert.equal(run.state, "cancelled");
-  assert.match(run.summary, /规则已删除/);
+  assert.match(run.summary, /不在了|规则已删除/);
   assert.equal(hub.claimNext("w1", "later", at(3)), null);
   assert.equal(all("SELECT id FROM cards WHERE key = ?", [`run:${job.run}:rule-gone`]).length, 1);
 });

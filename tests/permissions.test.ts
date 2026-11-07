@@ -29,7 +29,8 @@ function child(home: string, code: string) {
 test("keys, configuration, the database and the home are private, and wrong modes are tightened", (t) => {
   const home = machine(t, "modes");
   chmodSync(home, 0o755);
-  writeFileSync(join(home, "master.key"), "key-material", { mode: 0o644 });
+  // A real key's shape (43 base64url characters), only its mode is wrong: the boot must tighten it, not refuse it.
+  writeFileSync(join(home, "master.key"), "k".repeat(43), { mode: 0o644 });
   writeFileSync(join(home, "config.json"), "{}", { mode: 0o644 });
   const done = child(home, `await import(${JSON.stringify(runtime)});`);
   assert.equal(done.status, 0, done.stderr);

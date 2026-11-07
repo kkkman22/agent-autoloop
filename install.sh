@@ -1,7 +1,8 @@
 #!/bin/sh
 # Installs Agent 自动化中台: a clone in ~/.agent-autoloop/app, with nothing to build and nothing else to install.
 set -e
-REPO="${AGENT_AUTOLOOP_REPO:-https://github.com/KKKKhazix/agent-autoloop.git}"
+PUBLISHED=https://github.com/KKKKhazix/agent-autoloop.git
+REPO="${AGENT_AUTOLOOP_REPO:-$PUBLISHED}"
 ROOT="${AGENT_AUTOLOOP_HOME:-$HOME/.agent-autoloop}"
 APP="$ROOT/app"
 PROGRAM="$APP/bin/agent-autoloop.ts"
@@ -30,17 +31,27 @@ chmod 700 "$ROOT"
 # AGENT_AUTOLOOP_REF names a version (a tag) to install instead of the newest; it must never reach git as an option.
 REF="${AGENT_AUTOLOOP_REF:-}"
 case "$REF" in -*) echo "AGENT_AUTOLOOP_REF 要写成版本名，比如 v1.2.0。"; exit 1 ;; esac
+
+# A copy follows where it came from, and what came from the public repository follows its newest release, which has passed
+# every check. cli/update.ts decides the same way, or an update would fail on a copy this had moved.
+from="$REPO"
 if [ -d "$APP/.git" ]; then
-  if [ -n "$REF" ]; then
-    git -C "$APP" fetch --quiet origin tag "$REF"
-    git -C "$APP" checkout --quiet "refs/tags/$REF"
-  else
-    git -C "$APP" pull --ff-only --quiet
-  fi
-elif [ -n "$REF" ]; then
-  git clone --quiet --depth 1 --branch "$REF" -- "$REPO" "$APP"
+  from=$(git -C "$APP" config --get remote.origin.url || true)
+fi
+release="$REF"
+if [ -z "$release" ] && [ "$from" = "$PUBLISHED" ]; then
+  # On a line of its own: in a pipe, not getting an answer would look like there being no releases.
+  tags=$(git ls-remote --refs --tags "$PUBLISHED" 'v*')
+  release=$(printf '%s\n' "$tags" | sed -n 's#.*refs/tags/\(v[0-9]*\.[0-9]*\.[0-9]*\)$#\1#p' |
+    sort -t. -k1.2,1n -k2,2n -k3,3n | tail -n 1)
+fi
+if [ ! -d "$APP/.git" ]; then
+  git -c advice.detachedHead=false clone --quiet --depth 1 ${release:+--branch "$release"} -- "$REPO" "$APP"
+elif [ -n "$release" ]; then
+  git -C "$APP" fetch --quiet --depth 1 origin "refs/tags/$release:refs/tags/$release"
+  git -C "$APP" checkout --quiet --detach "$release"
 else
-  git clone --quiet --depth 1 -- "$REPO" "$APP"
+  git -C "$APP" pull --ff-only --quiet
 fi
 
 # Only a folder that's on PATH makes `agent-autoloop` work, and an agent-autoloop that isn't this one is someone else's to keep.
@@ -64,7 +75,9 @@ done
 set +f
 IFS=$usual_ifs
 
-if [ -f "$ROOT/config.json" ]; then
+if [ "${1:-}" = join ]; then
+  "$PROGRAM" "$@"
+elif [ -f "$ROOT/config.json" ]; then
   echo "更新好了。"
   case " $* " in *" --no-service "*) ;; *) "$PROGRAM" service install ;; esac
 else

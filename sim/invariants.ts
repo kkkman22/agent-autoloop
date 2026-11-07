@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { deadlines } from "../kernel/due.ts";
 import { snapshot, type Fact, type View, type Row } from "../kernel/evolve.ts";
 
 type Snapshot = ReturnType<typeof snapshot>;
@@ -6,9 +7,20 @@ const rows = (view: Snapshot, table: keyof Snapshot["tables"]) => Object.values(
 // Independent replay oracle: it checks the indexed projection without using its write or query implementation.
 export function replay(log: Fact[]): Snapshot {
   const tables = Object.fromEntries(
-    ["events", "runs", "run_events", "cards", "deliveries", "timers", "schedules", "seen", "keys", "config", "due"].map(
-      (t) => [t, {}],
-    ),
+    [
+      "events",
+      "runs",
+      "run_events",
+      "cards",
+      "deliveries",
+      "timers",
+      "schedules",
+      "seen",
+      "keys",
+      "config",
+      "due",
+      "pauses",
+    ].map((t) => [t, {}]),
   ) as Snapshot["tables"];
   const next: Record<string, number> = {};
   let seq = 0;
@@ -44,7 +56,8 @@ export function invariants(current: View, log: Fact[], before?: Snapshot) {
       "超出同组并发数",
     );
   for (const e of events)
-    for (const rule of JSON.parse(e.routed))
+    // A rule paused when the event came is on record as having matched it, and took nothing.
+    for (const rule of JSON.parse(e.routed).filter((r: string) => !JSON.parse(e.paused ?? "[]").includes(r)))
       assert.ok(
         links.some((l) => l.event_id === e.id && view.tables.runs[l.run_id]?.rule === rule),
         "已收事件丢了派发关系",
@@ -81,5 +94,6 @@ export function invariants(current: View, log: Fact[], before?: Snapshot) {
       if (["done", "nothing", "cancelled"].includes(r.state))
         assert.deepEqual(view.tables.runs[r.id], r, "完成的回执再次生效");
   }
+  if (log.length) assert.deepEqual(view.tables.due, deadlines(current, log.at(-1)!.at), "到期表和重算的不一样");
   return view;
 }

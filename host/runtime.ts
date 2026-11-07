@@ -1,28 +1,28 @@
 // The hub on this machine: its database, the view kept from the log, the rules file, and one way to apply an input.
 // Importing this opens them all, which is why the checks that must survive a bad rules file import it late.
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SQLInputValue } from "node:sqlite";
 import { openDatabase } from "./database.ts";
 import { HOME, RULES_FILE } from "./home.ts";
-import { formatOf } from "./fingerprint.ts";
-import { credential, digest, whose as keyHolder } from "../kernel/credentials.ts";
+import { privateDirectory } from "./files.ts";
+import { CARD_HASH_INDEX, formatOf } from "./fingerprint.ts";
+import { stateOf as state, viewStatements } from "./state.ts";
+import { cardHash, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
-import { rows, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
+import { initialize, rows, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
 import * as query from "../kernel/query.ts";
 import { eventRule, typeMatches } from "../kernel/rules.ts";
-import { stateOf as state } from "../kernel/state.ts";
-import { commit, openView, REBUILD_CHUNK } from "../kernel/store.ts";
+import { commitLatest, openView, REBUILD_CHUNK } from "../kernel/store.ts";
 import type { Job } from "../protocol/job.ts";
 import { parseRules as checkRules, RulesError } from "../protocol/rules.ts";
 import type { Rejected } from "../protocol/validate.ts";
 
-mkdirSync(HOME, { recursive: true, mode: 0o700 });
-chmodSync(HOME, 0o700);
+privateDirectory(HOME);
 // Files the hub writes hold keys and card text: keep them private even when this process later creates them.
-process.umask(0o077);
+if (process.platform !== "win32") process.umask(0o077);
 const masterKeyFile = join(HOME, "master.key");
 if (existsSync(masterKeyFile) && lstatSync(masterKeyFile).isSymbolicLink()) {
   throw new Error("master.key 不能是符号链接");
@@ -33,8 +33,17 @@ if (!existsSync(masterKeyFile)) {
 chmodSync(masterKeyFile, 0o600);
 const configFile = join(HOME, "config.json");
 if (existsSync(configFile)) chmodSync(configFile, 0o600);
+const masterKey = readFileSync(masterKeyFile, "utf8").trim();
+// An empty or cut-short key would still sign links, and card links derive from what channels see. Replacing it would
+// void every link and token, so that is left to the owner.
+if (!/^[A-Za-z0-9_-]{43}$/.test(masterKey)) {
+  throw new Error(
+    `${masterKeyFile} 坏了（应该是 43 个字符），中台不启动。从备份恢复这个文件；没有备份就删掉它，` +
+      "重启会生成新的，但已经发出的卡片链接和正在跑的轮次会失效。",
+  );
+}
 export const environment = {
-  secret: readFileSync(masterKeyFile, "utf8").trim(),
+  secret: masterKey,
   publicUrl: process.env.AGENT_AUTOLOOP_PUBLIC_URL ?? "",
 };
 
@@ -45,26 +54,11 @@ db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5
 if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").get()) {
   throw new Error("这是旧版数据库；本轮未提供导入工具，请使用新的 AGENT_AUTOLOOP_HOME");
 }
-db.exec(`
-  CREATE TABLE IF NOT EXISTS facts(seq INTEGER PRIMARY KEY, fact TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS projections(collection TEXT, key TEXT, data TEXT NOT NULL, PRIMARY KEY(collection, key));
-`);
-const schema = readFileSync(new URL("../kernel/schema.sql", import.meta.url), "utf8");
-const views: string[] = [];
-for (const [, table, body] of schema.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n\);/g)) {
-  const columns = [...body.matchAll(/^  (\w+) (?:INTEGER|TEXT)/gm)].map(([, column]) => column);
-  const selected = columns.map((column) =>
-    column === "token"
-      ? "card_token(json_extract(data,'$.id'),json_extract(data,'$.created_at')) AS token"
-      : `json_extract(data,'$.${column}') AS ${column}`,
-  );
-  views.push(
-    `DROP VIEW IF EXISTS ${table}; CREATE VIEW ${table} AS SELECT ${selected.join(",")} FROM projections WHERE collection='${table}'`,
-  );
-}
+db.function("card_hash", { deterministic: true }, (id, at) => cardHash(environment, id, at));
+initialize(db);
 
 // Other processes must see either the old views or the new ones, never the gap between DROP and CREATE.
-db.exec(`BEGIN IMMEDIATE; ${views.join(";")}; COMMIT`);
+db.exec(`BEGIN IMMEDIATE; ${viewStatements.join(";")}; COMMIT`);
 
 // The persisted projection is expendable; the log alone rebuilds it. Where that value comes from is in fingerprint.ts:
 // a backup records the same value, so a restore can tell whether the copy it brings needs rebuilding here.
@@ -76,9 +70,7 @@ const rebuilding = {
   },
 };
 let current = openView(db, format, rebuilding);
-db.exec(
-  "CREATE INDEX IF NOT EXISTS projection_card_hash ON projections(card_hash(json_extract(data,'$.id'),json_extract(data,'$.created_at'))) WHERE collection='cards'",
-);
+db.exec(CARD_HASH_INDEX);
 
 export const all = <T>(sql: string, params: SQLInputValue[] = []) =>
   db
@@ -107,8 +99,7 @@ export const onChange = (listener: Listener) => {
 export function execute(type: string, args: any[], now = Date.now()) {
   let facts: Fact[] = [];
   let value: any;
-  const latest = getView();
-  current = commit(db, latest, () => {
+  current = commitLatest(db, format, (latest) => {
     ({ facts, value } = decide(latest, { type, args }, now, environment));
     return facts;
   });
@@ -118,29 +109,54 @@ export function execute(type: string, args: any[], now = Date.now()) {
 
 export const parseRules = (json: string, now = Date.now()) =>
   checkRules(json, now, Intl.DateTimeFormat().resolvedOptions().timeZone);
-export { RulesError, typeMatches };
 export let rules = query.configuration(current);
-let loaded = { file: "", mtime: 0 };
 
-export function reloadRules(file = RULES_FILE) {
-  const mtime = statSync(file).mtimeMs;
-  if (loaded.file === file && loaded.mtime === mtime) return { changed: false };
-  loaded = { file, mtime };
+/** The file as last read, by its clock: unchanged, it says nothing new, and what the hub was told since stands. */
+let loaded: { file: string; mtime: number } | undefined;
+
+export function reloadRules(file = RULES_FILE): { problem?: string } {
+  let text: string;
+  let mtime: number;
   try {
-    const next = parseRules(readFileSync(file, "utf8"));
+    mtime = statSync(file).mtimeMs;
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    loaded = undefined;
+    return { problem: unreadable(file, error as NodeJS.ErrnoException) };
+  }
+  if (loaded?.file === file && loaded.mtime === mtime) return {};
+  try {
+    const next = parseRules(text);
     const differs = JSON.stringify(next) !== JSON.stringify(query.configuration(getView()));
     const reportedBroken = (card: Row) => card.key.startsWith("rules:") && card.state === "open";
     if (differs || rows(getView(), "cards", { state: "open" }).some(reportedBroken)) execute("rules", [next]);
     rules = next;
-    return { changed: true };
+    loaded = { file, mtime };
+    return {};
   } catch (error) {
-    if (error instanceof RulesError) return { changed: false, problem: error.message };
+    if (error instanceof RulesError) return { problem: error.message };
     throw error;
   }
 }
 
+function unreadable(file: string, error: NodeJS.ErrnoException) {
+  if (error.code === "ENOENT") return `找不到 ${file}，被删掉或移走了？放回去就会接着用`;
+  if (error.code === "EACCES" || error.code === "EPERM") return `没有权限读 ${file}，改回能读的权限就会接着用`;
+  return `读不到 ${file}：${error.code ?? error.message}`;
+}
+
 const initial = reloadRules();
 if (!rules) throw new Error(initial.problem ?? "缺少规则");
+
+let toldOf: string | undefined;
+
+export function tick(now = Date.now()) {
+  const { problem } = reloadRules();
+  // A file still gone or still wrong is a problem at every tick, and an owner who closed the card has heard.
+  if (problem && problem !== toldOf) execute("rulesError", [problem], now);
+  toldOf = problem;
+  execute("tick", [], now);
+}
 
 export const ruleNamed = (name: string) => rules.rules.find((rule) => rule.name === name);
 export const rulesFor = (source: string, type: string) =>
@@ -164,12 +180,6 @@ export const finish = (run: number, token: string, input: unknown, now = Date.no
 export const cancel = (run: number, now = Date.now()) => execute("cancel", [run], now);
 export const cancels = (worker: string) => query.cancels(getView(), worker);
 export const sweep = (now = Date.now()) => execute("sweep", [], now);
-
-export function tick(now = Date.now()) {
-  const { problem } = reloadRules();
-  if (problem) execute("rulesError", [problem], now);
-  execute("tick", [], now);
-}
 
 export const createCard = (spec: Row, now = Date.now()) => execute("createCard", [spec], now);
 type CardAck = { card: number; duplicate: boolean };
@@ -216,8 +226,16 @@ export function answerByLink(token: string, given: Answer, now = Date.now()) {
 export const view = (card: Row, ref: string | null = null, links = false) =>
   query.cardView(card, environment, ref, links);
 export const unrouted = (limit = 20) => query.unrouted(getView(), limit);
-export const stateOf = (now = Date.now(), before?: number) =>
-  state(now, before, query.configuration(getView()), { all, view, unrouted });
+/** Read in one snapshot: its seq is where the log stood for all of it, for a client to go on in /v1/stream from. */
+export function stateOf(now = Date.now(), before?: number) {
+  db.exec("BEGIN");
+  try {
+    const latest = getView();
+    return { seq: latest.seq, ...state(now, before, query.configuration(latest), { all, view, unrouted }) };
+  } finally {
+    db.exec("COMMIT");
+  }
+}
 
 export type KeyKind = "source" | "worker" | "channel" | "owner";
 export const keepKeyHash = (kind: KeyKind, name: string, hash: string, now = Date.now()) =>
@@ -229,7 +247,6 @@ export function addKey(kind: KeyKind, name: string, now = Date.now()) {
   return key;
 }
 
-export const removeKey = (kind: KeyKind, name: string) => execute("removeKey", [kind, name]) as boolean;
 export const listKeys = () =>
   all<{ kind: string; name: string; created_at: string }>("SELECT kind,name,created_at FROM keys ORDER BY kind,name");
 export const whose = (kind: string, key: string) => keyHolder(getView(), kind, key);

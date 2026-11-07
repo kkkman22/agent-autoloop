@@ -7,9 +7,8 @@ import { createIO as createGitlabIO, gitlabApi } from "./gitlab.ts";
 import { createIO as createGithubIO } from "./github.ts";
 import { deliver, disableAuto, status, type DeliveryIO } from "./delivery.ts";
 import { hostFor } from "./host.ts";
-import { deliveryReceipt, question, subjectNumber } from "./input.ts";
+import { deliveryReceipt, question, receiptBlock, subjectNumber } from "./input.ts";
 
-const FENCE = "```";
 const platform = (): "github" | "gitlab" =>
   process.env.AGENT_AUTOLOOP_DELIVERY_HOST === "gitlab" ? "gitlab" : "github";
 const hasLabel = (issue: any, name: string) =>
@@ -41,15 +40,17 @@ export async function run(repo: string, context: any, testLocalHealth = false) {
         await hostFor(io, repo).removeLabel(number, "ask-owner");
         return "已记录处理结果";
       }
-      return `有一件事需要你处理\n${FENCE}agent-autoloop\n${JSON.stringify({ ask: [question(issue)] })}\n${FENCE}`;
+      return `有一件事需要你处理\n${receiptBlock({ ask: [question(issue)] })}`;
     }
-    const result = await deliver(repo, number, io, testLocalHealth);
-    return deliveryReceipt(number, result, hasLabel(issue, "deliver-attended"));
-  } catch (error) {
-    const change = await hostFor(io, repo).change(number);
-    if (change.autoMerge) await disableAuto(number, io, repo);
-    await status(io, change.headSha, "delivery", "failure", (error as Error).message, repo);
-    throw error;
+    try {
+      const result = await deliver(repo, number, io, testLocalHealth);
+      return deliveryReceipt(number, result, hasLabel(issue, "deliver-attended"));
+    } catch (error) {
+      const change = await hostFor(io, repo).change(number);
+      if (change.autoMerge) await disableAuto(number, io, repo);
+      await status(io, change.headSha, "delivery", "failure", (error as Error).message, repo);
+      throw error;
+    }
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

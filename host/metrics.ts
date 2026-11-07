@@ -3,12 +3,14 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { dayStart } from "../kernel/cron.ts";
-import { countsOf, ONLINE } from "../kernel/state.ts";
+import { countsOf, ONLINE } from "./state.ts";
 import { formatOf } from "./fingerprint.ts";
 import { HOME } from "./home.ts";
+import { versionName } from "./version.ts";
 import { all, environment, one, rules } from "./runtime.ts";
 
-const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+// The version is what the repository says about this checkout (a release tag, or the commit); it lives in no file.
+const version = versionName();
 /** The states a run can be in, in the order `status` reports them, plus the ones waiting to be tried again. */
 const STATES = ["queued", "claimed", "unknown", "done", "nothing", "retrying"];
 /** A quote, a backslash or a newline in a rule name must not run the rest of the line into the value. */

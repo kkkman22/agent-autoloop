@@ -57,6 +57,12 @@ export function hubClient(url: string, key: string) {
     resolve: (card: number, reason: string) => call("POST", `/v1/cards/${card}/resolve`, { body: { reason } }),
     // The body is the candidate rules file itself; the hub answers with what applying it would do.
     rulesPreview: (rules: unknown) => call("POST", "/v1/rules/preview", { body: rules }),
+    // Rule control: facts in the log, rules.json stays as the owner wrote it.
+    pause: (rule: string, body: { reason?: string; until?: string } = {}) =>
+      call("POST", `/v1/rules/${encodeURIComponent(rule)}/pause`, { body }),
+    resume: (rule: string) => call("POST", `/v1/rules/${encodeURIComponent(rule)}/resume`, { body: {} }),
+    run: (rule: string, body: { subject?: string; reason?: string } = {}) =>
+      call("POST", `/v1/rules/${encodeURIComponent(rule)}/run`, { body }),
   };
 }
 export type Hub = ReturnType<typeof hubClient>;

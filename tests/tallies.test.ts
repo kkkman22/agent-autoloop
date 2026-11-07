@@ -9,7 +9,7 @@ import { at, setup } from "./helpers.ts";
 setup("tallies");
 const hub = await import("../host/runtime.ts");
 const { fixtureClear } = await import("./storage.ts");
-const { countsOf } = await import("../kernel/state.ts");
+const { countsOf } = await import("../host/state.ts");
 const { dayStart } = await import("../kernel/cron.ts");
 const { rebuild } = await import("../kernel/store.ts");
 

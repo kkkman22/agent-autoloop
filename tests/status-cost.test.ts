@@ -13,7 +13,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 import { setup } from "./helpers.ts";
 import { spendLine as formatSpending } from "../cli/spend.ts";
-import { spendingOf } from "../kernel/state.ts";
+import { spendingOf } from "../host/state.ts";
 import { dayStart } from "../kernel/cron.ts";
 
 const home = setup("status-cost");

@@ -33,9 +33,16 @@ function mentioned(text: string, allowed: readonly string[]): string[] {
   return allowed.filter((id) => said.has(id) || said.has(bare(id)));
 }
 
+function wecomMarkdown(text: string) {
+  return text.replace(/https?:\/\/[^\s；，。]+/g, (url, offset, source) =>
+    source.slice(Math.max(0, offset - 2), offset) === "](" ? url : `[打开链接](${url})`,
+  );
+}
+
 export function payload(platform: string, text: string, at: readonly string[] = []): object {
   if (platform === "discord" && [...text].length > 2000) throw new Error("Discord 消息超过 2000 个字，请缩短卡片");
-  if (platform === "wecom" && Buffer.byteLength(text) > 2048) throw new Error("企微消息超过 2048 字节，请缩短卡片");
+  const markdown = platform === "wecom" ? wecomMarkdown(text) : "";
+  if (platform === "wecom" && Buffer.byteLength(markdown) > 2048) throw new Error("企微消息超过 2048 字节，请缩短卡片");
   switch (platform) {
     case "dingtalk": {
       // A mention needs both sides: the id in the card text and the same id in the owner's allowlist,
@@ -54,7 +61,7 @@ export function payload(platform: string, text: string, at: readonly string[] = 
       };
     }
     case "wecom":
-      return { msgtype: "text", text: { content: text } };
+      return { msgtype: "markdown", markdown: { content: markdown } };
     case "slack":
       return { text, mrkdwn: false, unfurl_links: false, unfurl_media: false };
     case "discord":
