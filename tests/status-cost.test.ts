@@ -83,6 +83,7 @@ test("only rounds that ended count: not one still going, one waiting to try agai
 
 test("status includes runs beyond the first page, including old runs that finish today", async () => {
   const hub = await import("../host/runtime.ts");
+  const { fixtureClear } = await import("./storage.ts");
   const { serve } = await import("../host/http.ts");
   const server = serve(0);
   await new Promise((resolve) => server.once("listening", resolve));
@@ -121,7 +122,7 @@ test("status includes runs beyond the first page, including old runs that finish
   assert.equal(lines[1], "今天 1 轮 · 100 Token · $1.00    最近 7 天 66 轮 · 750 Token · $1.65");
 
   for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"] as const)
-    hub.fixtureClear(table);
+    fixtureClear(table);
   hub.ingest("app", { id: "long", type: "feedback.new", subject: "long" }, clock - 9 * DAY);
   const long = hub.claimNext("w1", "long", clock - 9 * DAY)!;
   for (let i = 0; i < 61; i++) round(`old-${i}`, clock - 8 * DAY, { cost: 1 });

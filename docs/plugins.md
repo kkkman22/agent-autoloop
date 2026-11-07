@@ -95,7 +95,7 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 从 [hello-source/source.ts](../examples/plugins/hello-source/source.ts) 开始。它检查 `x-shop-signature` 中的 HMAC-SHA256，再把订单变成事件。
 
-默认导出同步函数，参数为 `{ headers, body, secret }`。先验签，再解析原文；返回事件数组，无事返回 `[]`，拒绝请求就抛异常。事件插件只翻译，不发请求。
+默认导出同步函数，参数为 `{ headers, body, secret, refuse }`。先验签，再解析原文；返回事件数组，无事返回 `[]`。验签没过就调 `refuse(原因)`（中台回 401）；签名验过后读不了原文再抛异常（中台回 400，把原因带给对方，方便排配置的错）。事件插件只翻译，不发请求。
 
 在 `rules.json` 登记来源：
 

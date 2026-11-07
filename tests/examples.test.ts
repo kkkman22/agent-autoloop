@@ -14,6 +14,7 @@ rules.rules = rules.rules.filter(({ when }: { when: object }) => "source" in whe
 process.env.AGENT_AUTOLOOP_RULES = join(home, "rules.json");
 writeFileSync(process.env.AGENT_AUTOLOOP_RULES, JSON.stringify(rules));
 const hub = await import("../host/runtime.ts");
+const { fixtureClear } = await import("./storage.ts");
 const { serve } = await import("../host/http.ts");
 const keys = {
   source: hub.addKey("source", "app"),
@@ -42,13 +43,13 @@ const shell = (file: string, key: string, extra: Record<string, string> = {}) =>
     child.on("close", (code) => resolve({ code, out, err }));
   });
 test("curl and jq examples run against a conforming hub and complete the answer loop", async () => {
-  hub.fixtureClear("schedules");
+  fixtureClear("schedules");
   hub.tick(Date.now() - 5 * 60_000);
   hub.tick();
   const result = await conformance(url, { keys, eventType: "feedback.new", answerer: "me" });
   assert.ok(result.passed);
   for (const table of ["events", "runs", "run_events", "cards", "deliveries", "timers", "seen"] as const)
-    hub.fixtureClear(table);
+    fixtureClear(table);
   hub.ingest("app", { id: "shell", type: "feedback.new", subject: "shell" });
   const receipt = { outcome: "done", summary: "问了", ask: [{ title: "选一个", text: "测试", options: ["甲", "乙"] }] };
   const worker = await shell("worker", keys.worker, {

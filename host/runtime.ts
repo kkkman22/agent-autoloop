@@ -10,7 +10,7 @@ import { formatOf } from "./fingerprint.ts";
 import { credential, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
-import { evolve, rows, keyOf, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
+import { rows, statement, type Fact, type Row, type Table } from "../kernel/evolve.ts";
 import * as query from "../kernel/query.ts";
 import { eventRule, typeMatches } from "../kernel/rules.ts";
 import { stateOf as state } from "../kernel/state.ts";
@@ -130,7 +130,7 @@ export function reloadRules(file = RULES_FILE) {
     const next = parseRules(readFileSync(file, "utf8"));
     const differs = JSON.stringify(next) !== JSON.stringify(query.configuration(getView()));
     const reportedBroken = (card: Row) => card.key.startsWith("rules:") && card.state === "open";
-    if (differs || rows(current, "cards", { state: "open" }).some(reportedBroken)) execute("rules", [next]);
+    if (differs || rows(getView(), "cards", { state: "open" }).some(reportedBroken)) execute("rules", [next]);
     rules = next;
     return { changed: true };
   } catch (error) {
@@ -206,6 +206,10 @@ export function answerByLink(token: string, given: Answer, now = Date.now()) {
   if (now - Date.parse(card.created_at) > 7 * 86400_000) {
     throw new AuthError(`这个链接过期了。在装它的电脑上运行 agent-autoloop answer ${card.id} 回答`);
   }
+  // A link proves holding the link, not who holds it: a card that names its answerers takes none from here.
+  if (Array.isArray(card.answerers)) {
+    throw new AuthError("这张卡片只允许指定的人回答，链接证明不了是谁；请在通道里回答");
+  }
   return answer(card.id, { ...given, by: "链接" }, now);
 }
 
@@ -259,13 +263,4 @@ export function why(id: number) {
   for (const event of events) include("events", event);
   for (const card of cards) include("cards", card.id);
   return [...sequences].sort((a, b) => a - b).map((seq) => query.safeFact(read(seq)));
-}
-
-// Test fixtures use this to discard rows without changing the behavioral assertions inherited from the SQL kernel.
-export function fixtureClear(table: Table) {
-  const latest = getView();
-  const changes = rows(latest, table)
-    .map((row) => keyOf(table, row))
-    .map((key) => ({ table, key, row: null }));
-  current = evolve(latest, [{ version: 1, seq: latest.seq, at: 0, type: "fixture", changes }], db);
 }

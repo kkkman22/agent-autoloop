@@ -1,6 +1,6 @@
 // The Ship step's question, as a GitHub Action: does this commit need releasing, and has main already moved past it?
 // Runs from a copy in the project, so it imports nothing beyond this folder's project.ts.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { git, liveRelease, readMainSettings, releaseRequired, type Live, type Settings } from "./project.ts";
 
 export function decideShip(
@@ -12,17 +12,29 @@ export function decideShip(
   return { release: !live || required(live.sha, target), superseded: main !== target && required(target, main) };
 }
 
+/** Where this push began: the main it started from, when the platform says. An input beats the event file. */
+function beforePush(): string | null {
+  if (/^[a-f0-9]{40}$/.test(process.env.INPUT_BEFORE ?? "")) return process.env.INPUT_BEFORE!;
+  try {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, "utf8"));
+    return /^[a-f0-9]{40}$/.test(String(event.before)) ? String(event.before) : null;
+  } catch {
+    return null;
+  }
+}
+
 if (import.meta.main) {
   const root = process.cwd();
   const target = process.env.INPUT_TARGET || process.env.GITHUB_SHA;
   if (!target || !/^[a-f0-9]{40}$/.test(target)) throw new Error("发布目标要是完整提交编号");
   git(root, "fetch", "origin", "main");
   const main = git(root, "rev-parse", "origin/main");
-  // The settings that judge this release are main's from before the merge that landed the target: the merge itself could
-  // have loosened them, and they aren't to be trusted until reviewed like any other change.
+  // The settings that judge this release are main's from before the push that landed the target: one push can carry the
+  // merge and later commits, and the merge itself could have loosened them. Where the push began is the last main none
+  // of it had touched; without that, the commit before the tip is the guess that dates furthest back.
   const before = (() => {
     try {
-      return readMainSettings(root, process.env.INPUT_TEST_LOCAL_HEALTH === "true", `${target}^`);
+      return readMainSettings(root, process.env.INPUT_TEST_LOCAL_HEALTH === "true", beforePush() ?? `${target}^`);
     } catch {
       return null;
     }

@@ -8,6 +8,7 @@ import { at, setup } from "./helpers.ts";
 
 setup("tallies");
 const hub = await import("../host/runtime.ts");
+const { fixtureClear } = await import("./storage.ts");
 const { countsOf } = await import("../kernel/state.ts");
 const { dayStart } = await import("../kernel/cron.ts");
 const { rebuild } = await import("../kernel/store.ts");
@@ -95,7 +96,7 @@ test("the totals match the runs one by one through every way a run can go, and a
 });
 
 test("costs added and taken away come back to exactly nothing", () => {
-  hub.fixtureClear("runs");
+  fixtureClear("runs");
   const totals = countsOf(hub.all, new Date(at(0)).toISOString());
   assert.deepEqual(totals, [], "清空以后一行也不剩，没有残留的零头");
 });

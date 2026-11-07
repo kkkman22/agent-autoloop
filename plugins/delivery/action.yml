@@ -4,6 +4,9 @@ inputs:
   target:
     description: 要发布的完整提交编号，默认 github.sha
     required: false
+  before:
+    description: 这次 push 开始前的 main 提交编号；不填时取 github.event.before（判定设置从这里的 main 读）
+    required: false
   test-local-health:
     description: 仅用于测试，允许健康检查使用 http://127.0.0.1
     default: "false"
@@ -24,5 +27,6 @@ runs:
       shell: bash
       env:
         INPUT_TARGET: ${{ inputs.target }}
+        INPUT_BEFORE: ${{ inputs.before }}
         INPUT_TEST_LOCAL_HEALTH: ${{ inputs.test-local-health }}
       run: node --disable-warning=ExperimentalWarning "$GITHUB_ACTION_PATH/action.ts"

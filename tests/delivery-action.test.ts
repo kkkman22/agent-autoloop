@@ -55,9 +55,11 @@ function repo(name: string) {
   return { root, write, commit };
 }
 const valid = JSON.stringify({ repo: "example/app", internal: ["**/*"], review: { points: "AGENTS.md" } });
-function ship(root: string, target: string) {
+function ship(root: string, target: string, before?: string) {
   const env: NodeJS.ProcessEnv = { ...process.env, INPUT_TARGET: target };
   delete env.GITHUB_OUTPUT;
+  delete env.GITHUB_EVENT_PATH;
+  if (before) env.INPUT_BEFORE = before;
   return spawnSync(process.execPath, [program], { cwd: root, env, encoding: "utf8", timeout: 60_000 });
 }
 test("the settings that judge a release are main's, from before the merge that landed it", () => {
@@ -71,6 +73,28 @@ test("the settings that judge a release are main's, from before the merge that l
   const done = ship(root, target);
   assert.equal(done.status, 0, done.stderr);
   assert.equal(done.stdout, "release=true\nsuperseded=false\n");
+});
+test("a push that carries the merge and later commits is judged by the main before the push", () => {
+  const { root, write, commit } = repo("push-range");
+  write("app.ts", "original");
+  write("ops/delivery.json", JSON.stringify({ repo: "example/app", internal: ["docs/**"], review: {} }));
+  const before = commit();
+  // The merge widens what counts as skippable docs; the release it asks for is judged by the narrower main before it.
+  write("app.ts", "changed");
+  write("ops/delivery.json", valid); // internal: everything counts as docs
+  commit();
+  write("docs.md", "说明"); // a later commit in the same push
+  const target = commit();
+  write("readme.md", "说明"); // main moves on, docs only
+  commit();
+  // Judged by the pre-push main, the readme that followed still needs a release: superseded.
+  const judged = ship(root, target, before);
+  assert.equal(judged.status, 0, judged.stderr);
+  assert.equal(judged.stdout, "release=true\nsuperseded=true\n");
+  // Without the platform saying where the push began, the old guess (the commit before the tip) still applies.
+  const guessed = ship(root, target);
+  assert.equal(guessed.status, 0, guessed.stderr);
+  assert.equal(guessed.stdout, "release=true\nsuperseded=false\n");
 });
 test("a target whose settings can't be read from before the merge waits for a person", () => {
   const first = repo("root-commit");

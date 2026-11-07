@@ -248,6 +248,8 @@ function jiraWatch(issues: unknown, expectFailure = false, dies = false, extra: 
       jql: "project = OPS AND updated >= '-20m'",
       maxResults: 5,
       timeoutSeconds: 30,
+      // A fixed workday, so the watcher asks Jira no matter which day the tests run; the calendar tests say their own.
+      now: "2026-11-04T10:00:00+08:00",
       ...extra,
     }),
   );

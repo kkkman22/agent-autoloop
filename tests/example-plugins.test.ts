@@ -145,19 +145,19 @@ test("hello-source: only what's signed with the secret gets through", () => {
     headers: { "x-shop-signature": signature as string },
     body,
     secret,
+    refuse: () => {
+      throw new Error("refused");
+    },
   });
   assert.deepEqual(helloSource(given(sign("s3cret", body))), [
     { id: "evt-1", type: "order.paid", subject: "order-42", summary: "订单付款了" },
   ]);
-  assert.throws(() => helloSource(given(sign("wrong", body))), "signed with the wrong secret");
-  assert.throws(() => helloSource(given(undefined)), "no signature");
-  assert.throws(() => helloSource(given("sha256=short")), "a signature of another length");
-  assert.throws(() => helloSource(given(sign("", body), "")), "no secret set up accepts nothing");
+  assert.throws(() => helloSource(given(sign("wrong", body))), /refused/, "signed with the wrong secret");
+  assert.throws(() => helloSource(given(undefined)), /refused/, "no signature");
+  assert.throws(() => helloSource(given("sha256=short")), /refused/, "a signature of another length");
+  assert.throws(() => helloSource(given(sign("", body), "")), /refused/, "no secret set up accepts nothing");
   const ping = JSON.stringify({ id: "evt-2", kind: "ping" });
-  assert.deepEqual(
-    helloSource({ headers: { "x-shop-signature": sign("s3cret", ping) }, body: ping, secret: "s3cret" }),
-    [],
-  );
+  assert.deepEqual(helloSource({ ...given(sign("s3cret", ping)), body: ping }), []);
 });
 
 /** A repository of its own, the way someone publishes a plugin: the entry file at its root. */

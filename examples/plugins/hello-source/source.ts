@@ -5,12 +5,18 @@
 // The address to give the other side is /v1/in/shop.
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-type Input = { headers: Record<string, string | string[] | undefined>; body: string; secret: string };
+type Input = {
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+  secret: string;
+  /** Refusing says "a stranger" (401); anything else thrown here reads as a payload the adapter couldn't read (400). */
+  refuse: (why?: string) => never;
+};
 
-export default function helloSource({ headers, body, secret }: Input) {
+export default function helloSource({ headers, body, secret, refuse }: Input) {
   const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
   const given = Buffer.from(String(headers["x-shop-signature"] ?? ""));
-  if (!secret || given.length !== expected.length || !timingSafeEqual(given, expected)) throw new Error("signature");
+  if (!secret || given.length !== expected.length || !timingSafeEqual(given, expected)) refuse();
   const { id, kind, order, note } = JSON.parse(body);
   if (kind === "ping") return [];
   return [

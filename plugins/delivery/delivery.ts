@@ -71,6 +71,10 @@ export async function waitLive(merged: string, config: Settings, io: DeliveryIO)
         const liveHasIt = await io.contains(run.sha, live.sha);
         if (liveHasIt || !(await io.releaseRequired(live.sha, run.sha, config.internal))) return;
       }
+      // Live already runs the merged code itself: a failed ship mark behind it can't unship what is out.
+      if ((await io.contains(merged, live.sha)) && !(await io.releaseRequired(merged, live.sha, config.internal))) {
+        return;
+      }
     }
     const newest = covering[0];
     if (newest && !newest.ok) {

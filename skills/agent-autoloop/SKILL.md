@@ -109,7 +109,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 }
 ```
 
-PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json` 或 `ops/delivery.json`（设置里的 `protected` 可以替换这份清单）时不会自动合并，要有人在 PR 上打 `deliver-attended` 表示确认过，或者人工合并；跑过的检查工作流文件和 main 的版本不一致时同样如此。Ship 用合并前 main 的设置判定这次发布，读不到就交人工。LLM 审查是建议，不是安全门禁。
+PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json` 或 `ops/delivery.json`（设置里的 `protected` 可以替换这份清单）时不会自动合并，要有人在 PR 上打 `deliver-attended` 表示确认过，或者人工合并；跑过的检查工作流文件和 main 的版本不一致时同样如此。Ship 用这次 push 开始前的 main 设置判定这次发布（Action 可用 before 输入指明，默认读 github.event.before），读不到就交人工。LLM 审查是建议，不是安全门禁。
 
 `AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}`；没问题交空列表。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
 

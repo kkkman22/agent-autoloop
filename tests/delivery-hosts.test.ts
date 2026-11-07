@@ -37,7 +37,7 @@ type World = {
   /** GitLab side: the MR's title (a Draft: prefix makes it a draft) and whether the target approves merges. */
   title: string;
   approved: boolean;
-  pipelines: { id: number; sha: string; ref?: string; status: string }[];
+  pipelines: { id: number; sha: string; ref?: string; source?: string; status: string }[];
 };
 
 function world(over: Partial<World> = {}): World {
@@ -67,7 +67,7 @@ function world(over: Partial<World> = {}): World {
     files: [],
     title: "新功能",
     approved: true,
-    pipelines: [{ id: 1, sha: "head", status: "success" }],
+    pipelines: [{ id: 1, sha: "head", source: "merge_request", status: "success" }],
     ...over,
   };
 }
@@ -201,12 +201,15 @@ function gitlabIO(state: World): DeliveryIO {
         state.pr.labels = state.pr.labels.filter((one: any) => one.name !== gone);
         return withDraftTitle(mr());
       }
-      if (path.startsWith("pipelines?sha=")) {
-        const sha = decodeURIComponent(path.split("sha=")[1]);
-        return state.pipelines.filter((pipeline) => pipeline.sha === sha);
-      }
-      if (path.startsWith("pipelines?ref=main")) {
-        return state.pipelines.filter((pipeline) => pipeline.ref === "main" || pipeline.sha === state.main);
+      if (path.startsWith("pipelines?")) {
+        // The platform answers what was asked: a sha, a ref, a source, whatever the query says.
+        const query = new URLSearchParams(path.split("?")[1]);
+        return state.pipelines.filter((pipeline) => {
+          if (query.get("sha") && pipeline.sha !== query.get("sha")) return false;
+          if (query.get("source") && pipeline.source !== query.get("source")) return false;
+          if (query.get("ref") === "main" && !(pipeline.ref === "main" || pipeline.sha === state.main)) return false;
+          return true;
+        });
       }
       if (path === "merge_requests/1/merge" && method === "PUT") {
         assert.equal(body.sha, "head", "合并必须钉在审查过的那个提交上");
@@ -375,18 +378,42 @@ test("a GitLab pipeline that only waits is never a pass, in any of its shapes", 
   const state = world();
   const host = gitlabHost(REPO, {
     api: async (path: string) => {
-      const sha = decodeURIComponent(path.split("sha=")[1] ?? "head");
-      if (path.startsWith("pipelines?sha=")) return state.pipelines.filter((pipeline) => pipeline.sha === sha);
+      if (path.startsWith("pipelines?")) {
+        const query = new URLSearchParams(path.split("?")[1]);
+        return state.pipelines.filter(
+          (pipeline) => pipeline.sha === query.get("sha") && pipeline.source === query.get("source"),
+        );
+      }
       throw new Error(`unexpected ${path}`);
     },
   } as any);
   for (const status of ["manual", "skipped", "running", "pending", "created"]) {
-    state.pipelines = [{ id: 1, sha: "head", status }];
+    state.pipelines = [{ id: 1, sha: "head", source: "merge_request", status }];
     assert.equal(await host.checks(SETTINGS, "head"), "waiting", status);
   }
-  state.pipelines = [{ id: 1, sha: "head", status: "failed" }];
+  state.pipelines = [{ id: 1, sha: "head", source: "merge_request", status: "failed" }];
   assert.equal(await host.checks(SETTINGS, "head"), "failed");
-  state.pipelines = [{ id: 1, sha: "head", status: "success" }];
+  state.pipelines = [{ id: 1, sha: "head", source: "merge_request", status: "success" }];
+  assert.equal(await host.checks(SETTINGS, "head"), "passed");
+});
+
+test("a GitLab pipeline the merge request didn't ask for doesn't count as its check", async () => {
+  const state = world();
+  const host = gitlabHost(REPO, {
+    api: async (path: string) => {
+      if (path.startsWith("pipelines?")) {
+        const query = new URLSearchParams(path.split("?")[1]);
+        return state.pipelines.filter(
+          (pipeline) => pipeline.sha === query.get("sha") && pipeline.source === query.get("source"),
+        );
+      }
+      throw new Error(`unexpected ${path}`);
+    },
+  } as any);
+  // Somebody's api-triggered run on the same sha, green as it may be, is not the merge request's check.
+  state.pipelines = [{ id: 2, sha: "head", source: "api", status: "success" }];
+  assert.equal(await host.checks(SETTINGS, "head"), "waiting");
+  state.pipelines = [{ id: 3, sha: "head", source: "merge_request", status: "success" }];
   assert.equal(await host.checks(SETTINGS, "head"), "passed");
 });
 

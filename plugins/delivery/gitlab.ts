@@ -103,8 +103,9 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
       if (stripped !== mr.title) await io.api(`merge_requests/${number}`, { title: stripped }, "PUT");
     },
     async checks(_config, head) {
-      // The pipeline on the change's head is the full check; manual and skipped are waits, never a pass.
-      const pipelines = await io.api(`pipelines?sha=${encodeURIComponent(head)}`);
+      // Only the merge request's own pipeline is the full check: with the same sha, an api- or trigger-run of it is
+      // somebody's own doing, not the change's. Manual and skipped are waits, never a pass.
+      const pipelines = await io.api(`pipelines?sha=${encodeURIComponent(head)}&source=merge_request`);
       const newest = [...pipelines].sort((a: any, b: any) => b.id - a.id)[0];
       if (!newest) return "waiting";
       if (newest.status === "success") return "passed";
@@ -112,7 +113,7 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
       return "waiting";
     },
     async shipRuns(_config) {
-      const pipelines = await io.api(`pipelines?ref=main`);
+      const pipelines = await io.api(`pipelines?ref=main&source=push`);
       return [...pipelines]
         .sort((a: any, b: any) => b.id - a.id)
         .filter((pipeline: any) => pipeline.status === "success" || pipeline.status === "failed")

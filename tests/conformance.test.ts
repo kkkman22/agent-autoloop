@@ -13,6 +13,7 @@ rules.rules = rules.rules.filter(({ when }: { when: object }) => "source" in whe
 process.env.AGENT_AUTOLOOP_RULES = join(home, "rules.json");
 writeFileSync(process.env.AGENT_AUTOLOOP_RULES, JSON.stringify(rules));
 const hub = await import("../host/runtime.ts");
+const { fixtureClear } = await import("./storage.ts");
 const { serve } = await import("../host/http.ts");
 const keys = {
   source: hub.addKey("source", "app"),
@@ -28,12 +29,12 @@ after(() => {
 });
 beforeEach(() => {
   for (const table of ["events", "runs", "run_events", "cards", "deliveries", "timers", "seen"] as const)
-    hub.fixtureClear(table);
+    fixtureClear(table);
 });
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
 const config = { keys, eventType: "feedback.new", answerer: "me" };
 test("address-based conformance checks all protocol doors", async () => {
-  hub.fixtureClear("schedules");
+  fixtureClear("schedules");
   hub.tick(Date.now() - 5 * 60_000);
   hub.tick();
   const result = await conformance(`http://127.0.0.1:${(server.address() as any).port}`, {

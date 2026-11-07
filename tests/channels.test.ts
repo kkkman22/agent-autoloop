@@ -262,6 +262,9 @@ test("a webhook channel posts words and the link once, and has nothing to do for
 
 test("GitHub: signed or not taken, and what it says becomes a plain event", () => {
   const secret = "s3cret";
+  const refuse = () => {
+    throw new Error("refused");
+  };
   const body = JSON.stringify({
     action: "opened",
     issue: { number: 12, title: "首页打不开", body: "详情", html_url: "https://github.com/a/b/issues/12" },
@@ -273,7 +276,7 @@ test("GitHub: signed or not taken, and what it says becomes a plain event", () =
     "x-github-delivery": "d-1",
     ...over,
   });
-  assert.deepEqual(github({ headers: headers(body), body, secret }), [
+  assert.deepEqual(github({ headers: headers(body), body, secret, refuse }), [
     {
       id: "d-1",
       type: "issues.opened",
@@ -283,13 +286,13 @@ test("GitHub: signed or not taken, and what it says becomes a plain event", () =
       link: "https://github.com/a/b/issues/12",
     },
   ]);
-  assert.throws(() => github({ headers: headers(body, { "x-hub-signature-256": "sha256=00" }), body, secret }));
-  assert.throws(() => github({ headers: { "x-github-event": "issues" }, body, secret }));
-  assert.throws(() => github({ headers: headers(body), body, secret: "" }), "no secret set up takes nothing");
-  assert.deepEqual(github({ headers: headers("{}", { "x-github-event": "ping" }), body: "{}", secret }), []);
+  assert.throws(() => github({ headers: headers(body, { "x-hub-signature-256": "sha256=00" }), body, secret, refuse }));
+  assert.throws(() => github({ headers: { "x-github-event": "issues" }, body, secret, refuse }));
+  assert.throws(() => github({ headers: headers(body), body, secret: "", refuse }), "no secret set up takes nothing");
+  assert.deepEqual(github({ headers: headers("{}", { "x-github-event": "ping" }), body: "{}", secret, refuse }), []);
   const odd = JSON.stringify({ repository: { full_name: "a/b c" } });
   assert.match(
-    (github({ headers: headers(odd, { "x-github-event": "push" }), body: odd, secret }) as any)[0].subject,
+    (github({ headers: headers(odd, { "x-github-event": "push" }), body: odd, secret, refuse }) as any)[0].subject,
     /^a\/b-c$/,
   );
 });

@@ -303,6 +303,19 @@ test("live health cannot hide incomplete or failed Ship", async () => {
     await assert.rejects(() => waitLive("merged", config, io));
   }
 });
+test("live already running the merged code settles a failed ship mark behind it", async () => {
+  const { io } = fixture();
+  // The ship run that carried the merge failed its mark, but live runs the merge's own code.
+  io.api = async () => ({ workflow_runs: [run(1, "merged", "completed", "failure")] });
+  io.releaseRequired = async (a, b) => a !== b;
+  await waitLive("merged", config, io);
+
+  // Live still missing the merged code stays an error, whatever the marks say.
+  const { io: behind } = fixture();
+  behind.api = async () => ({ workflow_runs: [run(1, "merged", "completed", "failure")] });
+  behind.live = async () => ({ sha: "older", release: "older" });
+  await assert.rejects(() => waitLive("merged", config, behind), /发布没有通过/);
+});
 test("a completed delivery ignores later queued/failed releases; a successor needs to be live", async () => {
   for (const status of ["queued", "completed"]) {
     const { io } = fixture();

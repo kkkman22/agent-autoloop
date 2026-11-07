@@ -37,6 +37,8 @@ const RESEND_AT = [0, 1, 3, 7, 15, 25, 35, 45, 55];
 const RESEND_WINDOW = 57 * MINUTE;
 /** How long a chain of events causing events can get before it stops being dispatched. */
 const MAX_HOPS = 8;
+/** The most an answer may say: it lands on the card and in the next run's context, like an ask's own text. */
+const ANSWER_MAX = 4000;
 /** Failures in a row after which a run stops being retried: each try spends the owner's real tokens. */
 const MAX_ATTEMPTS = 10;
 const NOT_TRYING = { tries: 0, first_try_at: null, not_before: null };
@@ -471,7 +473,9 @@ function answer(draft: Draft, id: number, given: Row) {
     closeCard(draft, card, "已处理", given.by ?? null);
     return { changed: true, state: "closed" };
   }
-  if (given.text !== undefined && typeof given.text !== "string") throw new InputError("回答要是文字");
+  if (given.text !== undefined && (typeof given.text !== "string" || [...given.text].length > ANSWER_MAX)) {
+    throw new InputError(`回答要是 ${ANSWER_MAX} 字以内的文字`);
+  }
   const text = given.text?.trim() || null;
   const optionCount = JSON.parse(card.options).length;
   const inRange = Number.isInteger(given.choice) && given.choice >= 0 && given.choice < optionCount;

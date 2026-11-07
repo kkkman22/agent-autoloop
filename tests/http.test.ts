@@ -22,10 +22,10 @@ writeFileSync(
   join(home, "plugins", "echo", "source.ts"),
   `
 import { createHmac, timingSafeEqual } from "node:crypto";
-export default function ({ headers, body, secret }) {
+export default function ({ headers, body, secret, refuse }) {
   const sign = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
   const given = String(headers["x-sign"] ?? "");
-  if (given.length !== sign.length || !timingSafeEqual(Buffer.from(given), Buffer.from(sign))) throw new Error("bad signature");
+  if (given.length !== sign.length || !timingSafeEqual(Buffer.from(given), Buffer.from(sign))) refuse();
   return JSON.parse(body).items;
 }`,
 );
@@ -349,6 +349,23 @@ test("a card's link is a plain page: it shows that card as words, runs nothing, 
   assert.equal((await call(`${path}.json`)).status, 404);
 });
 
+test("a card that names who may answer refuses its link", async () => {
+  const { createCard } = await import("../host/runtime.ts");
+  createCard({
+    key: "link-restricted",
+    kind: "ask",
+    title: "谁能答",
+    text: "只有名单上的人",
+    options: ["甲", "乙"],
+    routing: { channels: null, severity: "normal", answerers: ["me"] },
+  });
+  const row = one<{ id: number; token: string }>("SELECT id, token FROM cards WHERE key = 'link-restricted'")!;
+  const refused = await form(`/c/${row.token}`, "choice=0");
+  assert.equal(refused.status, 401);
+  assert.match(refused.text, /只允许/);
+  assert.equal(one<any>("SELECT state FROM cards WHERE id = ?", [row.id])!.state, "open");
+});
+
 test("a card's link takes words of your own, and a notice has one button", async () => {
   const asked = await linkFor(61, {
     ask: [{ title: "别的想法", text: "选一个", options: ["甲", "乙"], key: "words" }],
@@ -385,6 +402,11 @@ test("someone else's webhook goes through its source's adapter: signed, or not t
   const refused = await call("/v1/in/hooks", { raw: items, headers: { "x-sign": "sha256=00" } });
   assert.equal(refused.status, 401);
   assert.ok(!refused.text.includes("hook-secret"));
+  // Signed, so the caller is who it says: a payload it can't be read out of is the sender's problem, said in words.
+  const garbage = "not json at all";
+  const broken = await call("/v1/in/hooks", { raw: garbage, headers: { "x-sign": sign(garbage) } });
+  assert.equal(broken.status, 400);
+  assert.ok(!broken.text.includes("hook-secret"));
   assert.equal((await call("/v1/in/app", { raw: items })).status, 404, "a source without an adapter takes no webhooks");
   assert.equal((await call("/v1/in/nowhere", { raw: items })).status, 404);
 });

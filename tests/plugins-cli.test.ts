@@ -137,12 +137,12 @@ const GIT_NEW = (() => {
   return major > 2 || (major === 2 && minor >= 34);
 })();
 const SSH =
-  spawnSync("ssh-keygen", ["-t", "ed25519", "-f", join(tmpdir(), "plugins-cli-probe"), "-N", "", "-q"], {
+  spawnSync("ssh-keygen", ["-t", "ed25519", "-f", join(scratch, "probe"), "-N", "", "-q"], {
     encoding: "utf8",
   }).status === 0;
 const signingWorks = GIT_NEW && SSH;
 
-function signedRepository(name: string, version: string, tags: { tag: string; sign: boolean }[]) {
+function signedRepository(name: string, version: string, tags: { tag: string; sign: boolean; version?: string }[]) {
   const dir = repository(name, { "plugin.json": manifest({ name, version }), "channel.ts": channelTs });
   const key = join(scratch, `${name}.key`);
   const gen = spawnSync("ssh-keygen", ["-t", "ed25519", "-f", key, "-N", "", "-q", "-C", name], { encoding: "utf8" });
@@ -151,7 +151,13 @@ function signedRepository(name: string, version: string, tags: { tag: string; si
     const done = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
     assert.equal(done.status, 0, done.stderr);
   };
-  for (const { tag, sign } of tags) {
+  for (const { tag, sign, version: at } of tags) {
+    // A newer version is a new commit saying so; tags that share a commit are the same code under two names.
+    if (at !== undefined) {
+      writeFileSync(join(dir, "plugin.json"), manifest({ name, version: at }));
+      git(["add", "."]);
+      git(["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", tag]);
+    }
     const withKey = ["-c", "gpg.format=ssh", "-c", `user.signingkey=${key}.pub`];
     git(sign ? [...withKey, "tag", "-s", tag, "-m", tag] : ["tag", tag]);
   }
@@ -185,7 +191,7 @@ test(
 
     const escalating = signedRepository("rising", "1.0.0", [
       { tag: "v1.0.0", sign: true },
-      { tag: "v1.4.0", sign: true },
+      { tag: "v1.4.0", sign: true, version: "1.4.0" },
     ]);
     assert.equal(cli("add", escalating.dir, "--ref", "v1.0.0").status, 0);
     assert.equal(cli("plugins", "trust", "rising", escalating.publicKey).status, 0);
@@ -201,10 +207,10 @@ test(
   "a trusted plugin refuses a branch checkout, and only its own registered key counts",
   { skip: !signingWorks && "需要 ssh-keygen 和 git ≥ 2.34" },
   () => {
-    const { dir, publicKey } = signedRepository("picky", "1.0.0", []);
+    const { dir, publicKey } = signedRepository("picky", "1.0.0", [{ tag: "v1.0.0", sign: true }]);
     const otherKey = join(scratch, "other.key");
     spawnSync("ssh-keygen", ["-t", "ed25519", "-f", otherKey, "-N", "", "-q", "-C", "other"]);
-    assert.equal(cli("plugins", "trust", "picky", otherKey).status, 0, "登记了一把不相干的公钥");
+    assert.equal(cli("plugins", "trust", "picky", `${otherKey}.pub`).status, 0, "登记了一把不相干的公钥");
     const branchy = cli("add", dir);
     assert.notEqual(branchy.status, 0);
     assert.match(branchy.stderr, /版本标签|签名/);

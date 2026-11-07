@@ -3,13 +3,19 @@
 //   "sources": { "github": { "name": "GitHub", "adapter": "github" } }, and AGENT_AUTOLOOP_SECRET_GITHUB in secrets.env.
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-type Input = { headers: Record<string, string | string[] | undefined>; body: string; secret: string };
+type Input = {
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+  secret: string;
+  /** Refusing says "a stranger": anything else thrown here reads as a payload the adapter couldn't read. */
+  refuse: (why?: string) => never;
+};
 
-export default function github({ headers, body, secret }: Input) {
+export default function github({ headers, body, secret, refuse }: Input) {
   const sign = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
   const given = String(headers["x-hub-signature-256"] ?? "");
   const signed = secret && given.length === sign.length && timingSafeEqual(Buffer.from(given), Buffer.from(sign));
-  if (!signed) throw new Error("signature");
+  if (!signed) refuse();
   const kind = String(headers["x-github-event"] ?? "");
   if (kind === "ping") return [];
   const payload = JSON.parse(body);

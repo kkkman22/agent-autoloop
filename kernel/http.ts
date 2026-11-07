@@ -109,6 +109,10 @@ async function cardAtLink(call: Call, linkToken: string) {
     throw new Gone(`这个链接过期了。在装它的电脑上运行 agent-autoloop answer ${card.id} 回答`);
   }
   if (request.method === "GET") return new Response(cardPage(cardView(card, environment)), { headers: PAGE_HEADERS });
+  // A link proves holding the link, not who holds it: a card that names its answerers takes none from here.
+  if (Array.isArray(card.answerers)) {
+    throw new AuthError("这张卡片只允许指定的人回答，链接证明不了是谁；请在通道里回答");
+  }
   const form = new URLSearchParams(await readText(request));
   const choice = form.has("choice") && { choice: Number(form.get("choice")) };
   act(call, "answer", card.id, { ...choice, text: form.get("text") ?? undefined, by: "链接" });

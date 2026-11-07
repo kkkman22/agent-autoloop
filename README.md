@@ -158,7 +158,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [Cursor](https://cursor.com/docs/cli/reference/parameters) | `agent -p --trust {prompt}` |
 | [WorkBuddy / CodeBuddy](https://www.codebuddy.ai/docs/cli/headless) | `codebuddy -p {prompt}` |
 
-**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。PR 改动 CI 工作流、`scripts/`、`tests/`、`package.json`、`package-lock.json` 或 `ops/delivery.json` 时不会自动合并，要在 PR 上打 `deliver-attended` 确认；Ship 用合并前 main 的设置判定发布。审查是建议，不是安全门禁。**同样的规则也跑在 GitLab 上**：接单机设 `AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`（用已登录的 `glab`），MR 的草稿是标题前缀、完整检查是流水线（manual/skipped 只算等待）、合并钉住已审查的提交；同一张行为场景表对两个平台各跑一遍，见 `plugins/delivery/gitlab-ci.yml` 模板与 `docs/protocol.md` 的交付插件一节。
+**交付流水线。** 给 GitHub PR 打上 `deliver` 标签后，它会自己跟进到上线：**审代码 → 等 CI → 合并 PR → 等部署 → 核对线上版本**。审查和交付配置只从 `main` 读取，绝不在接单电脑上检出或运行 PR 里的代码；排队、并发和重试直接复用内核。PR 改动 CI 工作流、`scripts/`、`tests/`、`package.json`、`package-lock.json` 或 `ops/delivery.json` 时不会自动合并，要在 PR 上打 `deliver-attended` 确认；Ship 用这次 push 开始前的 main 设置判定发布。审查是建议，不是安全门禁。**同样的规则也跑在 GitLab 上**：接单机设 `AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`（用已登录的 `glab`），MR 的草稿是标题前缀、完整检查是流水线（manual/skipped 只算等待）、合并钉住已审查的提交；同一张行为场景表对两个平台各跑一遍，见 `plugins/delivery/gitlab-ci.yml` 模板与 `docs/protocol.md` 的交付插件一节。
 
 **写自己的插件。** 从 [Agent](examples/plugins/hello-agent/agent.ts)、[通道](examples/plugins/hello-channel/channel.ts)、[事件](examples/plugins/hello-source/source.ts) 三个可运行的最小模板开始，见[插件开发说明](docs/plugins.md)。要让 Agent 操作网页，先看[浏览器接入](docs/plugins.md#浏览器接入)。命令行和 [MCP](skills/agent-autoloop/SKILL.md#mcp-与密钥撤销)（默认只读）也能查看和回答卡片。
 
@@ -234,7 +234,7 @@ Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应
 - **`POST /v1/tell` 的 `text` 最多 2000 字**，再多返回 400。
 - **卡片链接一周后失效。** 之后打开链接和提交回答都返回 410，卡片还开着，用 `agent-autoloop answer <卡片> <序号>` 回答。`agent-autoloop why` 和 `status` 显示别人写的文字时会去掉控制字符，想原样看就加 `--raw`。
 - **删掉或改名一条规则**：还没领走的排队轮次会取消，这条规则还没收尾的卡片会关闭并各发一张通知；回答这些旧卡片返回 409，先用 `resolve` 结掉。
-- **交付**：PR 改了受保护路径（`.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json`、`ops/delivery.json`，可在设置的 `protected` 里替换），或者把跑过的检查工作流文件改得和 main 不一致，都不会自动合并，要有人打 `deliver-attended` 或人工合并。Ship 用合并前 main 的设置判定发布，读不到就交人工。
+- **交付**：PR 改了受保护路径（`.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json`、`ops/delivery.json`，可在设置的 `protected` 里替换），或者把跑过的检查工作流文件改得和 main 不一致，都不会自动合并，要有人打 `deliver-attended` 或人工合并。Ship 用这次 push 开始前的 main 设置判定发布，读不到就交人工。
 
 ## 更多文档
 

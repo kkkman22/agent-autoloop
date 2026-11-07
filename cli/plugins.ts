@@ -54,12 +54,13 @@ function trustedSigners(name: string): string[] {
   }
 }
 
-/** Verifies `tag` against the keys registered for this plugin. Nothing registered: nothing to check. */
+/** Verifies `tag` against the keys registered for this plugin. Nothing registered: nothing to check. Throws, so the
+ * caller's cleanup puts an interrupted install back; exiting here would leave an unrecorded checkout behind. */
 function verifyTag(dir: string, tag: string, name: string): string | null {
   if (!trustedSigners(name).length) return null;
   const args = ["-C", dir, "-c", "gpg.format=ssh", "-c", `gpg.ssh.allowedSignersFile=${SIGNERS_FILE}`, "verify-tag"];
   if (spawnSync("git", [...args, tag], { encoding: "utf8" }).status !== 0)
-    fail(`插件 ${name} 的 ${tag} 没通过签名验证（登记的公钥在 ${SIGNERS_FILE}）。`);
+    throw new Error(`插件 ${name} 的 ${tag} 没通过签名验证（登记的公钥在 ${SIGNERS_FILE}）。`);
   const raw = spawnSync("git", [...args, "--raw", tag], { encoding: "utf8" });
   return /Good "git" signature for (\S+)/.exec(`${raw.stdout}${raw.stderr}`)?.[1] ?? name;
 }
@@ -74,12 +75,6 @@ const versionTags = (dir: string) =>
   git(dir, ["tag", "--sort=-v:refname"])
     .split("\n")
     .filter((tag) => SEMVER_TAG.test(tag));
-const tagAt = (dir: string): string | undefined => {
-  // No tag on HEAD is a normal answer here (a branch checkout), not a git failure to die on.
-  const exact = spawnSync("git", ["-C", dir, "describe", "--tags", "--exact-match", "HEAD"], { encoding: "utf8" });
-  const name = exact.stdout.trim();
-  return exact.status === 0 && SEMVER_TAG.test(name) ? name : undefined;
-};
 
 /** Installs one plugin from a git repository: clone, verify manifest, engine and signature, record it. */
 export function addPlugin(args: string[]) {
@@ -109,23 +104,29 @@ export function addPlugin(args: string[]) {
       git(target, ["fetch", "--quiet", "origin", "--tags"]);
       git(target, ["checkout", "--quiet", restore]);
     } else if (clone!.status !== 0) throw new Error(`安装失败：${clone!.stderr?.trim()}`);
-    if (ref) git(target, ["checkout", "--quiet", `refs/tags/${ref}`]);
-    else {
+    // The tag that was asked for, or the newest one there is, is the version being installed: its signature is what
+    // must check out. A commit can carry several tags, so asking the checkout which one it likes would verify another
+    // version's signature.
+    let tag: string | undefined;
+    if (ref) {
+      git(target, ["checkout", "--quiet", `refs/tags/${ref}`]);
+      tag = ref;
+    } else {
       const newest = versionTags(target)[0];
       if (newest) git(target, ["checkout", "--quiet", `refs/tags/${newest}`]);
+      tag = newest;
     }
     const manifest = readManifest(target);
     // A plugin without a manifest still installs (the old ones predate plugin.json); the manifest only adds checks.
     if (manifest && manifest.name !== name)
       throw new Error(`清单里的名字是「${manifest.name}」，和仓库名「${name}」不一致；仓库目录名就是插件名。`);
     if (manifest) checkCompatibility(manifest, name);
-    const tag = tagAt(target);
     if (trustedSigners(name).length && !tag)
       throw new Error(`插件 ${name} 登记了签名公钥，但装的不是版本标签；用 --ref v<版本> 装一个签过名的版本。`);
     const signed = tag ? verifyTag(target, tag, name) : null;
     lock[name] = {
       repo: url,
-      ref: tag ?? ref ?? git(target, ["rev-parse", "--abbrev-ref", "HEAD"]),
+      ref: tag ?? git(target, ["rev-parse", "--abbrev-ref", "HEAD"]),
       commit: git(target, ["rev-parse", "HEAD"]),
       version: manifest?.version ?? null,
       signer: signed,
@@ -225,13 +226,9 @@ function update(args: string[]) {
     return console.log(
       `有新版本：${record.version} → ${newer.replace(/^v/, "")}。运行 plugins update ${name} 换过去。`,
     );
-  const restore = git(target, ["rev-parse", "HEAD"]);
-  git(target, ["checkout", "--quiet", `refs/tags/${newer}`]);
+  // Verified while still on the old version: a tag that doesn't check out leaves the install where it was.
   const signed = verifyTag(target, newer, name);
-  if (signed === null && trustedSigners(name).length) {
-    git(target, ["checkout", "--quiet", restore]);
-    return fail(`${newer} 没有签名（登记的公钥在 ${SIGNERS_FILE}），留在 ${record.version}。`);
-  }
+  git(target, ["checkout", "--quiet", `refs/tags/${newer}`]);
   const lock = loadLock();
   lock[name] = {
     ...record,

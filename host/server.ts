@@ -9,7 +9,7 @@ import { loadPlugin } from "./plugins.ts";
 import * as hub from "./runtime.ts";
 import { PAGE_HEADERS, wordsPage } from "../kernel/card-page.ts";
 import { whose } from "../kernel/credentials.ts";
-import { AuthError, NotFound } from "../kernel/errors.ts";
+import { AuthError, InputError, NotFound } from "../kernel/errors.ts";
 import { createHandler } from "../kernel/http.ts";
 
 /** Past this setTimeout fires at once. */
@@ -114,11 +114,17 @@ async function adaptWebhook(source: string, headers: Headers, body: string) {
   if (!adapter || !/^[a-z][a-z0-9-]*$/.test(adapter)) throw new NotFound("这个来源不收 Webhook");
   const translate = await loadPlugin(adapter, "source");
   const secret = process.env[`AGENT_AUTOLOOP_SECRET_${source.toUpperCase().replaceAll("-", "_")}`] ?? "";
+  // An adapter says "a stranger" by refusing; plugins can't import the engine's own error to say it themselves.
+  // Anything else it throws reads as a payload it couldn't read: the caller is signed, so it gets the reason as 400.
+  const refuse = (why = "验签没过"): never => {
+    throw new AuthError(why);
+  };
   try {
-    const events = translate({ headers: Object.fromEntries(headers), body, secret });
+    const events = translate({ headers: Object.fromEntries(headers), body, secret, refuse });
     return Array.isArray(events) ? events : [];
-  } catch {
-    throw new AuthError("验签没过");
+  } catch (error) {
+    if (error instanceof AuthError) throw error;
+    throw new InputError(`适配器读不了这个请求：${(error as Error).message}`.slice(0, 300));
   }
 }
 

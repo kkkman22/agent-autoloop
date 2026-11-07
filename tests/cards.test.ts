@@ -15,6 +15,7 @@ import { at, setup } from "./helpers.ts";
 
 setup("cards");
 const { ingest } = await import("../host/runtime.ts");
+const { createCard } = await import("../host/runtime.ts");
 const { claimNext, finish, started } = await import("../host/runtime.ts");
 const { answer, resolve, nextCard, delivered, failed, tell, cardByToken, answerByLink } =
   await import("../host/runtime.ts");
@@ -147,6 +148,13 @@ test("a free-text answer counts as an answer", () => {
   answer(id, { text: "都不选，改成归档", by: "me" }, at(1));
   const job = claim("w1", at(1))!;
   assert.deepEqual([job.context.answers[0].choice, job.context.answers[0].text], [null, "都不选，改成归档"]);
+});
+
+test("an answer longer than a card can hold is refused at the door", () => {
+  clean();
+  const { id } = asked(1);
+  assert.throws(() => answer(id, { text: "字".repeat(4001), by: "me" }, at(1)), InputError);
+  assert.equal(answer(id, { text: "字".repeat(4000), by: "me" }, at(2)).changed, true);
 });
 
 test("a channel's answer must come from someone on its list, on the message it sent", () => {
@@ -352,6 +360,27 @@ test("a card's link answers only when its channel allows it, only that card, onl
   assert.throws(() => answerByLink(token, { choice: 0 }, at(8 * 24 * 60)), AuthError, "too old");
   assert.equal(answerByLink(token, { choice: 0 }, at(2)).changed, true);
   assert.equal(card(id).by, "链接");
+});
+
+test("a card that names who may answer takes no answer from its link", () => {
+  clean();
+  createCard(
+    {
+      key: "restricted",
+      kind: "ask",
+      title: "谁能答",
+      text: "只有名单上的人",
+      options: ["好", "不好"],
+      routing: { channels: null, severity: "normal", answerers: ["me"] },
+    },
+    at(0),
+  );
+  const id = one<{ id: number }>("SELECT id FROM cards WHERE key = 'restricted'")!.id;
+  const token = card(id).token;
+  assert.deepEqual(cardByToken(token)!.answerers, ["me"]);
+  assert.throws(() => answerByLink(token, { choice: 0 }, at(1)), AuthError);
+  assert.equal(card(id).state, "open", "the link changed nothing");
+  assert.equal(answer(id, { choice: 0, by: "me" }, at(2)).changed, true, "someone on the list still can");
 });
 
 test("a channel answer needs a registered channel and a named answerer, and a channel with no list lets nobody answer", () => {
