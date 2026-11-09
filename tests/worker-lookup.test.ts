@@ -3,7 +3,8 @@
 // to look, it holds a stuck or stopped run forever because its timeout and its stop wait on a sighting that never comes;
 // or it holds back the result of a run that has ended, stopping a process group it can't see anything left in; or, unable
 // to see a group it stopped itself because the turn was over, it throws away the answer the turn gave and the hub runs
-// the work again.
+// the work again. Or, waiting on a slow lookup (PowerShell takes over a second to start on Windows), it holds up the
+// hub that shares its process, so the state, the stream and answers to cards stall while any run is going.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -81,6 +82,23 @@ function jobFor(run: number, seconds: number, timeout?: number) {
     context: { events: [], answers: [], timers: [], waiting: [], open: [], decided: [] },
   };
 }
+
+test("looking at a run's process holds up nothing else in the process", async () => {
+  writeFileSync(join(bin, "ps"), `#!/bin/sh\nsleep 0.5\nexit 1\n`, { mode: 0o755 });
+  chmodSync(join(bin, "ps"), 0o755);
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  const results: any[] = [];
+  const worker = workerThatReports(results, jobFor(18, 2));
+  await worker.tick();
+  let beats = 0;
+  const beat = setInterval(() => beats++, 20);
+  try {
+    await worker.tick();
+  } finally {
+    clearInterval(beat);
+  }
+  assert.ok(beats >= 10, `the process was held up while it looked: ${beats} beats in half a second`);
+});
 
 test("a run whose process is gone is reported as finished", async () => {
   psSaysGone();

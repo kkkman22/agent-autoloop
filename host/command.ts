@@ -1,7 +1,11 @@
-// Node cannot exec a Windows npm .cmd shim. Run its JavaScript entry directly so multiline arguments never become cmd source.
-import { execFileSync } from "node:child_process";
+// Node cannot exec a Windows npm .cmd shim. Run what it points at (a JavaScript entry or a native program) directly so
+// multiline arguments never become cmd source.
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 /** Windows looks for a bare program name in its working folder first, and an Agent can write to a turn's folder. */
 export const POWERSHELL = path.join(
@@ -42,8 +46,10 @@ export function commandLine(argv: string[]): [string, string[]] {
   if (!path.isAbsolute(program)) program = findOnPath(program) ?? program;
   if (/\.cmd$/i.test(program)) {
     const shim = readFileSync(program, "utf8");
-    const entry = /"%(?:dp0%|~dp0)\\?([^"\r\n]+\.(?:[cm]?js))"\s+%\*/i.exec(shim);
+    const entry = /"%(?:dp0%|~dp0)\\?([^"\r\n]+\.(?:[cm]?js|exe))"\s+%\*/i.exec(shim);
     if (!entry) throw new Error(`不能直接运行 ${program}：请在 command 写可执行文件，或用 node 运行脚本。`);
+    // A package whose bin is a native program (Claude Code from npm) gets a shim that runs it with no node in front.
+    if (/\.exe$/i.test(entry[1])) return [path.resolve(path.dirname(program), entry[1]), argv.slice(1)];
     const adjacentNode = path.join(path.dirname(program), "node.exe");
     return [
       existsSync(adjacentNode) ? adjacentNode : process.execPath,
@@ -57,28 +63,37 @@ export function commandLine(argv: string[]): [string, string[]] {
   return [program, argv.slice(1)];
 }
 
+const encoded = (script: string) => [
+  "-NoLogo",
+  "-NoProfile",
+  "-NonInteractive",
+  "-EncodedCommand",
+  Buffer.from(
+    "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " + script,
+    "utf16le",
+  ).toString("base64"),
+];
+
 export function powershell(script: string) {
-  return execFileSync(
-    POWERSHELL,
-    [
-      "-NoLogo",
-      "-NoProfile",
-      "-NonInteractive",
-      "-EncodedCommand",
-      Buffer.from(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " + script,
-        "utf16le",
-      ).toString("base64"),
-    ],
-    { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-  ).trim();
+  return execFileSync(POWERSHELL, encoded(script), {
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 export const psQuote = (word: string) => `'${word.replaceAll("'", "''")}'`;
 
-export function processCommand(pid: number) {
-  if (process.platform === "win32") {
-    return powershell(`(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`);
-  }
-  return execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+const commandOf = (pid: number): [string, string[]] =>
+  process.platform === "win32"
+    ? [POWERSHELL, encoded(`(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`)]
+    : ["ps", ["-p", String(pid), "-o", "command="]];
+
+export function processCommandSync(pid: number) {
+  return execFileSync(...commandOf(pid), { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** Without stopping the process while it looks: the worker shares one with the hub, and PowerShell takes over a second to start. */
+export async function processCommand(pid: number) {
+  return (await execFileAsync(...commandOf(pid), { encoding: "utf8", windowsHide: true })).stdout;
 }

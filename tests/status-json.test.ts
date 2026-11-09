@@ -94,6 +94,7 @@ test("status --json prints the same state the hub serves, and the plain output s
   const human = await cli("status");
   assert.ok(!human.trim().startsWith("{"));
   assert.match(human, /在跑|排队|等你/);
+  assert.doesNotMatch(human, /\x1b/, "no colour codes when it isn't a terminal");
 });
 
 test("an unknown flag is refused instead of ignored", async () => {

@@ -13,6 +13,7 @@ import {
   jobOf,
   openInScope,
   pauseOf,
+  routingOf,
   sourceOf,
   waitingOn,
   workerOf,
@@ -227,7 +228,14 @@ function enqueue(draft: Draft, rule: Rule, event: number, lane: string, resume?:
 }
 
 /** Keeps an event under a key of its own: one the hub makes up mustn't collide with one a source sent. */
-function recordEvent(draft: Draft, source: string, event: Row, routed: string[], paused: string[] = []): number {
+function recordEvent(
+  draft: Draft,
+  source: string,
+  event: Row,
+  routed: string[],
+  paused: string[] = [],
+  sent = false,
+): number {
   let key = event.id;
   for (let suffix = 1; rows(draft.view, "events", { source, key }).length; suffix++) {
     key = `${event.id}:${suffix}`;
@@ -244,17 +252,17 @@ function recordEvent(draft: Draft, source: string, event: Row, routed: string[],
     routed: JSON.stringify(routed),
     // Only where a pause held it back, so the owner's list of what was skipped reads an index of those alone.
     ...(paused.length && { paused: JSON.stringify(paused) }),
+    // Through the source's own door: only these are its to read back (`eventOutcome`), not what the hub made in its name.
+    ...(sent && { sent: 1 }),
     received_at: draft.at,
   }).id;
 }
 
-function ingest(draft: Draft, source: string, given: unknown) {
+function ingest(draft: Draft, source: string, given: unknown, sent = false) {
   const event = parseEvent(given);
   const existing = rows(draft.view, "events", { source, key: event.id })[0];
   if (existing) {
-    const skipped: string[] = JSON.parse(existing.paused ?? "[]");
-    const taken = JSON.parse(existing.routed).filter((name: string) => !skipped.includes(name));
-    return { event: existing.id, duplicate: true, routed: taken, paused: skipped };
+    return { event: existing.id, duplicate: true, ...routingOf(existing) };
   }
   const tooDeep = event.hops > MAX_HOPS;
   const takes = (rule: Rule) =>
@@ -270,6 +278,7 @@ function ingest(draft: Draft, source: string, given: unknown) {
     event,
     matched.map((rule) => rule.name),
     paused,
+    sent,
   );
   if (tooDeep) {
     const words = `同一条处理链已超过 ${MAX_HOPS} 层，后续事件已记录，没有继续派发。`;
@@ -480,11 +489,16 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
     notify(draft, `run:${id}:done`, run.rule, summary, once);
   }
   for (const later of result.later ?? []) scheduleReview(draft, run, later);
+  const emitted: number[] = [];
   for (const event of result.events ?? []) {
     if (rule?.emits && typeMatches(rule.emits.types, event.type)) {
-      ingest(draft, rule.emits.source, { ...event, hops: hopsOf(draft, run) + 1 });
+      const sent = ingest(draft, rule.emits.source, { ...event, hops: hopsOf(draft, run) + 1 });
+      // A number already taken is an earlier event's, perhaps another source's: what it says isn't what this receipt sent.
+      if (!sent.duplicate) emitted.push(sent.event);
     } else rejected.push({ what: "events", reason: `规则「${run.rule}」没有写可以发 ${event.type}` });
   }
+  // The source whose event this run took reads them back (`eventOutcome`); nothing else links them to the run.
+  if (emitted.length) put(draft, "runs", id, { emitted: JSON.stringify(emitted) });
   return rejected;
 }
 
@@ -770,7 +784,7 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     set(draft, "keys", `${kind}:${name}`, null);
     return true;
   },
-  ingest,
+  ingest: (draft, source, given) => ingest(draft, source, given, true),
   createCard,
   /** A task elsewhere asks you; your answer goes on like a round of a rule, where its cwd says. */
   ask(draft, name, given) {

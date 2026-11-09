@@ -715,6 +715,41 @@
       "required": ["event", "duplicate", "routed"],
       "additionalProperties": false
     },
+    "eventOutcome": {
+      "description": "What became of an event, read with the key of the source that sent it.",
+      "type": "object",
+      "properties": {
+        "event": { "type": "integer", "minimum": 1 },
+        "routed": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+        "paused": { "type": "array", "items": { "type": "string", "maxLength": 200 } },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "run": { "type": "integer", "minimum": 1 },
+              "rule": { "type": "string", "maxLength": 200 },
+              "state": { "enum": ["queued", "claimed", "unknown", "done", "nothing", "cancelled"] },
+              "attempts": { "type": "integer", "minimum": 0 },
+              "error": { "type": ["string", "null"] },
+              "finishedAt": { "anyOf": [{ "type": "null" }, { "type": "string", "format": "date-time" }] },
+              "summary": {
+                "description": "Null until it ends, and whenever the run also took another source's events.",
+                "type": ["string", "null"]
+              },
+              "events": {
+                "description": "What its receipt sent; null whenever the run also took another source's events.",
+                "anyOf": [{ "type": "null" }, { "type": "array", "items": { "$ref": "#/$defs/event" } }]
+              }
+            },
+            "required": ["run", "rule", "state", "attempts", "error", "finishedAt", "summary", "events"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["event", "routed", "paused", "runs"],
+      "additionalProperties": false
+    },
     "receiptAck": {
       "type": "object",
       "properties": {
@@ -1409,6 +1444,9 @@
           "type": ["integer", "null"],
           "minimum": 0
         },
+        "chosen": {
+          "type": ["string", "null"]
+        },
         "text": {
           "type": ["string", "null"]
         },
@@ -1422,7 +1460,7 @@
           "type": "string"
         }
       },
-      "required": ["card", "title", "options", "choice", "text", "about", "by", "at"],
+      "required": ["card", "title", "options", "choice", "chosen", "text", "about", "by", "at"],
       "additionalProperties": true
     },
     "context-timer": {

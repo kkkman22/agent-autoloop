@@ -4,7 +4,7 @@ import { whose, type Environment } from "./credentials.ts";
 import { decide } from "./decide.ts";
 import { AuthError, Conflict, Gone, InputError, NotFound } from "./errors.ts";
 import { rows, type Row, type View } from "./evolve.ts";
-import { agentsOf, cancels, cardView, configuration } from "./query.ts";
+import { agentsOf, cancels, cardView, configuration, eventOutcome } from "./query.ts";
 import { type Rule, type Rules } from "./rules.ts";
 import { parseRules, RulesError } from "../protocol/rules.ts";
 import { isAsk } from "../protocol/validate.ts";
@@ -290,6 +290,13 @@ async function route(call: Call): Promise<Response> {
   if (method === "POST" && hook) return webhook(call, hook[1]);
   if (method === "POST" && path === "/v1/events") {
     return json(act(call, "ingest", requireKey(call, "source"), await readJson(request)));
+  }
+  const sent = /^\/v1\/events\/([1-9][0-9]*)$/.exec(path);
+  if (method === "GET" && sent) {
+    // Another source's event is as missing as one never sent: a source can't learn which numbers are taken.
+    const found = eventOutcome(call.view, requireKey(call, "source"), Number(sent[1]));
+    if (!found) throw new NotFound("没有这条事件");
+    return json(found);
   }
   if (method === "POST" && path === "/v1/tell") return tell(call);
   if (method === "GET" && path === "/v1/work") return work(call);

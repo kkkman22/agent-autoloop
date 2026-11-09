@@ -1,6 +1,6 @@
 // What the kernel's doors need from this machine: the clock, a timer for the next deadline, long polls to wake, the
 // rules file to watch, the log as a stream and the webhook plugins.
-import { watch } from "node:fs";
+import { realpathSync, watch } from "node:fs";
 import { basename, dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { createLimiter, type Limits } from "./limits.ts";
@@ -168,7 +168,8 @@ export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerO
     if (!justSeen || facts.some((fact) => fact.changes.some((change) => change.table === "cards"))) wake();
     arm();
   });
-  const watcher = watch(dirname(RULES_FILE), (_event, file) => {
+  // libuv 1.52 (Node 24.16+) on Windows asserts and exits on the first change in a folder named through an 8.3 short name.
+  const watcher = watch(realpathSync.native(dirname(RULES_FILE)), (_event, file) => {
     if (file === basename(RULES_FILE)) fire();
   });
   const handle = createHandler({

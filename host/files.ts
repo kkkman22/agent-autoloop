@@ -9,10 +9,14 @@ export function privateDirectory(directory: string) {
     $acl = [Security.AccessControl.DirectorySecurity]::new()
     $acl.SetAccessRuleProtection($true, $false)
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
-    $acl.SetOwner($owner)
+    $folder = ${psQuote(directory)}
+    # Setting even the same owner needs the right to take ownership, which a data drive's Modify doesn't give.
+    if ([IO.Directory]::GetAccessControl($folder, 'Owner').GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $owner.Value) {
+      $acl.SetOwner($owner)
+    }
     foreach ($sid in @($owner, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
       $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
     }
-    [IO.Directory]::SetAccessControl(${psQuote(directory)}, $acl)
+    [IO.Directory]::SetAccessControl($folder, $acl)
   `);
 }

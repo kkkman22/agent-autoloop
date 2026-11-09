@@ -12,20 +12,23 @@ import { HOME, RULES_FILE } from "../host/home.ts";
 import { findOnPath, psQuote } from "../host/command.ts";
 import { privateDirectory } from "../host/files.ts";
 import {
+  aboveDesktop,
   installService,
   removeService,
   restartService,
+  runningUp,
   serviceLogs,
   serviceRunning,
+  startupInstead,
   systemUnit,
   untilAnswering,
 } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
 import { flags, text, type Flags } from "./flags.ts";
-import { printer } from "./plain-text.ts";
+import { printable, printer } from "./plain-text.ts";
 import { addPlugin, pluginReport, plugins } from "./plugins.ts";
 import { rules } from "./rules.ts";
-import { spendLine } from "./spend.ts";
+import { colorFor, render } from "./status.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -48,7 +51,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop resolve <卡片> <结果>   这件事不用决定了，写一句结果
   agent-autoloop doctor                  查哪里没配好
   agent-autoloop rules validate [文件]   校验规则文件并给出警告；check 是它的别名
-  agent-autoloop rules explain           按本机 rules.json 说明生效的规则、Agent、通道和下次定时
+  agent-autoloop rules explain [文件]    按本机 rules.json（或指定草稿）说明生效的规则、Agent、通道和下次定时
   agent-autoloop rules explain <来源> <事件类型>
                                     列出会接这条事件的规则
   agent-autoloop rules explain <规则名>  一条规则的完整说明，定时规则带上接下来 3 次到点
@@ -56,7 +59,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop rules disable|enable <规则名>
                                     在规则文件里暂停、恢复一条规则；先预览，确认后写回
   agent-autoloop rules remove <规则名>   删掉一条规则；先预览要取消和关闭的东西
-  agent-autoloop rules edit             用 $EDITOR 编辑；保存后校验、预览，确认后替换
+  agent-autoloop rules edit             用 $EDITOR 编辑；保存后校验、预览、确认后替换
   agent-autoloop check [文件]            检查规则文件，不碰中台；不写文件就查 rules.json
   agent-autoloop pause <规则> [--reason 原因] [--until 时间]
                                     暂停一条规则：到点不跑、来事件不接，直到恢复；不改规则文件
@@ -236,7 +239,7 @@ function starterRules(agents: Record<string, object>, first: string) {
           "这是 agent-autoloop try 的试跑，不要改任何文件，不要做别的事。读资料文件。" +
           "如果 answers 是空的，就问一个问题：title 写“试跑：选一个颜色”，text 写“这是一次试跑，选哪个都行。”，" +
           'options 写 ["蓝色","绿色"]，key 写 try-color，第一行结论写“问了一个问题”。' +
-          "如果 answers 不是空的，第一行结论写“你选了某某，试跑通过”，把某某换成 answers 里选的那一项，不附回执。",
+          "如果 answers 不是空的，第一行结论写“你选了某某，试跑通过”，把某某换成 answers 里的 chosen（所选那项的文字），不附回执。",
       },
     ],
     elsewhere: [],
@@ -453,54 +456,11 @@ async function tryIt() {
   fail("五分钟没等到结果。运行 agent-autoloop doctor 看看。");
 }
 
-const RUN_STATES: Record<string, string> = {
-  claimed: "在跑",
-  queued: "排队",
-  done: "做完了",
-  nothing: "没事可做",
-  unknown: "不确定",
-  cancelled: "停了",
-};
-
 async function status(named: Flags) {
-  const owner = ownerClient();
-  const say = printer(named.raw !== undefined);
-  const state = await owner.state();
+  const state = await ownerClient().state();
   if (named.json !== undefined) return console.log(JSON.stringify(state, null, 2));
-  const { totals } = state;
-  const clock = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
-  const at = (iso: string) => new Date(iso).toLocaleString("zh-CN", { timeZone: state.timezone, ...clock });
-  say(`在跑 ${totals.running} · 排队 ${totals.queued} · 今天做完 ${totals.doneToday} · 等你 ${state.cards.length}`);
-  say(`${spendLine(state.spending)}\n`);
-  for (const agent of state.agents) say(`${agent.online ? "●" : "○"} ${agent.name}（${agent.worker}）`);
-  for (const channel of state.channels) say(`${channel.online ? "●" : "○"} ${channel.name}`);
-  const paused = state.lines.filter((line: { paused?: unknown }) => line.paused);
-  if (paused.length) say("\n暂停中（恢复：agent-autoloop resume <规则>）");
-  for (const line of paused) say(`  ${line.name}${line.paused.reason ? `：${line.paused.reason}` : ""}`);
-  for (const card of state.cards) {
-    showCard(card, say);
-    say(howToAnswer(card));
-  }
-  const timed = [...state.lines.filter((line: { every: string | null }) => line.every), ...state.elsewhere];
-  if (timed.length) say("\n定时");
-  for (const { name, where, every, next } of timed) {
-    say(`  ${name}${where ? `（在别处：${where}）` : ""}：${every}，下次 ${at(next)}`);
-  }
-  if (state.recentCards.length) say("\n最近的卡片");
-  for (const card of state.recentCards.slice(0, 5)) {
-    const chosen = card.choice !== null ? card.options[card.choice] : card.answer;
-    say(`  #${card.id} ${card.title}：${[chosen, card.result].filter(Boolean).join("。") || card.text}`);
-  }
-  if (state.runs.length) say("\n最近几轮");
-  for (const run of state.runs.slice(0, 8)) {
-    const shown = run.state === "queued" && run.attempts > 0 ? "等重派" : (RUN_STATES[run.state] ?? run.state);
-    const outcome = run.summary || run.error;
-    say(`  #${run.id} ${run.rule} ${shown}${outcome ? `：${outcome}` : ""}`);
-  }
-  if (state.unrouted.length) say("\n没有规则接的事件");
-  for (const { source, type, subject, summary } of state.unrouted.slice(0, 5)) {
-    say(`  ${source} ${type} ${subject}${summary ? `：${summary}` : ""}`);
-  }
+  const text = render(state, { color: colorFor(process.stdout, process.env), columns: process.stdout.columns });
+  console.log(named.raw === undefined ? printable(text) : text);
 }
 
 async function answer(args: string[]) {
@@ -706,9 +666,16 @@ async function emit(args: string[]) {
 
 async function rulesCommand(args: string[]) {
   const { rest } = flags(args);
-  if (rest[0] !== "explain" || rest.length > 1) return fail(TAKES.rules.usage);
+  if (rest[0] !== "explain" || rest.length > 2) return fail(TAKES.rules.usage);
+  const file = rest[1] ? path.resolve(rest[1]) : RULES_FILE;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    return fail(`读不到 ${file}：${(error as Error).message}`);
+  }
   const { explainRules } = await import("./explain.ts");
-  for (const line of explainRules(readFileSync(RULES_FILE, "utf8"), Date.now())) console.log(line);
+  for (const line of explainRules(text, Date.now())) console.log(line);
 }
 
 async function tell(args: string[]) {
@@ -781,8 +748,21 @@ async function waitForHub() {
   } catch {
     return;
   }
-  if (config.hub && (await untilAnswering(config.url)) === false) {
-    console.error(`系统服务起了，但中台 20 秒内没有应答。看看日志：${serviceLogs()}`);
+  if (!config.hub) return;
+  const answering = await untilAnswering(config.url);
+  if (answering === false) {
+    const log = serviceLogs();
+    const last = existsSync(log) ? readFileSync(log, "utf8").trimEnd().split("\n").slice(-5).join("\n") : "";
+    console.error(`系统服务起了，但中台 20 秒内没有应答。看看日志：${log}${last ? `\n\n${last}` : ""}`);
+  }
+  // A login task asks for the user's limited token, and the built-in Administrator gets the full one all the same.
+  const hub = answering && process.platform === "win32" ? runningUp() : null;
+  if (hub !== null && aboveDesktop(hub)) {
+    removeService();
+    fail(
+      "登录任务拉起的中台拿到了比你的桌面高的完整管理员权限，它派的每个 Agent 也会带着，所以没有装这个任务" +
+        `（Windows 自带的 Administrator 账号会这样）。${startupInstead()}`,
+    );
   }
 }
 
@@ -897,8 +877,11 @@ const commands: Record<string, () => unknown> = {
   resolve: () => resolve(args),
   doctor,
   check: () => check(args),
-  // With a bare `explain` it is the whole-file overview; every other shape goes to the fuller rules command.
-  rules: () => (args[0] === "explain" && args.length === 1 ? rulesCommand(args) : rules(args)),
+  // With a bare `explain`, or one naming a draft file, it is the whole-file overview; other shapes go to the fuller rules command.
+  rules: () =>
+    args[0] === "explain" && (args.length === 1 || (args.length === 2 && existsSync(path.resolve(args[1]))))
+      ? rulesCommand(args)
+      : rules(args),
   pause: () => pause(args),
   resume: () => resume(args),
   run: () => runNow(args),

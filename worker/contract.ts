@@ -16,6 +16,11 @@ const JSON_BLOCK = /(?<=^|\n)[ \t]*```json[ \t]*\r?\n((?:[^\n]*\n)*?)[ \t]*```[ 
 const OPENED = /(?<=^|\n)[ \t]*```agent-autoloop[ \t]*\r?\n/;
 const unique = <T>(items: T[]) => [...new Set(items)];
 
+/** The last receipt block in what an Agent said, as it wrote it, for a run keeping one its last turn left out. */
+export function receiptBlock(said: string): string | undefined {
+  return [...said.matchAll(BLOCK)].at(-1)?.[0];
+}
+
 function describeEvent({ sourceName, type, subject, link }: Job["context"]["events"][number]) {
   return `- ${`${sourceName} ${type} ${subject}`.trim()}${link ? `（${link}）` : ""}`;
 }

@@ -42,6 +42,51 @@ export function sourceOf(view: View, runId: number) {
   return sources.length === 1 ? sources[0] : null;
 }
 
+/** The rules an event went to, and the ones that would have taken it but were paused. */
+export function routingOf(event: Row) {
+  const paused: string[] = JSON.parse(event.paused ?? "[]");
+  return { routed: JSON.parse(event.routed).filter((name: string) => !paused.includes(name)), paused };
+}
+
+/**
+ * What became of an event, for the source that sent it: every run it is in now, as retries can merge runs. A run's summary
+ * and the events its receipt sent are what the Agent made of all its events, so only a run of this source's alone has them.
+ */
+export function eventOutcome(view: View, source: string, id: number) {
+  const event = view.get("events", id);
+  if (event?.source !== source || !event.sent) return null;
+  const runs = rows(view, "run_events", { event_id: id })
+    .map((link) => view.get("runs", link.run_id)!)
+    .sort((a, b) => a.id - b.id);
+  return {
+    event: event.id,
+    ...routingOf(event),
+    runs: runs.map((run) => {
+      const own = sourceOf(view, run.id) === source;
+      const sent = (JSON.parse(run.emitted ?? "[]") as number[]).map((id) => view.get("events", id)!);
+      return {
+        run: run.id,
+        rule: run.rule,
+        state: run.state,
+        attempts: run.attempts,
+        error: run.error,
+        finishedAt: run.finished_at,
+        summary: own ? run.summary : null,
+        events: own
+          ? sent.map(({ key: id, type, subject, summary, detail, link }) => ({
+              id,
+              type,
+              subject,
+              summary,
+              detail,
+              link,
+            }))
+          : null,
+      };
+    }),
+  };
+}
+
 /** The cards a run may close: open before it was claimed, from the same source and group. */
 export function openInScope(view: View, run: Row) {
   const source = sourceOf(view, run.id);
@@ -105,7 +150,18 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
         return { id, source, sourceName, type, subject, summary, detail, link, receivedAt, hops: hops ?? 0 };
       }),
       answers: answers.map(({ id: card, title, options, choice, answer: text, about, by, decided_at: at }) => {
-        return { card, title, options: JSON.parse(options), choice, text, about, by, at };
+        const picked: string[] = JSON.parse(options);
+        return {
+          card,
+          title,
+          options: picked,
+          choice,
+          chosen: choice === null ? text : picked[choice],
+          text,
+          about,
+          by,
+          at,
+        };
       }),
       timers: timers.map(timerView),
       waiting: waiting.sort((a, b) => a.at.localeCompare(b.at)).map(timerView),

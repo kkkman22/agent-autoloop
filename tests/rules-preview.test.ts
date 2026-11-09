@@ -4,10 +4,23 @@
 // Candidates come from file text, like the commands send them: the hub's own config value carries the injected
 // schedule source and would be refused, as any hand-made body without the required fields should be.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { after, test } from "node:test";
-import { setup } from "./helpers.ts";
-setup("rules-preview");
+import { explainRules } from "../cli/explain.ts";
+import { at, setup } from "./helpers.ts";
+const home = setup("rules-preview");
+const fixture = readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8");
+const cli = async (...args: string[]) =>
+  (
+    await promisify(execFile)(
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", join(import.meta.dirname, "../bin/agent-autoloop.ts"), ...args],
+      { env: { ...process.env } },
+    )
+  ).stdout;
 const hub = await import("../host/runtime.ts");
 const { makeHandler } = await import("../host/server.ts");
 const runtime = makeHandler();
@@ -106,6 +119,27 @@ test("a claimed run is listed as left alone, not as cancelled", async () => {
   const summary = await (await post(without("意见"))).json();
   assert.deepEqual(summary.claimed, [{ run: job.run, rule: "意见" }]);
   hub.finish(job.run, job.token, { outcome: "done", summary: "已经领走的照常跑完" }, 3100);
+});
+
+test("explain shows a rule's channels, and can read a draft file", async () => {
+  const given = JSON.parse(fixture);
+  given.rules[0].channels = ["chat"];
+  const lines = explainRules(JSON.stringify(given), at(0), "UTC").join("\n");
+  assert.match(lines, /意见：.*只发 chat/);
+  const draft = join(home, "draft.json");
+  writeFileSync(draft, JSON.stringify(given));
+  assert.match(await cli("rules", "explain", draft), /只发 chat/);
+});
+
+test("explain says which rules go on in the last round's session", () => {
+  assert.ok(!explainRules(fixture, at(0), "UTC").join("\n").includes("接着上一轮的会话"));
+  const given = JSON.parse(fixture);
+  given.rules[0].resume = true;
+  const lines = explainRules(JSON.stringify(given), at(0), "UTC");
+  assert.ok(
+    lines.some((line) => line.includes("feedback.*") && line.includes("接着上一轮的会话")),
+    lines.join("\n"),
+  );
 });
 
 test("only the owner previews, and a body over the size limit or without the fields is refused", async () => {

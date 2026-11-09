@@ -5,7 +5,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync, writeFileSync 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadChannel } from "./channels.ts";
-import { parseListen, readConfig, type ChannelConfig } from "./config.ts";
+import { cantListen, parseListen, readConfig, type ChannelConfig } from "./config.ts";
 import { HOME } from "./home.ts";
 import { limitsFrom } from "./limits.ts";
 import { runningUp } from "./service.ts";
@@ -120,7 +120,7 @@ export async function up() {
     const server = serve(port, host, { commit: commitOf(), limits, log: say });
     server.on("listening", () => say(`listening on ${config.hub!.listen}`));
     server.on("error", (error) => {
-      say(`can't listen: ${error}`);
+      say(cantListen(error));
       process.exit(1);
     });
     close = () => {

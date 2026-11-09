@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer, type RequestListener } from "node:http";
 import { after } from "node:test";
+import { versionName } from "../host/version.ts";
 import { setup } from "./helpers.ts";
 const home = setup("mcp");
 let calls: any[] = [];
@@ -106,7 +107,7 @@ test("--allow-writes exposes the writing tools, each with the key it belongs to"
   const get = (id: number) => responses.find((r: any) => r.id === id);
   assert.deepEqual(
     get(2).result.tools.map((t: any) => t.name),
-    ["status", "why", "answer", "resolve", "stop", "emit", "tell"],
+    ["status", "why", "answer", "resolve", "stop", "emit", "tell", "pause", "resume", "run"],
   );
   assert.equal(get(3).result.isError, undefined);
   assert.equal(get(4).result.isError, undefined);
@@ -175,6 +176,82 @@ async function connect(hub: RequestListener, args: string[] = []) {
   await answered(1);
   return { child, closed, send, answers, answered, close };
 }
+
+test("MCP stdio initializes and exposes only the typed hub operations", async () => {
+  const calls: any[] = [];
+  const server = createServer((req, res) => {
+    calls.push([req.url, req.headers.authorization]);
+    res.statusCode = req.url?.includes("999") ? 404 : 200;
+    res.end(JSON.stringify({ ok: true }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  writeFileSync(
+    join(home, "config.json"),
+    JSON.stringify({
+      url: `http://127.0.0.1:${(server.address() as any).port}`,
+      owner: "owner-key",
+      source: { name: "app", key: "source-key" },
+    }),
+  );
+  const child = spawn(process.execPath, ["bin/agent-autoloop.ts", "mcp", "--allow-writes"], {
+    cwd: join(import.meta.dirname, ".."),
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let output = "";
+  let err = "";
+  child.stdout.on("data", (b) => (output += b));
+  child.stderr.on("data", (b) => (err += b));
+  const messages = [
+    {
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+    },
+    { method: "notifications/initialized" },
+    { id: 2, method: "tools/list" },
+    { id: 3, method: "tools/call", params: { name: "status", arguments: {} } },
+    { id: 4, method: "tools/call", params: { name: "why", arguments: { run: -1 } } },
+    { id: 5, method: "tools/call", params: { name: "why", arguments: { run: 999 } } },
+    { id: 6, method: "tools/call", params: { name: "request", arguments: { path: "/etc/passwd" } } },
+    { id: 7, method: "tools/call", params: { name: "emit", arguments: { id: "a", type: "one" } } },
+    { id: 8, method: "tools/call", params: { name: "pause", arguments: { rule: "巡检", reason: "上游在修" } } },
+    { id: 9, method: "tools/call", params: { name: "resume", arguments: { rule: "巡检" } } },
+    { id: 10, method: "tools/call", params: { name: "run", arguments: { rule: "巡检", reason: "看一眼" } } },
+  ];
+  child.stdin.end(messages.map((m) => JSON.stringify({ jsonrpc: "2.0", ...m })).join("\n") + "\n");
+  await once(child, "close");
+  server.close();
+  assert.equal(child.exitCode, 0, err);
+  const responses = output
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  assert.equal(responses.length, 10);
+  assert.equal(
+    responses[0].result.serverInfo.version,
+    versionName(),
+    "it says which version it is, not a number left behind",
+  );
+  const get = (id: number) => responses.find((r) => r.id === id);
+  assert.equal(get(1).result.protocolVersion, "2025-11-25");
+  for (const name of ["answer", "pause", "resume", "run"])
+    assert.ok(get(2).result.tools.some((t: any) => t.name === name));
+  assert.equal(get(3).result.isError, undefined);
+  assert.equal(get(4).error.code, -32602);
+  assert.equal(get(5).result.isError, true);
+  assert.equal(get(6).error.code, -32602);
+  // Calls run side by side, so they can reach the hub in any order.
+  assert.deepEqual(calls.toSorted(), [
+    ["/v1/events", "Bearer source-key"],
+    ["/v1/rules/%E5%B7%A1%E6%A3%80/pause", "Bearer owner-key"],
+    ["/v1/rules/%E5%B7%A1%E6%A3%80/resume", "Bearer owner-key"],
+    ["/v1/rules/%E5%B7%A1%E6%A3%80/run", "Bearer owner-key"],
+    ["/v1/runs/999/why", "Bearer owner-key"],
+    ["/v1/state", "Bearer owner-key"],
+  ]);
+});
 
 test("U+2028 and U+2029 in a request are part of the line", async () => {
   let told = "";

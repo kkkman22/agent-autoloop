@@ -124,15 +124,15 @@ const quoted = (word: string) => `'${word.replaceAll("'", `'\\''`)}'`;
 const marker = (entry: Entry) => `agent-autoloop-run:${entry.run}:${entry.attempt}:${entry.turn}`;
 
 /** Whether the run's process is still going: false when it is gone, null when we could not look. */
-function alive(entry: Entry): boolean | null {
+async function alive(entry: Entry): Promise<boolean | null> {
   if (!entry.pid) return false;
   try {
-    const command = processCommand(entry.pid);
+    const command = await processCommand(entry.pid);
     return command.includes(marker(entry));
   } catch (error) {
     // A process that is gone makes ps exit with status 1; anything else (EPERM, EACCES, a spawn
     // failure) means we could not look, which is not the same as it being gone.
-    const status = (error as { status?: number | null }).status;
+    const status = (error as { code?: unknown }).code;
     if (process.platform !== "win32" && status === 1) return false;
     return null;
   }
@@ -145,7 +145,7 @@ function signal(entry: Entry, name: NodeJS.Signals) {
 }
 
 /** Whether anything in the run's group is still going, null when we could not look. */
-function groupAlive(entry: Entry): boolean | null {
+async function groupAlive(entry: Entry): Promise<boolean | null> {
   // The wrapper can die before a child; zombies have already stopped and only their parent can reap them.
   if (!entry.pid) return false;
   if (process.platform === "win32") return alive(entry);
@@ -448,7 +448,7 @@ export function createWorker({
     const { exit } = files(entry);
     const exitCode = () => (existsSync(exit) ? Number(readFileSync(exit, "utf8").trim()) : null);
     if (entry.stopping !== undefined) {
-      const going = groupAlive(entry);
+      const going = await groupAlive(entry);
       const overdue = now() - entry.stopping > STOP_GRACE;
       if (going === true) {
         if (overdue) signal(entry, "SIGKILL");
@@ -471,7 +471,7 @@ export function createWorker({
     }
     if (existsSync(exit)) return conclude(entry, adapter, exitCode());
     // The shell can publish its exit between the first file check and ps returning.
-    const looking = alive(entry);
+    const looking = await alive(entry);
     if (looking === false) return conclude(entry, adapter, exitCode());
     // Unable to look, the run counts as still going, so its timeout and its finished turn still end it.
     if (looking === null && !blind) log(`couldn't inspect processes; runs count as going until they end or time out`);

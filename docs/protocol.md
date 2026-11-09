@@ -132,6 +132,29 @@ POST /v1/events                    Authorization: Bearer <来源的密钥>
 - 没有规则匹配的事件也留着，`agent-autoloop status` 看得到。
 - 字段上限：`id` 200 个字、`subject` 100、`summary` 200、`detail` 4000、`link` 500，`type` 64 个字符。
 
+来源想知道发出去的事件后来怎么样了，用同一把密钥按应答里的 `event` 编号查，隔一段时间查一下还没结束的就行：
+
+```
+GET /v1/events/34                  Authorization: Bearer <来源的密钥>
+→ 200 { "event": 34, "routed": ["处理意见"], "paused": [], "runs": [
+    { "run": 41, "rule": "处理意见", "state": "done", "attempts": 0, "error": null,
+      "finishedAt": "2026-11-07T08:00:00.000Z", "summary": "…", "events": [ { "id": "…", "type": "…", … } ] } ] }
+```
+
+- 只能查自己发的事件。别的来源的事件和不存在的一样，返回 404。
+- `runs` 是这条事件现在所在的每一轮，按编号排。没跑成的一轮重试时会把同一事项后来的事件并进来，所以并过的事件会出现在更早的那一轮里。
+- `attempts` 是这一轮已经没跑成几次，`error` 是最近一次没跑成的原因，做成后清空。
+- `summary` 是回执里的一句话，`events` 是回执里发出、中台新记下的事件（写法和回执一样）；和已有事件同一个 `id` 的只记一次，不算在这一轮。这一轮还合进了别的来源的事件时，两项都是 `null`：那是 Agent 读了别人的资料后写的。加这个接口之前的版本里，回执发出的事件没记在轮次上，`events` 是空的。
+
+| `state`     | 意思                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| `queued`    | 排队；`attempts` 大于 0 时是没跑成、等重试                                                 |
+| `claimed`   | 接单程序领走了，在跑                                                                       |
+| `unknown`   | 接单程序 5 分钟没报这一轮，不确定还在不在跑；之后交的结果照样收                            |
+| `done`      | 做成了                                                                                     |
+| `nothing`   | 看过了，没事可做                                                                           |
+| `cancelled` | 结束了，没做成：连续 10 次没跑成不再重试、规则删掉了（`summary` 写明是哪种），或本人停掉的 |
+
 三种别的进法，到中台都是同一种事件：
 
 - **定时**：规则写 `cron`。错过的（比如电脑合盖了）醒来只补最近的一次。重复的时刻（夏令时）只跑第一次，不存在的时刻跳过。
@@ -201,6 +224,7 @@ GET /v1/work?claim=<这次领活的编号>&wait=50&running=7,8&capacity=1    Aut
         "title": "…",
         "options": ["重试", "跳过"],
         "choice": 0,
+        "chosen": "重试",
         "text": null,
         "about": "db-1",
         "by": "本人",
@@ -210,13 +234,13 @@ GET /v1/work?claim=<这次领活的编号>&wait=50&running=7,8&capacity=1    Aut
     "timers": [{ "key": "复查-1", "about": "db-1", "at": "2026-11-04T18:00:00+08:00" }],
     "waiting": [{ "key": "等运维", "about": "db-1", "at": "2026-11-05T09:00:00+08:00" }],
     "open": [{ "card": 57, "title": "…", "text": "…", "at": "2026-11-04T09:30:00+08:00" }],
-    "decided": [{ "card": 55, "title": "…", "choice": 1, "at": "2026-11-04T08:00:00+08:00" }]
+    "decided": [{ "card": 55, "title": "…", "choice": "跳过", "at": "2026-11-04T08:00:00+08:00" }]
   }
 }
 ```
 
 - `session` 是尽量接着的会话：重派时是上一次的，回答来了是提问那一轮的，规则写了 `resume` 时是这个事项上一轮的。接不上就开新的，所以它只是优化。
-- `context` 里都是资料：`events` 是这次要处理的事件，`answers` 是这一轮要接着做的决定，`timers` 是这一轮到期的复查，`waiting` 是这个事项还没到期的复查，`open` 是同来源同组还没收尾的卡片，`decided` 是这个事项定过的事（只对当时那件事有效）。
+- `context` 里都是资料：`events` 是这次要处理的事件，`answers` 是这一轮要接着做的决定（`choice` 是从 0 起的下标，`chosen` 是所选那项的文字，自由文字回答时就是那句回答），`timers` 是这一轮到期的复查，`waiting` 是这个事项还没到期的复查，`open` 是同来源同组还没收尾的卡片，`decided` 是这个事项定过的事（只对当时那件事有效；`choice` 已是所选那项的文字，不是下标）。
 
 ```
 POST /v1/runs/12/started   Authorization: Bearer <token>   { "session": "…", "link": "claude://…" }
@@ -456,7 +480,7 @@ POST /v1/rules/巡检/run        { "subject": "#12", "reason": "看一眼" }    
 
 | 凭据             | 能做                                                        | 不能做                                 |
 | ---------------- | ----------------------------------------------------------- | -------------------------------------- |
-| 来源的密钥       | 以自己的名义发事件、发消息                                  | 冒充别的来源，领活                     |
+| 来源的密钥       | 以自己的名义发事件、发消息，查自己发的事件后来怎么样了      | 冒充别的来源，看别的来源的事件，领活   |
 | 接单程序的密钥   | 领交给它的活；以交给它的 `elsewhere` 任务的名义发消息、提问 | 碰别人的活，发事件                     |
 | 一轮的 token     | 报告这一轮的这一次执行                                      | 碰别的轮次                             |
 | 通道的密钥       | 领卡片、报告、转达 `answerers` 的回答                       | 其他一切                               |
@@ -516,7 +540,7 @@ Node 请求转换层只把 Node 的请求变成 Request；文件、SQLite 连接
 
 权限只选一次性的选项：`read` 允许结构化的读和搜索，`edit` 再允许工作目录内的编辑（核对符号链接，经过找不到目标的链接算在目录外），`full` 允许其他操作。权限请求只带工具调用编号时，按这次调用之前说过的种类和路径判断，请求自己带的字段优先。未提供相应选项就取消。权限依赖 Agent 遵守 ACP，不提供额外的系统隔离；规范允许 Agent 不询问就执行，这种操作 `access` 拦不住，要用 Agent 自己的模式限制。官方 Codex 适配器给的拒绝选项（`reject_once`）只有 `cancel`，选了它整轮以 `stopReason: cancelled` 结束，算没跑成，由中台重派；`read`、`edit` 档下要跑命令的请求就是这样回来的，所以 Agent 非跑命令不可时，给 `full` 或用它自己的模式。`model`、`effort` 不生效。核对依据：[初始化](https://agentclientprotocol.com/protocol/v1/initialization)、[会话](https://agentclientprotocol.com/protocol/v1/session-setup)、[工具权限](https://agentclientprotocol.com/protocol/v1/tool-calls)。
 
-`agent-autoloop mcp` 提供 stdio MCP，固定支持 [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 版，不支持 2026-07-28 的无握手协议。默认只提供只读的 `status`、`why`；启动参数加 `--allow-writes`（或环境变量 `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`）才另外提供 `answer`、`resolve`、`stop`、`emit`、`tell`。按本机已有的本人或来源密钥展示工具。它调用同样的 HTTP 接口，不直接改数据库；密钥留在本机 `config.json`。MCP 客户端把程序设为 `node`，参数设为引擎的绝对路径 `bin/agent-autoloop.ts` 和 `mcp`，环境里指定 `AGENT_AUTOLOOP_HOME`。标准输出只写 JSON-RPC。消息只按换行分帧；每个工具调用各自回复，慢调用不挡 `ping`。它不区分调用方，都按本人记录（`answer` 记成本人，`emit` 不带层数），不要配进接单程序启动的 CLI 的用户级配置，否则一轮能自己回答自己的卡片。
+`agent-autoloop mcp` 提供 stdio MCP，固定支持 [2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle) 版，不支持 2026-07-28 的无握手协议。默认只提供只读的 `status`、`why`；启动参数加 `--allow-writes`（或环境变量 `AGENT_AUTOLOOP_MCP_ALLOW_WRITES=1`）才另外提供 `answer`、`resolve`、`stop`、`emit`、`tell`、`pause`、`resume`、`run`。按本机已有的本人或来源密钥展示工具，`pause`、`resume`、`run` 和命令行同名命令一样要本人密钥。它调用同样的 HTTP 接口，不直接改数据库；密钥留在本机 `config.json`。MCP 客户端把程序设为 `node`，参数设为引擎的绝对路径 `bin/agent-autoloop.ts` 和 `mcp`，环境里指定 `AGENT_AUTOLOOP_HOME`。标准输出只写 JSON-RPC。消息只按换行分帧；每个工具调用各自回复，慢调用不挡 `ping`。它不区分调用方，都按本人记录（`answer` 记成本人，`emit` 不带层数），不要配进接单程序启动的 CLI 的用户级配置，否则一轮能自己回答自己的卡片。
 
 ### 通道模板与命令行示例
 
