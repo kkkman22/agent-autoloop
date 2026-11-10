@@ -19,7 +19,7 @@ type RuleOptions = RuleWords & {
   /** People who may answer these cards through a channel: plain names, or "role:" plus a name in rules.roles. */
   answerers?: string[];
 };
-/** Without channels a rule's cards reach every channel; with them, only those. */
+/** Without channels a rule's cards reach defaultChannels, or every channel if there are none; with them, only those. */
 type Reach = { channels?: string[] };
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
 export type Rule = RuleOptions &
@@ -42,6 +42,8 @@ export type Roles = Record<string, string[]>;
 export type Rules = Registered & {
   timezone: string;
   askFirst: string[];
+  /** Where a card that names no channels of its own goes: a tell, the hub's own alerts, a rule without a list. */
+  defaultChannels?: string[];
   rules: Rule[];
   elsewhere: Elsewhere[];
   notices: Notices;

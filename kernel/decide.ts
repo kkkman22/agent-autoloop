@@ -586,7 +586,10 @@ function nextCard(draft: Draft, channel: string) {
   const dozing = inQuietHours(draft.rules.channels[channel]?.quiet, now, draft.rules.timezone);
   for (const card of draft.view.deliveryCandidates(channel, now)) {
     // A card made for other channels is not this channel's to take, no matter how long it has waited.
-    if (Array.isArray(card.channels) && !card.channels.includes(channel)) continue;
+    // Cards that name no channels of their own fall back to their rule's list, then to defaultChannels.
+    const reach =
+      card.channels ?? (card.rule ? ruleNamed(draft, card.rule)?.channels : undefined) ?? draft.rules.defaultChannels;
+    if (reach && !reach.includes(channel)) continue;
     if (dozing && card.severity !== "urgent") continue;
     const key = `${card.id}:${channel}`;
     const delivery = draft.view.get("deliveries", key) ?? NOT_DELIVERED;

@@ -17,7 +17,7 @@ const SETTINGS: Settings = {
   admin_merge: [],
   check: { workflow: "check.yml", job: "check" },
   ship: { workflow: "ship.yml" },
-  review: { points: "2", xhigh: [], status: "agent-review" },
+  review: { points: "2", xhigh: [], status: "agent-review", agents: {}, trusted: [] },
 };
 
 type World = {

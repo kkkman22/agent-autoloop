@@ -21,8 +21,8 @@
 1. 从最新的 `main` 创建分支；外部贡献者使用 Fork。本仓库里的分支只能以 `claude/`、`codex/` 或 `dependabot/` 开头，tag 只用于发布（`v1.2.3`）。Agent 在独立工作树里开发，主目录保留在 `main`。
 2. 使用 Node.js 24 或更新版本，运行 `npm ci`。一次 PR 解决一个问题，同步更新受影响的中英文说明、示例和配置。
 3. 修 bug 先写能复现它的失败测试，测试文件开头说明防止什么失败。纯文档、模板或小范围可逆改动，不补照着实现抄的测试。
-4. 提交前运行 `npm run test:quick`、`npm run typecheck`、`npm run format:check`。改了 `kernel/`、`protocol/`、`sim/` 时用 `npm test`，它多跑完整模拟和穷举。涉及日志、到期表或并发时，再运行 `npm run test:nightly`。CI 在 Linux 和 macOS 上检查，并用已提交的代码运行安装到卸载的冒烟验证；只改文档时跳过这些检查，PR 上只有改了 `kernel/`、`protocol/` 或模拟本身才跑一段 2 万步的短模拟，合并后再跑一遍快速测试和安装冒烟；完整模拟、穷举、强杀和变异每天定时跑一次，同时用最新的 Node 跑快速测试。
-5. 向 `main` 提交 PR，说明问题、改后的行为、验证结果和兼容影响。未完成的工作使用草稿；合并前确认当前提交的两项系统检查通过。请勾选“Allow edits by maintainers”：要调整的地方维护者通常直接在你的分支上改好再合并。Fork 的 CI 跑在 GitHub 的机器上，自动运行；GitHub 新注册账号的首次 PR 要维护者批准后才运行。
+4. 提交前运行 `npm run test:quick`、`npm run typecheck`、`npm run format:check`。改了 `kernel/`、`protocol/`、`sim/` 时用 `npm test`，它多跑完整模拟和穷举。涉及日志、到期表或并发时，再运行 `npm run test:nightly`。Windows 原生检查用 `npm run test:windows`。各平台的 CI 与安装冒烟检查见 [检查范围](AGENTS.md#怎么改)。
+5. 向 `main` 提交 PR，说明问题、改后的行为、验证结果和兼容影响。未完成的工作使用草稿；合并前确认最终提交的 Ubuntu、macOS 和 Windows 检查都已通过，维护者把独立审查和必要的真机验证记在 PR。请勾选“Allow edits by maintainers”：要调整的地方维护者通常直接在你的分支上改好再合并。Fork 的 CI 跑在 GitHub 的机器上，自动运行；GitHub 新注册账号的首次 PR 要维护者批准后才运行。
 
 受保护路径是 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-lock.json` 和 `ops/delivery.json`。改动这些路径的 PR 一律跑完整检查，不能自动合并，要维护者人工批准。PR 的检查范围用 base 提交里的 `scripts/ci-scope.sh` 决定，PR 自己改脚本不能让必需检查空转；分支保护、必需检查和自动合并关闭由仓库管理员配置。
 

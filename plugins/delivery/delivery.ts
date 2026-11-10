@@ -2,14 +2,14 @@
 // back rather than trusting its own last response, and a failure is left for the hub's retry to pick up where it
 // stands. Everything platform-specific is said in the host's words (host.ts); GitHub and GitLab translate.
 import { matches, settings, type Live, type Settings } from "./project.ts";
-import type { Finding } from "./review.ts";
+import type { Finding, Reviewed } from "./review.ts";
 import { hostFor, type Change, type DeliveryHost } from "./host.ts";
 
 export type DeliveryIO = {
   /** Which platform's REST shapes this io speaks; without the mark it is GitHub, as every older io is. */
   host?: "github" | "gitlab";
   api(path: string, body?: any, method?: string): Promise<any>;
-  review(pr: any, config: Settings, main: string): Promise<Finding[]>;
+  review(pr: any, config: Settings, main: string): Promise<Reviewed>;
   merge(pr: any, config: Settings): Promise<void>;
   disableAuto(number: number): Promise<void>;
   contains(base: string, head: string): Promise<boolean>;
@@ -187,7 +187,9 @@ export async function deliver(
       await host.status(head, "delivery", "failure", summary);
       return reviewOnly(change, summary);
     }
-    const findings = await io.review(prLike(change), config, main);
+    const reviewed = await io.review(prLike(change), config, main);
+    const exempt = Array.isArray(reviewed) ? null : reviewed.exempt;
+    const findings = Array.isArray(reviewed) ? reviewed : [];
     const current = await host.change(number);
     if (current.merged) {
       change = current;
@@ -200,7 +202,11 @@ export async function deliver(
       await host.status(head, config.review.status, "failure", FINDINGS);
       return { summary: "审查发现问题，尚未合并", findings, head };
     }
-    if (current.labels.has("deliver-review")) return reviewOnly(current);
+    if (current.labels.has("deliver-review")) {
+      if (!exempt) return reviewOnly(current);
+      // Asked for after this round let the change through without a review: the next round reviews it.
+      continue;
+    }
     let after = 0;
     if (current.draft) {
       // Right after going ready the newest run is still a draft one: only a run started by the change can pass.
@@ -222,7 +228,10 @@ export async function deliver(
         await host.status(head, "delivery", "success", "交付标记已撤回，未合并或发布");
         return { summary: "交付标记已撤回" };
       }
-      if (change.labels.has("deliver-review")) return reviewOnly(change);
+      if (change.labels.has("deliver-review")) {
+        if (!exempt) return reviewOnly(change);
+        continue;
+      }
       if ((await host.mainRef()) !== main) {
         if (round < 3) continue;
         throw new Error("main 已前进，稍后重新同步和检查");
@@ -234,8 +243,10 @@ export async function deliver(
         await host.status(head, "delivery", "failure", summary);
         return reviewOnly(change, summary);
       }
+      // An exempt merge says the project's settings let it through, not that a review passed.
+      const passed = exempt ? `${exempt} 写的改动按项目设置免审` : "此提交审查通过";
       const note = guarded ? "；改了受保护路径，由 deliver-attended 人工确认" : "";
-      await host.status(head, config.review.status, "success", `此提交审查通过，完整检查通过${note}`);
+      await host.status(head, config.review.status, "success", `${passed}，完整检查通过${note}`);
       try {
         await io.merge(prLike(change), config);
       } catch (error) {
@@ -259,4 +270,5 @@ const prLike = (change: Change) => ({
   number: change.number,
   head: { sha: change.headSha },
   user: { login: change.author },
+  labels: [...change.labels].map((name) => ({ name })),
 });
