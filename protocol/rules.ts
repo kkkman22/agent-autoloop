@@ -49,6 +49,12 @@ const isQuiet: Check = (value) =>
   CLOCK.test(String(value.from)) &&
   CLOCK.test(String(value.to)) &&
   value.from !== value.to;
+// One word, as a client may name a session after the first word of its first message. It leads the prompt, which goes to
+// the Agent's command line as an argument: started with a subject from outside it could be read as an option or command.
+const isTitle: Check = (value) =>
+  typeof value === "string" &&
+  /^[\p{L}\p{N}]\S*$/u.test(value) &&
+  !/[{}]/.test(value.replaceAll("{id}", "").replaceAll("{subject}", ""));
 const isFolder: Check = (value) =>
   typeof value === "string" && /^(~[/\\]|\/|[a-z]:[/\\]|\\\\[^\\]+\\[^\\]+)/i.test(value);
 const FOLDER = "要是绝对目录（如 ~/code、/srv/app、C:\\code 或 \\\\服务器\\共享目录）";
@@ -94,14 +100,16 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["cwd", isFolder, FOLDER],
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
+    ["title", isTitle, "要是字母或数字开头、不含空白的一个词，占位符只能用 {id}、{subject}", true],
     ["group", isText, NOT_EMPTY, true],
     ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
+    ["maxActive", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["resume", (value) => typeof value === "boolean", "只能是 true 或 false", true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["disabled", (value) => typeof value === "boolean", "要是 true 或 false", true],
     [
       "channels",
-      (value) => isWords(value) && (value as string[]).every((id) => isKeyOf(rules.channels)(id)),
+      (value) => isSomeWords(value) && (value as string[]).every((id) => isKeyOf(rules.channels)(id)),
       "要是已登记通道的编号列表",
       true,
     ],
@@ -115,7 +123,6 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
       true,
     ],
     ["emits", isObject, "要是一个对象", true],
-    ["channels", isSomeWords, "要是通道编号的列表", true],
   ]);
   if (isObject(when) && "source" in when) {
     checkFields(issues, `${where}的 when `, when, [
@@ -234,10 +241,12 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
       ["use", isId, ID_WORDS],
       ["model", isText, NOT_EMPTY, true],
       ["effort", isText, NOT_EMPTY, true],
+      ["tier", isText, NOT_EMPTY, true],
       ["access", (value) => ACCESS.includes(value as string), `只能是 ${ACCESS.join("、")}`, true],
       ["command", isSomeWords, "要是命令行的列表", !isObject(agent) || agent.use !== "command"],
       ["program", isText, "要是一个程序的路径", true],
       ["timeout", atMost(MAX_TIMEOUT), `要是 1 到 ${MAX_TIMEOUT} 的整数（分钟）`, true],
+      ["maxActive", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ]);
     if (isObject(agent)) agent.access ??= "edit";
   }

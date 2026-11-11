@@ -24,6 +24,12 @@ export type Change = {
   draft: boolean;
   author: string;
   mergeCommit: string | null;
+  /** The change's own page, where its checks are read. */
+  url: string;
+  /** Whether the change cannot merge as it stands: its branch conflicts with the base. */
+  conflicts: boolean;
+  /** The change's own description, as its author last wrote it. */
+  body: string | null;
 };
 
 export type DeliveryHost = {
@@ -50,8 +56,9 @@ export type DeliveryHost = {
   /** The state of the change's full check: the workflow run and its required job. A run with an id up to `after`
    * is not counted, since a draft's run passing says nothing about the change made ready. */
   checks(config: Settings, head: string, after?: number): Promise<"passed" | "waiting" | "failed">;
-  /** The Ship runs on main, newest first: which commit they built and whether they succeeded. */
-  shipRuns(config: Settings): Promise<{ sha: string; ok: boolean }[]>;
+  /** The Ship runs on main, newest first: their id and page, which commit they built, whether each finished and
+   * succeeded. */
+  shipRuns(config: Settings): Promise<{ id: number; url: string; sha: string; completed: boolean; ok: boolean }[]>;
 };
 
 /** Which platform an io object speaks; everything already wired to the GitHub shapes stays on GitHub. */

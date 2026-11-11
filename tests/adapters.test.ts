@@ -13,7 +13,8 @@
 // but no message, like `null`, stops a plugin reading anything. A command line's placeholder pass rewrites the prompt
 // itself — a `{cwd}` or a `$&` the person wrote arrives as the folder or as `{prompt}` — so the program is asked
 // something other than what the event said. A built-in agent starts the program it finds, not the one its rules name,
-// so a wrapper that sends Claude Code to another service is never run.
+// so a wrapper that sends Claude Code to another service is never run. A service tier the rules name for Codex never
+// reaches its command line, so the run takes whatever tier the machine's own Codex config has that day.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ const claude: Adapter = (await import("../plugins/claude/agent.ts")).default;
 const codex: Adapter = (await import("../plugins/codex/agent.ts")).default;
 const command: Adapter = (await import("../plugins/command/agent.ts")).default;
 const dsh: Adapter = (await import("../plugins/dsh/agent.ts")).default;
+const zcode: Adapter = (await import("../plugins/zcode/agent.ts")).default;
 
 const turn = {
   prompt: "做这件事",
@@ -61,7 +63,7 @@ const stubbed = (adapter: Adapter, t: object) => {
 };
 
 test("a built-in agent starts the program its rules name, with its own arguments after it", () => {
-  for (const adapter of [claude, codex, dsh]) {
+  for (const adapter of [claude, codex, dsh, zcode]) {
     const argv = adapter.command({ ...turn, program: "/opt/bin/via-gateway" });
     assert.equal(argv[0], "/opt/bin/via-gateway");
     assert.ok(argv.includes("做这件事") || argv.some((part) => part.includes("做这件事")), "the prompt still goes in");
@@ -269,12 +271,15 @@ test("Codex: access, new and going on", { skip: !stubbed(codex, {}) }, () => {
   assert.ok(argv.includes('approval_policy="never"'));
   assert.ok(stubbed(codex, { access: "read" })!.includes('sandbox_mode="read-only"'));
   assert.ok(stubbed(codex, { access: "full" })!.includes('sandbox_mode="danger-full-access"'));
-  const again = stubbed(codex, { resume: "thread-1", model: "m", effort: "xhigh" })!;
+  const again = stubbed(codex, { resume: "thread-1", model: "m", effort: "xhigh", tier: "priority" })!;
   assert.deepEqual(again.slice(1, 3), ["exec", "resume"]);
   assert.equal(again.at(-2), "thread-1");
   assert.equal(again.at(-1), argv.at(-1));
   assert.ok(has(again, "-m", "m"));
   assert.ok(again.includes('model_reasoning_effort="xhigh"'));
+  assert.ok(again.includes('service_tier="priority"'));
+  assert.ok(stubbed(codex, { tier: "priority" })!.includes('service_tier="priority"'), "a new run gets it too");
+  assert.ok(!argv.some((part) => part.startsWith("service_tier")), "left to Codex's own config unless the rules say");
 });
 
 test("Codex: new and resumed runs use only browser access configured for the background task", () => {
@@ -387,7 +392,7 @@ test("a program that isn't there says so", () => {
 
 test("a line of output that's JSON but no message is noise to every plugin", () => {
   const noise = 'null\n42\n"words"\n[]\n';
-  for (const adapter of [claude, codex, command, dsh]) {
+  for (const adapter of [claude, codex, command, dsh, zcode]) {
     assert.doesNotThrow(() => adapter.read(noise, null, ""));
     assert.doesNotThrow(() => adapter.read(noise, 0, ""));
   }

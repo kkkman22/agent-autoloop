@@ -11,8 +11,9 @@ import { promisify } from "node:util";
 import { after, test } from "node:test";
 import { explainRules } from "../cli/explain.ts";
 import { at, setup } from "./helpers.ts";
-const home = setup("rules-preview");
+
 const fixture = readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8");
+const home = setup("rules-preview");
 const cli = async (...args: string[]) =>
   (
     await promisify(execFile)(
@@ -39,6 +40,27 @@ const post = (body: string, key = owner) =>
       body,
     }),
   );
+
+// Registered after the hub setup above: a test that runs while a top-level await still holds module
+// evaluation would finish the runner's current scope early and tear this file's temp home down mid-run.
+test("the explanation shows rule and Agent claim limits independently", () => {
+  const given = JSON.parse(fixture);
+  given.rules[0].maxActive = 1;
+  given.agents.a1.maxActive = 2;
+  const lines = explainRules(JSON.stringify(given), at(0), "UTC");
+  assert.match(
+    lines.find((line) => line.startsWith("Agent："))!,
+    /a1（[^）]+最多同时 2 轮/,
+  );
+  assert.match(
+    lines.find((line) => line.startsWith("  意见："))!,
+    /并发 3 · 本规则最多同时 1 轮/,
+  );
+  assert.match(
+    lines.find((line) => line.startsWith("  意见："))!,
+    /会话标题 note-\{id\}/,
+  );
+});
 const file = readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8");
 const candidate = (change: (raw: { rules: Record<string, unknown>[] }) => void) => {
   const raw = JSON.parse(file);

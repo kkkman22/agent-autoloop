@@ -3,15 +3,30 @@
 export type Access = "read" | "edit" | "full";
 export type Severity = "low" | "normal" | "urgent";
 export type Source = { name: string; adapter?: string };
-type AgentOptions = { model?: string; effort?: string; command?: string[]; program?: string; timeout?: number };
-export type Agent = AgentOptions & { name: string; worker: string; use: string; access: Access };
-export type Channel = { name: string; answerers?: string[]; links?: boolean; quiet?: { from: string; to: string } };
+type AgentOptions = {
+  model?: string;
+  effort?: string;
+  tier?: string;
+  command?: string[];
+  program?: string;
+  timeout?: number;
+};
+export type Agent = AgentOptions & { name: string; worker: string; use: string; access: Access; maxActive?: number };
+export type Channel = {
+  name: string;
+  answerers?: string[];
+  links?: boolean;
+  quiet?: { from: string; to: string };
+};
 export type Tell = "always" | "needed" | "never";
 type EventFilter = { source: string; types: string[] };
 type When = EventFilter | { cron: string };
 type RuleWords = { skill?: string; prompt?: string };
+/** A session's name for clients that take it from the first line: {subject} and {id} filled in by the worker. */
 type RuleOptions = RuleWords & {
+  title?: string;
   parallel?: number;
+  maxActive?: number;
   resume?: boolean;
   emits?: EventFilter;
   disabled?: boolean;

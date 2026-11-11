@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import type { DeliveryIO } from "./delivery.ts";
 import type { Change, DeliveryHost } from "./host.ts";
+import type { DeliveryOptions } from "./github.ts";
 import { changedFiles, git, liveRelease, releaseRequired } from "./project.ts";
-import { reviewSnapshot } from "./review.ts";
+import { reviewDelivery } from "./review.ts";
 import { pendingEvents } from "./input.ts";
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -78,6 +79,9 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
         draft: isDraft(mr),
         author: mr.author?.username ?? "",
         mergeCommit: mr.merge_commit_sha ?? null,
+        url: mr.web_url ?? "",
+        conflicts: mr.merge_status === "cannot_be_merged",
+        body: mr.description ?? null,
       };
       return change;
     },
@@ -129,15 +133,25 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
     },
     async shipRuns(_config) {
       const pipelines = await io.api(`pipelines?ref=main&source=push`);
+      const final = ["success", "failed", "canceled", "skipped"];
       return [...pipelines]
         .sort((a: any, b: any) => b.id - a.id)
-        .filter((pipeline: any) => pipeline.status === "success" || pipeline.status === "failed")
-        .map((pipeline: any) => ({ sha: pipeline.sha, ok: pipeline.status === "success" }));
+        .map((pipeline: any) => ({
+          id: pipeline.id,
+          url: pipeline.web_url,
+          sha: pipeline.sha,
+          completed: final.includes(pipeline.status),
+          ok: pipeline.status === "success",
+        }));
     },
   };
 }
 
-export function createIO(repo: string, folder: string): DeliveryIO {
+export function createIO(
+  repo: string,
+  folder: string,
+  options: Pick<DeliveryOptions, "report" | "reviewStatus"> = {},
+): DeliveryIO {
   const api = gitlabApi(repo);
   const bare = join(folder, "objects.git");
   const started = Date.now();
@@ -154,12 +168,55 @@ export function createIO(repo: string, folder: string): DeliveryIO {
   const isAncestor = (base: string, head: string) =>
     spawnSync("git", ["-C", bare, "merge-base", "--is-ancestor", head, base]).status === 0;
   const ancestors = new Map<string, boolean>();
+  // GitLab's commit statuses carry no author, so a proof cannot be told from a forgery the way GitHub's can: whoever
+  // can write one at all is a project member, and member-writable records are trusted the same either way here.
+  let self: number | undefined;
+  const project = encodeURIComponent(repo);
+  const gitlabStatuses = (sha: string) => {
+    const items = JSON.parse(
+      glab(["api", `projects/${project}/repository/commits/${encodeURIComponent(sha)}/statuses?per_page=100`]),
+    );
+    return [...items].map((item: any) => ({
+      context: item.name,
+      state: fromGitlabStatus(item.status),
+      description: item.description,
+      creator: { id: (self ??= JSON.parse(glab(["api", "user"])).id) },
+    }));
+  };
   return {
     host: "gitlab",
     api,
+    report: options.report,
+    reviewStatus: options.reviewStatus,
     async review(pr, config, main) {
       fetchObjects(main, pr.head.sha);
-      return reviewSnapshot(bare, join(folder, `review-${pr.head.sha}`), main, pr.head.sha, config);
+      return reviewDelivery(bare, join(folder, `review-${pr.head.sha}`), main, pr, config, {
+        // The review speaks GitHub's paths; each one becomes the project's own on the way to GitLab.
+        api: async (path, body, method) => {
+          const mr = /^pulls\/(\d+)$/.exec(path);
+          if (mr && body === undefined) {
+            const found = await api(`merge_requests/${mr[1]}`);
+            return {
+              merged_at: found.merged_at,
+              head: { sha: found.sha },
+              body: found.description ?? "",
+              labels: (found.labels ?? []).map((label: string) => ({ name: label })),
+            };
+          }
+          if (mr) return api(`merge_requests/${mr[1]}`, { description: body.body }, "PUT");
+          const status = /^statuses\/(.+)$/.exec(path);
+          if (status && body)
+            return api(`repository/commits/${encodeURIComponent(status[1])}/statuses`, {
+              name: body.context,
+              description: body.description,
+              state: toGitlabStatus(body.state),
+            });
+          throw new Error(`审查用不到 ${path}`);
+        },
+        statuses: (sha) => gitlabStatuses(sha),
+        reviewerId: () => (self ??= JSON.parse(glab(["api", "user"])).id),
+        onReview: () => options.report?.("reviewing", pr.head.sha),
+      });
     },
     async merge(pr) {
       // GitLab has no second, higher-privilege merge lane: whoever glab signs in as needs the rights themselves.

@@ -443,6 +443,9 @@
             "prompt": {
               "type": "string"
             },
+            "title": {
+              "type": "string"
+            },
             "emits": {
               "type": "object",
               "properties": {
@@ -482,6 +485,9 @@
               "type": "string"
             },
             "effort": {
+              "type": "string"
+            },
+            "tier": {
               "type": "string"
             },
             "access": {
