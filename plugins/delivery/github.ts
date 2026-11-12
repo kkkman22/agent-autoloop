@@ -9,6 +9,8 @@ import { changedFiles, git, liveRelease, releaseRequired, REPO, type Settings } 
 import { readSharedPolicy, reviewDelivery } from "./review.ts";
 
 const LONGEST_WAIT = 1800000;
+// A run GitHub took but never started counts as stalled after this long.
+const STALL = 10 * 60_000;
 class GitHubHiccup extends Error {}
 export function isGitHubHiccup(error: unknown): boolean {
   return error instanceof GitHubHiccup || (error instanceof Error && !!error.cause && isGitHubHiccup(error.cause));
@@ -43,9 +45,9 @@ export function gh(args: string[], input?: object) {
 export function github(repo: string) {
   if (!REPO.test(repo)) throw new Error("仓库要写成 owner/name");
   return async (path: string, body?: any, method = body === undefined ? "GET" : "POST") => {
-    const ready = /^pulls\/(\d+)\/ready$/.exec(path);
+    const ready = /^pulls\/(\d+)\/(ready|draft)$/.exec(path);
     if (ready) {
-      gh(["pr", "ready", ready[1], "--repo", repo]);
+      gh(["pr", "ready", ready[1], "--repo", repo, ...(ready[2] === "draft" ? ["--undo"] : [])]);
       return {};
     }
     const text = gh(
@@ -64,7 +66,7 @@ export function pages(repo: string, path: string): any[] {
 const labels = (pr: any) => new Set<string>((pr.labels ?? []).map((label: any) => label.name));
 
 /** GitHub's REST dialect, spoken once: the host's words go in, the repo's paths come out. */
-export function githubHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryHost {
+export function githubHost(repo: string, io: Pick<DeliveryIO, "api" | "now">): DeliveryHost {
   const contents = async (ref: string, path: string) => {
     try {
       return await io.api(`contents/${path}?ref=${ref}`);
@@ -141,13 +143,22 @@ export function githubHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
       const { job } = config.check;
       const run = await newestRun(config, head);
       if (!run || run.id <= after) return "waiting";
-      const jobs = (await io.api(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`)).jobs.filter(
-        (candidate: any) => candidate.name === job || candidate.name.startsWith(`${job} (`),
-      );
-      if (!jobs.length) return "waiting";
+      const jobs = (await io.api(`actions/runs/${run.id}/jobs?filter=latest&per_page=100`)).jobs;
+      // A queued run with no jobs for minutes on end is GitHub holding it back, not a check still running.
+      if (
+        !jobs.length &&
+        ["queued", "waiting", "pending"].includes(run.status) &&
+        (io.now?.() ?? Date.now()) - Date.parse(run.created_at) > STALL
+      )
+        return "stalled";
+      const required = jobs.filter((candidate: any) => candidate.name === job || candidate.name.startsWith(`${job} (`));
+      if (!required.length) return "waiting";
       if (run.status === "completed" && run.conclusion !== "success") return "failed";
       const finished = (item: any) => item.status === "completed" && item.conclusion === "success";
-      return finished(run) && jobs.every(finished) ? "passed" : "waiting";
+      return finished(run) && required.every(finished) ? "passed" : "waiting";
+    },
+    async draft(number) {
+      await io.api(`pulls/${number}/draft`, {}, "POST");
     },
     async shipRuns(config) {
       const { workflow_runs } = await io.api(
@@ -225,6 +236,7 @@ export function createIO(repo: string, folder: string, options: DeliveryOptions 
     verifyReview,
     reviewStatus: options.reviewStatus,
     report: options.report,
+    now: Date.now,
     ...(options.autoMerge && {
       async enableAuto(pr: any) {
         gh([

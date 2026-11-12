@@ -8,7 +8,7 @@ import { openDatabase } from "./database.ts";
 import { HOME, RULES_FILE } from "./home.ts";
 import { privateDirectory } from "./files.ts";
 import { CARD_HASH_INDEX, formatOf } from "./fingerprint.ts";
-import { stateOf as state, viewStatements } from "./state.ts";
+import { skippedOf, stateOf as state, viewStatements } from "./state.ts";
 import { cardHash, digest, whose as keyHolder } from "../kernel/credentials.ts";
 import { decide } from "../kernel/decide.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
@@ -226,6 +226,7 @@ export function answerByLink(token: string, given: Answer, now = Date.now()) {
 export const view = (card: Row, ref: string | null = null, links = false) =>
   query.cardView(card, environment, ref, links);
 export const unrouted = (limit = 20) => query.unrouted(getView(), limit);
+export const skipped = (rule: string, since: string, everything = false) => skippedOf(all, rule, since, everything);
 /** Read in one snapshot: its seq is where the log stood for all of it, for a client to go on in /v1/stream from. */
 export function stateOf(now = Date.now(), before?: number) {
   db.exec("BEGIN");

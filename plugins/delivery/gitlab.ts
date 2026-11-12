@@ -116,6 +116,11 @@ export function gitlabHost(repo: string, io: Pick<DeliveryIO, "api">): DeliveryH
       const stripped = (mr.title ?? "").replace(DRAFT, "");
       if (stripped !== mr.title) await io.api(`merge_requests/${number}`, { title: stripped }, "PUT");
     },
+    async draft(number) {
+      // Making it a draft is the same title edit, the other way.
+      const mr = await io.api(`merge_requests/${number}`);
+      if (!DRAFT.test(mr.title ?? "")) await io.api(`merge_requests/${number}`, { title: `Draft: ${mr.title}` }, "PUT");
+    },
     async statuses(head) {
       const items = await io.api(`repository/commits/${encodeURIComponent(head)}/statuses`);
       return [...items].map((item: any) => ({ context: item.name, state: fromGitlabStatus(item.status) }));

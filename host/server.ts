@@ -179,6 +179,7 @@ export function makeHandler(commit = "dev", { limits, log = () => {} }: HandlerO
     environment: hub.environment,
     dispatch: hub.execute,
     state: hub.stateOf,
+    skipped: hub.skipped,
     why: hub.why,
     metrics: () => metricsText(commit),
     card: hub.cardByToken,

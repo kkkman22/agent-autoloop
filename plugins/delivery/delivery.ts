@@ -21,6 +21,8 @@ export type DeliveryIO = {
   changedFiles(base: string, head: string): Promise<string[] | null>;
   live(config: Settings): Promise<Live | null>;
   wait(): Promise<void>;
+  now?(): number;
+  checkRecovery?: { head: string; after: number };
   reviewStatus?: string;
   report?: DeliveryReport;
 };
@@ -95,7 +97,7 @@ export async function fullCheck(
   config: Settings,
   io: DeliveryIO,
   after = 0,
-): Promise<"passed" | "waiting" | "failed"> {
+): Promise<"passed" | "waiting" | "failed" | "stalled"> {
   return hostFor(io, config.repo).checks(config, head, after);
 }
 
@@ -294,10 +296,11 @@ export async function deliver(
       continue;
     }
     await io.report?.("checking", head);
-    let after = 0;
+    let after = io.checkRecovery?.head === head ? io.checkRecovery.after : 0;
     if (current.draft) {
       // Right after going ready the newest run is still a draft one: only a run started by the change can pass.
       after = await host.newestCheck(config, head);
+      if (io.checkRecovery?.head === head) io.checkRecovery.after = after;
       await host.ready(number);
     }
     let merging = false;
@@ -333,6 +336,21 @@ export async function deliver(
           await stopAuto();
           if (!exempt && !io.verifyReview) return reviewOnly(change);
           continue rounds;
+        }
+        if (state === "stalled") {
+          if (io.checkRecovery?.head === head)
+            throw new DeliveryRefusal(
+              "GitHub 收下了检查却一直没开始跑（多半是 GitHub 出了事故），已重新触发一次仍不动。等 GitHub 恢复后重新交付。",
+              head,
+            );
+          await stopAuto();
+          await host.draft(number);
+          io.checkRecovery = { head, after };
+          // Converting to draft can start another run. Only a run created after going ready can authorize merging.
+          after = await host.newestCheck(config, head);
+          io.checkRecovery.after = after;
+          await host.ready(number);
+          continue;
         }
         if (state === "failed") {
           throw new DeliveryRefusal(`完整检查没有通过。查看 ${change.url}/checks`, head);

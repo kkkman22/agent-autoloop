@@ -49,13 +49,16 @@ export type DeliveryHost = {
   syncMain(number: number, expectedHead: string): Promise<void>;
   /** A draft becomes a normal change, ready to be merged. */
   ready(number: number): Promise<void>;
+  /** A change goes back to draft, the only way to make a stuck check run start over. */
+  draft(number: number): Promise<void>;
   /** What earlier rounds wrote on a commit, in the host's status words: context and success/failure/pending. */
   statuses(head: string): Promise<{ context: string; state: string }[]>;
   /** The id of the newest full-check run of a commit, or 0 without one: runs up to it were a draft's. */
   newestCheck(config: Settings, head: string): Promise<number>;
   /** The state of the change's full check: the workflow run and its required job. A run with an id up to `after`
-   * is not counted, since a draft's run passing says nothing about the change made ready. */
-  checks(config: Settings, head: string, after?: number): Promise<"passed" | "waiting" | "failed">;
+   * is not counted, since a draft's run passing says nothing about the change made ready. Stalled is a run the
+   * host took but never started, which only starting it over can shake loose. */
+  checks(config: Settings, head: string, after?: number): Promise<"passed" | "waiting" | "failed" | "stalled">;
   /** The Ship runs on main, newest first: their id and page, which commit they built, whether each finished and
    * succeeded. */
   shipRuns(config: Settings): Promise<{ id: number; url: string; sha: string; completed: boolean; ok: boolean }[]>;

@@ -110,7 +110,7 @@ test("--allow-writes exposes the writing tools, each with the key it belongs to"
   const get = (id: number) => responses.find((r: any) => r.id === id);
   assert.deepEqual(
     get(2).result.tools.map((t: any) => t.name),
-    ["status", "why", "answer", "resolve", "stop", "emit", "tell", "pause", "resume", "run"],
+    ["status", "why", "answer", "resolve", "stop", "emit", "tell", "pause", "resume", "replay", "run"],
   );
   assert.equal(get(3).result.isError, undefined);
   assert.equal(get(4).result.isError, undefined);
@@ -222,6 +222,11 @@ test("MCP stdio initializes and exposes only the typed hub operations", async ()
     { id: 8, method: "tools/call", params: { name: "pause", arguments: { rule: "巡检", reason: "上游在修" } } },
     { id: 9, method: "tools/call", params: { name: "resume", arguments: { rule: "巡检" } } },
     { id: 10, method: "tools/call", params: { name: "run", arguments: { rule: "巡检", reason: "看一眼" } } },
+    {
+      id: 11,
+      method: "tools/call",
+      params: { name: "replay", arguments: { rule: "巡检", since: "2026-11-11T08:59:12.345Z" } },
+    },
   ];
   child.stdin.end(messages.map((m) => JSON.stringify({ jsonrpc: "2.0", ...m })).join("\n") + "\n");
   await once(child, "close");
@@ -231,7 +236,7 @@ test("MCP stdio initializes and exposes only the typed hub operations", async ()
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l));
-  assert.equal(responses.length, 10);
+  assert.equal(responses.length, 11);
   assert.equal(
     responses[0].result.serverInfo.version,
     versionName(),
@@ -239,7 +244,7 @@ test("MCP stdio initializes and exposes only the typed hub operations", async ()
   );
   const get = (id: number) => responses.find((r) => r.id === id);
   assert.equal(get(1).result.protocolVersion, "2025-11-25");
-  for (const name of ["answer", "pause", "resume", "run"])
+  for (const name of ["answer", "pause", "resume", "run", "replay"])
     assert.ok(get(2).result.tools.some((t: any) => t.name === name));
   assert.equal(get(3).result.isError, undefined);
   assert.equal(get(4).error.code, -32602);
@@ -249,6 +254,7 @@ test("MCP stdio initializes and exposes only the typed hub operations", async ()
   assert.deepEqual(calls.toSorted(), [
     ["/v1/events", "Bearer source-key"],
     ["/v1/rules/%E5%B7%A1%E6%A3%80/pause", "Bearer owner-key"],
+    ["/v1/rules/%E5%B7%A1%E6%A3%80/replay", "Bearer owner-key"],
     ["/v1/rules/%E5%B7%A1%E6%A3%80/resume", "Bearer owner-key"],
     ["/v1/rules/%E5%B7%A1%E6%A3%80/run", "Bearer owner-key"],
     ["/v1/runs/999/why", "Bearer owner-key"],
