@@ -4,6 +4,7 @@
 // command line doesn't reach these doors or says nothing useful. What a pause skipped isn't counted while it lasts, isn't
 // listed in full when it's lifted, takes in what an earlier pause skipped, or can't be replayed in one go after the lift;
 // the command line doesn't say a pause holds nothing back for later, or leaves the owner to find the skipped events.
+// The state leaves out the model a task elsewhere was registered with, or makes one up for a task that named none.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -15,7 +16,14 @@ import { setup, beforeCleanup } from "./helpers.ts";
 const home = setup("pause-http");
 const rulesFile = join(home, "rules.json");
 const fixture = JSON.parse(readFileSync(process.env.AGENT_AUTOLOOP_RULES!, "utf8"));
-fixture.elsewhere.push({ ...fixture.elsewhere[0], name: "会问的清理", cwd: "/tmp", prompt: "接着清理。" });
+fixture.elsewhere.push({
+  ...fixture.elsewhere[0],
+  name: "会问的清理",
+  cwd: "/tmp",
+  prompt: "接着清理。",
+  model: "some-model",
+  effort: "high",
+});
 writeFileSync(rulesFile, JSON.stringify(fixture));
 process.env.AGENT_AUTOLOOP_RULES = rulesFile;
 const { serve } = await import("../host/http.ts");
@@ -48,6 +56,14 @@ async function post(path: string, body?: unknown, key = owner) {
   return { status: response.status, json: await response.json() };
 }
 const state = async () => (await fetch(`${base}/v1/state`, { headers: { authorization: `Bearer ${owner}` } })).json();
+test("a task elsewhere shows the model and effort it was registered with, and none when it named none", async () => {
+  const { elsewhere } = await state();
+  const named = elsewhere.find((task: any) => task.name === "会问的清理");
+  assert.deepEqual([named.model, named.effort], ["some-model", "high"]);
+  const plain = elsewhere.find((task: any) => task.name !== "会问的清理");
+  assert.deepEqual(["model" in plain, "effort" in plain], [false, false]);
+});
+
 const lineOf = async (name: string) => (await state()).lines.find((line: { name: string }) => line.name === name);
 const rule = (name: string, action: string) => `/v1/rules/${encodeURIComponent(name)}/${action}`;
 const send = async (id: string, subject: string) =>

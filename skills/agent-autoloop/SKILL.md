@@ -113,7 +113,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 配置在两处：`rules.json` 的 `channels` 登记（`answerers` 是谁能回答），`config.json` 的 `channels` 写密钥和选项。`answerers` 缺失或为空表示这个通道只能发通知，谁都不能回答；只有显式 `["*"]` 才允许任何有名字的人。没在 `rules.json` 登记的通道拿不到卡片。`agent-autoloop key new channel <名字>` 拿密钥（先问用户）。改了 `config.json` 要 `agent-autoloop service install` 重启。默认每张卡片发到所有通道；某条规则的卡片只想发到某几个通道，在这条规则里写 `"channels": ["feishu"]`；通道多了，`tell`、中台自己的告警这些不属于哪条规则的卡片会每个通道各发一遍，在 `rules.json` 顶层写 `"defaultChannels": ["feishu"]`，自己没写 `channels` 的都只发那几个。
 
-**桌面通知**：新装的中台默认开着（`plugins/desktop/channel.ts`），两处各有一个 `desktop`。卡片第一次发送时，macOS 用 `osascript`、Linux 用 `notify-send`、Windows 用 PowerShell 系统托盘通知弹一条通知，标题为“Agent 问你一个问题”，正文是卡片标题和“运行 agent-autoloop status 查看”，不能在通知上回答。没有图形会话时安静跳过，问题仍在；通知命令失败时报告失败，不会让中台退出。接了别的通道可以留着它；不想要就把两处的 `desktop` 都删掉，再重启。以前装的中台不会自动加上它。
+**桌面通知**：新装的中台默认开着（`plugins/desktop/channel.ts`），两处各有一个 `desktop`。卡片第一次发送时，macOS 用 `osascript`、Linux 用 `notify-send`、Windows 用 PowerShell 系统托盘通知弹一条通知，标题为“Agent 问你一个问题”，正文是卡片标题、“来源：<规则名>”（卡片带规则且标题不是规则名时）和“运行 agent-autoloop status 查看”，不能在通知上回答。没有图形会话时安静跳过，问题仍在；通知命令失败时报告失败，不会让中台退出。接了别的通道可以留着它；不想要就把两处的 `desktop` 都删掉，再重启。以前装的中台不会自动加上它。
 
 **飞书**：用官方的 `lark-cli`。`npm i -g @larksuite/cli`，`lark-cli config init --new` 建一个应用（用户扫码），在开发者后台给应用开机器人能力，并订阅卡片回传交互（长连接）。然后：
 

@@ -235,9 +235,10 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
     })),
     pauses,
     skipped: all<Row>(SKIPPED).map(skippedView),
-    elsewhere: rules.elsewhere.map(({ name, source, to, cron, where }) => {
+    elsewhere: rules.elsewhere.map(({ name, source, to, cron, where, model, effort }) => {
       const next = iso(nextRun(parseCron(cron)!, now, rules.timezone) ?? now);
-      return { id: name, name, source, agent: to, cron, every: describeCron(cron), next, where };
+      const shown = { id: name, name, source, agent: to, cron, every: describeCron(cron), next, where };
+      return { ...shown, ...(model && { model }), ...(effort && { effort }) };
     }),
     agents: Object.entries(rules.agents).map(([id, { name, use, worker, program }]) => {
       const totals = tally(counts.filter((row) => row.agent === id));

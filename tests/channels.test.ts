@@ -41,6 +41,17 @@ const base: Card = {
   link: "https://hub.test/c/x",
 };
 
+test("a card says which rule or task it came from, in every state, unless its title already does", () => {
+  const from = (card: Card) => (render(card).header as any).subtitle?.content;
+  assert.equal(from({ ...base, rule: "开源站每日巡检" }), "来源：开源站每日巡检");
+  assert.equal(
+    from({ ...base, rule: "开源站每日巡检", state: "done", choice: 0, result: "删了" }),
+    "来源：开源站每日巡检",
+  );
+  assert.equal(from(base), undefined, "the hub's own cards name no rule");
+  assert.equal(from({ ...base, kind: "notice", rule: "AIHOT 告警", title: "AIHOT 告警" }), undefined);
+});
+
 test("a card shows its options while it's open, and what became of it after", () => {
   const open = render(base);
   const blocks = open.body.elements.filter((e) => e.tag === "interactive_container") as any[];

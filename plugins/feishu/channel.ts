@@ -83,6 +83,10 @@ export function render(card: Card) {
     config: { update_multi: true, enable_forward: false },
     header: {
       title: { tag: "plain_text", content: card.title },
+      // Which rule or task it came from, in every state: cards from many places reach one person.
+      ...(card.rule && card.rule !== card.title
+        ? { subtitle: { tag: "plain_text", content: `来源：${card.rule}` } }
+        : {}),
       template: card.state === "open" ? "blue" : card.state === "closed" ? "grey" : "green",
     },
     body: {

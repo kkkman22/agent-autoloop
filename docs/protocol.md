@@ -90,6 +90,8 @@
       "to": "claude",
       "cron": "0 6 * * 0",
       "where": "Claude 应用的定时任务",
+      "model": "…",
+      "effort": "high",
       "cwd": "~/code/shop",
       "skill": "weekly-sweep",
       "prompt": "按其中“回答来了”一节处理。"
@@ -118,7 +120,7 @@
 
 `cwd` 由接单电脑解释，可用 Unix 绝对路径、Windows 盘符或 UNC 路径、`~/` 或 `~\` 开头的家目录路径；中台与接单电脑可以用不同操作系统。接受 Windows 路径是兼容的能力扩展，原有 `/v1`、规则与插件用法不变。
 
-`elsewhere` 是在别处定时跑的任务：中台不启动它们，只在 `agent-autoloop status` 里列出来，它们要找你时用 `POST /v1/tell`。写了 `cwd`（还要写 `skill` 或 `prompt`）的也能问你：卡片带选项，你答了，中台像规则的一轮那样叫醒 `to`，在 `cwd` 照 `skill`、`prompt` 接着做，这一轮的组就是任务名，一次一轮，不接定时任务自己的会话。规则写错了，文件改动不生效，旧规则继续跑，并推一张卡片告诉你错在哪。删除或改名一条规则时，还没领走的排队轮次会取消，对应规则还没结束的卡片会关闭，并各发一张通知；已经领走的一轮照常跑完。之后回答这些旧卡片会返回 409，先用 `resolve` 结掉。
+`elsewhere` 是在别处定时跑的任务：中台不启动它们，只在 `agent-autoloop status` 里列出来，它们要找你时用 `POST /v1/tell`。写了 `cwd`（还要写 `skill` 或 `prompt`）的也能问你：卡片带选项，你答了，中台像规则的一轮那样叫醒 `to`，在 `cwd` 照 `skill`、`prompt` 接着做，这一轮的组就是任务名，一次一轮，不接定时任务自己的会话。规则写错了，文件改动不生效，旧规则继续跑，并推一张卡片告诉你错在哪。删除或改名一条规则时，还没领走的排队轮次会取消，对应规则还没结束的卡片会关闭，并各发一张通知；已经领走的一轮照常跑完。之后回答这些旧卡片会返回 409，先用 `resolve` 结掉。可以给别处的定时任务写上 `model` 和 `effort`，也就是应用里给这个任务设的模型和推理强度：中台不用它们启动任何东西，只随 `GET /v1/state` 的 `elsewhere` 带出来，给显示这些任务的客户端用；没写就不带。这是兼容的扩展，原有规则文件不用改。
 
 写了 `resume`，一轮开始时如果事项的上一轮做完了（包括没事可做）、留下了会话，就接着那个会话；会话越接越长，Token 和费用也会跟着涨。这几种情况开新会话：上一轮被停掉了（你停的，或连续失败停下的），接着它多半还是同样的结果；上一轮是别的 Agent 跑的；上一轮没有会话。没写 `parallel` 时整条规则是一个事项，所有事件接同一个会话；事件不带 `subject` 时也都算同一个事项。回答和到期的复查在 Agent 没变时回到提问和约定时的会话，重派的也留在自己的会话。复查的旧日志若没有记录会话所属 Agent，会保留复查资料，不强行沿用旧会话，仍按 resume 规则决定是否续接当前 Agent 最近的会话。
 
@@ -351,12 +353,13 @@ GET /v1/cards/next?wait=50    Authorization: Bearer <通道的密钥>
 // Card：这张卡片现在的样子。内容创建后不变，只有状态会变
 { "id": 56, "version": 2, "ref": null, "kind": "ask", "state": "open",
   "title": "…", "text": "…", "options": ["…", "…"], "recommend": 0,
-  "choice": null, "answer": null, "by": null, "result": null, "link": null, "severity": "normal" }
+  "choice": null, "answer": null, "by": null, "result": null, "link": null, "severity": "normal", "rule": "…" }
 ```
 
 - 通道必须先在 `rules.json` 的 `channels` 里登记。密钥有效但名字没登记，`GET /v1/cards/next` 返回 404，不会进入长轮询。
 - 通道可以配安静时段：`"channels": { "chat": { "quiet": { "from": "22:00", "to": "08:00" } } }`，按 `rules.json` 的时区，`from` 和 `to` 不能相同。安静时段里这个通道领不到普通卡片，`urgent` 的照领；时段结束后照常补发。时段结束不会主动叫醒正在长轮询的通道，最多等这一轮（50 秒）结束。安静时段里没领到的卡片不算发送尝试，放弃计时从第一次真正交出算起。
 - `severity` 是卡片想被看到的方式：`low` 的可以只记下不弹出（桌面通知就这样做），`urgent` 的在安静时段也照发。第三方通道插件按需取用。
+- `rule` 是创建这张卡片的规则或别处定时任务的名字，可能没有（比如中台自己的告警，标题就写着从哪来）。卡片从很多地方来，自带的飞书、桌面、Webhook 通道、卡片网页和 `agent-autoloop status` 都写明“来源：<rule>”，标题就是这个名字时不重复；自己写的通道也照这样。
 - `ref` 是空的就发一条新的；不是空的就把那条改成现在的样子，改不了就直接报告。
 - 发完报告：`POST /v1/cards/56/delivered { "version": 2, "ref": "om_xxx" }`。没报告的过一分钟会再给你。**支持幂等键的平台，发新消息只用卡片编号，不带版本**（飞书改不动已经结束的卡片时另发一条，这一条才带版本）。平台不支持时无法保证去重，Webhook 模板可能在报告丢失后重发。
 - 发不出去：`POST /v1/cards/56/failed { "version": 2, "error": "…" }`。第一次发送隔得越来越久地重试，一小时后放弃（卡片还开着，`agent-autoloop status` 看得到）；通道一直没来领不算在内。
@@ -489,7 +492,7 @@ POST /v1/rules/巡检/run        { "subject": "#12", "reason": "看一眼" }    
 | 提问之后问题自己好了                     | 后面的 Agent 核实后在 `resolve` 里结掉，卡片自动改成“不用决定了”                                                                                                                                                                    |
 | 规则写错了                               | 旧规则继续跑，告诉你错在哪                                                                                                                                                                                                          |
 | 规则删掉或改名了                         | 没领走的轮次取消、不再派发，相关卡片关闭，各发一张通知；已经在跑的跑完照常收结果。之后回答这些旧卡片返回 409，先 `resolve` 结掉                                                                                                     |
-| 规则暂停了                               | 到点跳过、事件不接，都不积压；排队的留着；恢复后不自动补跑，定时的从下一个时刻照常跑；恢复时列出跳过的事件，用 `replay` 补跑，每条只补一次                                                                                       |
+| 规则暂停了                               | 到点跳过、事件不接，都不积压；排队的留着；恢复后不自动补跑，定时的从下一个时刻照常跑；恢复时列出跳过的事件，用 `replay` 补跑，每条只补一次                                                                                          |
 | 暂停写了 `until`，中台到点时没开着       | 醒来就恢复，暂停期间的时刻不补                                                                                                                                                                                                      |
 | 规则文件被删、移走或读不到               | 旧规则继续跑，告诉你一次；放回去就接着用。从没载入过规则的新中台读不到就不启动                                                                                                                                                      |
 | 一把密钥请求太多                         | 回 429 和 `Retry-After`，别的密钥照常；接单程序留着跑完的结果，等一会儿再交                                                                                                                                                         |
@@ -568,7 +571,7 @@ Node 请求转换层只把 Node 的请求变成 Request；文件、SQLite 连接
 
 Webhook 通道的 `config.json` 配置使用 `use: "webhook"`、`url` 和 `platform`，后者可选 `dingtalk`、`wecom`、`slack`、`discord`。不写 platform 时可用 `body` 自定义模板，字符串里的 `{text}` 替换为卡片内容。四个模板对照官方文档：[钉钉](https://open.dingtalk.com/document/orgapp/custom-bot-send-message-type)、[企微](https://developer.work.weixin.qq.com/document/path/91770)、[Slack](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)、[Discord](https://discord.com/developers/docs/resources/webhook#execute-webhook)。企微在标题后显示创建卡片的规则名，把普通网址显示为“打开链接”，把无选项通知的结案地址显示为“点击处理”，不再另列“1. 已处理”；卡片里写的链接标记和尖括号换成全角照字显示，不会被画成链接、标签或提及。钉钉和企微检查响应的 `errcode`，Slack 检查 `ok`；Discord 禁止文字触发提及。钉钉支持两处可选配置：`secret` 按官方加签规则（HMAC-SHA256）给 URL 追加 `timestamp` 与 `sign`；`at` 是允许被 @ 的标识白名单，每项是钉钉认的写法（userId 或手机号），正文里写了同一个写法、且它在白名单里，才会真的提醒那个人，`isAtAll` 恒为假。名字要和白名单里那一项对得上——正文里的 `@张三` 只有白名单也写着 `张三` 才算提及，外部文字单独决定不了 @ 谁。钉钉 @ 认**那个人在会话里显示的名字**或**他的手机号**（实测有效，客户端会渲染成蓝色名片）；官方文档只写了 userId 和手机号两种。名字前后不要留空格，改了显示名就要跟着改白名单。钉钉对解析不了的 id 静默忽略，消息照发，所以症状是「消息到了、没人被提醒」。超过企微 2048 字节或 Discord 2000 字的卡片会报告失败，不截断问题或回答链接。Webhook 本身没有幂等保证，消息发送成功但报告丢失时可能重发。
 
-桌面通知 `desktop` 是新安装默认打开的通道：macOS 用 `osascript`，Linux 用 `notify-send`，Windows 用 PowerShell 的系统托盘通知。通知标题是“Agent 问你一个问题”，正文是卡片标题和“运行 agent-autoloop status 查看”；Unix 的文字通过 `--` 后的参数传入；Windows 把 JSON 数据编码后交给固定脚本解码，不把文字当 PowerShell 执行。没有图形会话时不调用通知程序，报告 `skipped-<卡片编号>`，不反复打扰；卡片仍可通过命令行查看和回答。有图形会话但通知命令不存在或失败时报告 `failed`，由中台安排重试。卡片更新只报告，不重复弹出。
+桌面通知 `desktop` 是新安装默认打开的通道：macOS 用 `osascript`，Linux 用 `notify-send`，Windows 用 PowerShell 的系统托盘通知。通知标题是“Agent 问你一个问题”，正文是卡片标题、“来源：<规则名>”（卡片带规则且标题不是规则名时）和“运行 agent-autoloop status 查看”；Unix 的文字通过 `--` 后的参数传入；Windows 把 JSON 数据编码后交给固定脚本解码，不把文字当 PowerShell 执行。没有图形会话时不调用通知程序，报告 `skipped-<卡片编号>`，不反复打扰；卡片仍可通过命令行查看和回答。有图形会话但通知命令不存在或失败时报告 `failed`，由中台安排重试。卡片更新只报告，不重复弹出。
 
 `examples/worker.sh` 和 `examples/channel.sh` 只用 shell 内置命令、curl、jq。设置 `AGENT_AUTOLOOP_URL`、`AGENT_AUTOLOOP_KEY` 后运行；`AGENT_AUTOLOOP_ONCE=1` 只领一次。接单示例交回 `AGENT_AUTOLOOP_RECEIPT` 中的 JSON，默认交回完成；通道示例把卡片输出到终端，再报告送达。它们是短任务示例，不适合长任务；长任务使用 `worker/` 的心跳、停止和恢复。`tests/examples.test.ts` 在通过协议一致性检查的临时中台上实际运行两个脚本，覆盖提问、送达、回答、继续和错误密钥。
 
