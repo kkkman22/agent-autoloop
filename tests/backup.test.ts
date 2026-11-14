@@ -1,13 +1,24 @@
 // Failure modes: the copy leaves out master.key or config.json, so nothing rebuilt from it can derive the links and
 // tokens the database refers to; copying hub.db under WAL loses the newest facts, or loses the old ones when the copy
 // is moved back; a manifest, a hash or the database that doesn't match still gets restored over good data; a restore
-// that fails halfway leaves the home without a working database; backup, restore or rotation runs with the hub up, so
+// that fails halfway leaves the home without a working database, or is killed while copying and leaves half the new one
+// in place of the old; backup, restore or rotation runs with the hub up, so
 // two processes write one home; a name in the manifest reads or writes outside the backup; rotation moves the key
 // without saying that every card link and the token of every run in flight stops working at once.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { credential } from "../kernel/credentials.ts";
@@ -19,6 +30,7 @@ const home = setup("backup");
 copyFileSync(join(import.meta.dirname, "rules.fixture.json"), join(home, "rules.json"));
 process.env.AGENT_AUTOLOOP_RULES = join(home, "rules.json");
 const hub = await import("../host/runtime.ts");
+const { restoreFrom } = await import("../host/backup.ts");
 // A test that fails before it stops what it started must not leave the runner waiting for that process.
 const children: ReturnType<typeof spawn>[] = [];
 after(() => {
@@ -132,6 +144,40 @@ test("清单、哈希或数据库不对时拒绝恢复，原件一点不动", ()
   assert.ok(!existsSync(join(home, "..", "outside.json")), "清单里的名字出了备份目录就被拒");
 });
 
+test("恢复先把备份聚到 home 旁边再整批换入：聚不齐就整批放弃，原件一点不动", () => {
+  const good = join(home, "backup-staged");
+  const made = run("backup", good);
+  assert.equal(made.status, 0, made.stderr);
+  const before = counted(home);
+  const now = Date.parse("2026-11-14T00:00:00Z");
+  const staged = join(home, `restore-new-${new Date(now).toISOString().replace(/[:.]/g, "-")}`);
+  // A directory where the database's copy belongs stands in for a copy interrupted partway.
+  mkdirSync(join(staged, "hub.db"), { recursive: true });
+  assert.throws(() => restoreFrom(good, { replace: true, now }));
+  assert.deepEqual(counted(home), before, "还没轮到动原件，库里一条不少");
+  assert.deepEqual(moved(), [], "没有挪走任何东西");
+  assert.ok(!existsSync(staged), "半截的暂存目录清掉了");
+});
+
+test("挪出原件前的准备失败也不动家目录：一条不少，也不拿错原因糊弄", () => {
+  const good = join(home, "backup-prep");
+  const made = run("backup", good);
+  assert.equal(made.status, 0, made.stderr);
+  const before = counted(home);
+  const now = Date.parse("2026-11-15T00:00:00Z");
+  const when = new Date(now).toISOString().replace(/[:.]/g, "-");
+  // A file squatting on the replaced folder's name makes preparing the swap-out fail before anything moved.
+  const squat = join(home, `replaced-${when}`);
+  writeFileSync(squat, "不是目录");
+  try {
+    assert.throws(() => restoreFrom(good, { replace: true, now }), /EEXIST|不是目录|EISDIR|ENOTDIR/);
+    assert.deepEqual(counted(home), before, "准备失败也要一条不少");
+    assert.ok(!existsSync(join(home, `restore-new-${when}`)), "暂存目录清掉了");
+  } finally {
+    rmSync(squat, { force: true });
+  }
+});
+
 test("中台在跑的时候能备份，但恢复和换钥匙不动手", async () => {
   const up = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "agent-autoloop", "up"], {
     stdio: "ignore",
@@ -209,6 +255,7 @@ test("恢复回到备份时的样子，改过的数据先挪到一边，恢复�
   const aside = moved();
   assert.equal(aside.length, 1, "换下来的东西在一个目录里");
   assert.deepEqual(counted(join(home, aside[0])), grown, "改过的数据没有丢");
+  assert.ok(!readdirSync(home).some((name) => name.startsWith("restore-new-")), "成功的恢复不留暂存目录");
   for (const name of ["hub.db", "master.key", "config.json", "secrets.env", "rules.json"])
     assert.equal(mode(join(home, name)) & 0o077, 0, name);
   assert.equal(mode(home) & 0o077, 0);

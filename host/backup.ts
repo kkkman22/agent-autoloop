@@ -11,6 +11,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -162,23 +163,56 @@ export function restoreFrom(dir: string, { replace, now = Date.now() }: { replac
   if (up !== null)
     throw new Error(`中台还在运行（进程 ${up}）。先停掉它（agent-autoloop service remove），恢复完再装回来`);
   const manifest = readManifest(dir);
-  const here = [...Object.keys(manifest.files), ...SIDECARS].filter((name) => existsSync(path.join(HOME, name)));
+  const names = Object.keys(manifest.files);
+  const here = [...names, ...SIDECARS].filter((name) => existsSync(path.join(HOME, name)));
   if (!replace && here.length) {
     throw new Error(
       `这里已经有一份数据（${here.join("、")}）。恢复会换掉它，旧的先挪到 ${path.join(HOME, "replaced-…")}；确认后加 --yes。`,
     );
   }
-  let replaced: string | null = null;
-  if (here.length) {
-    replaced = path.join(HOME, `replaced-${stamp(now)}`);
-    mkdirSync(replaced, { recursive: true, mode: 0o700 });
-    for (const name of here) renameSync(path.join(HOME, name), path.join(replaced, name));
+  // The backup is gathered beside the home first, and only then swapped in. While it's being copied nothing in the home
+  // has moved, so a restore killed mid-copy (SIGKILL, a power cut) leaves the old data exactly where it was.
+  const staged = path.join(HOME, `restore-new-${stamp(now)}`);
+  mkdirSync(staged, { recursive: true, mode: 0o700 });
+  try {
+    for (const name of names) {
+      copyFileSync(path.join(dir, name), path.join(staged, name));
+      chmodSync(path.join(staged, name), 0o600);
+    }
+  } catch (error) {
+    rmSync(staged, { recursive: true, force: true });
+    throw error;
   }
-  const was = existsSync(path.join(replaced ?? "", "master.key")) ? sha256(path.join(replaced!, "master.key")) : null;
-  for (const name of Object.keys(manifest.files)) {
-    writeFileSync(path.join(HOME, name), readFileSync(path.join(dir, name)), { mode: 0o600 });
+  let replaced: string | null = null;
+  if (here.length) replaced = path.join(HOME, `replaced-${stamp(now)}`);
+  let movedOut = false;
+  try {
+    if (replaced !== null) {
+      mkdirSync(replaced, { recursive: true, mode: 0o700 });
+      for (const name of here) renameSync(path.join(HOME, name), path.join(replaced, name));
+    }
+    movedOut = true;
+    for (const name of names) renameSync(path.join(staged, name), path.join(HOME, name));
+  } catch (error) {
+    // Half a swap is worse than none, and only what actually moved goes back: until the move-out has finished,
+    // whatever still sits in the home never left it, so clearing names would delete originals. Afterwards the home
+    // holds only swapped-in copies, each cleared before its original returns.
+    if (movedOut) for (const name of names) rmSync(path.join(HOME, name), { force: true });
+    if (replaced !== null && lstatSync(replaced, { throwIfNoEntry: false })?.isDirectory()) {
+      for (const name of readdirSync(replaced)) renameSync(path.join(replaced, name), path.join(HOME, name));
+    }
+    throw error;
+  } finally {
+    rmSync(staged, { recursive: true, force: true });
+    if (
+      replaced !== null &&
+      lstatSync(replaced, { throwIfNoEntry: false })?.isDirectory() &&
+      !readdirSync(replaced).length
+    )
+      rmSync(replaced, { recursive: true, force: true });
   }
   chmodSync(HOME, 0o700);
+  const was = existsSync(path.join(replaced ?? "", "master.key")) ? sha256(path.join(replaced!, "master.key")) : null;
   return {
     facts: manifest.facts,
     replaced,

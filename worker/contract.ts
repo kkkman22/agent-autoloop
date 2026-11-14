@@ -106,8 +106,8 @@ type Message = {
   problem?: string;
 };
 
-/** Keep summaries within the legacy UTF-16 limit without splitting a character. */
-function fit(text: string, limit: number) {
+/** Keep a field within its UTF-16 unit limit without splitting a character. The source plugins cap event words the same way. */
+export function fit(text: string, limit: number) {
   if (text.length <= limit) return text;
   const cut = text.slice(0, limit);
   return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
