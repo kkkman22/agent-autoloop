@@ -89,4 +89,8 @@ export function findProgram(name: string, elsewhere: () => string[] = () => []) 
 }
 
 /** The end of some output, for saying why something failed. */
-export const tail = (text: string, length = 300) => text.trim().slice(-length);
+export const tail = (text: string, length = 300) => {
+  const cut = text.trim().slice(-length);
+  // Slicing from the end can start inside a character: a lone trail unit there is dropped, not shown.
+  return /^[\udc00-\udfff]/.test(cut) ? cut.slice(1) : cut;
+};

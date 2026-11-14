@@ -1,10 +1,11 @@
 // Failure modes: a plugin that can't run with this engine still installs; a manifest that names the plugin something
 // its repository isn't slips past the loader's name rules; a name like "-bad" reaches git or the loader; installing
 // records nothing, so nobody can say what version is running; remove or list invents history; update lies without
-// touching anything only when asked to.
+// touching anything only when asked to; a lock or signers file written halfway, which a kill during the write leaves,
+// takes the good one's place, so the write swaps a finished file in at once and leaves no spare behind.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { after, test } from "node:test";
@@ -63,6 +64,7 @@ test("a plugin with a manifest installs, records what it is, and lists", () => {
   assert.equal(installed.version, "1.2.0");
   assert.equal(installed.signer, null);
   assert.ok(installed.at, "记录了安装时间");
+  assert.equal(existsSync(`${LOCK}.tmp`), false, "换入后不留半截");
   assert.ok(existsSync(join(home, "plugins", "hello", "channel.ts")));
   const list = cli("plugins", "list");
   assert.match(list.stdout, /hello/);
@@ -178,6 +180,8 @@ test(
     assert.equal(trusted.status, 0, trusted.stderr);
     assert.match(trusted.stdout, /登记/);
     assert.equal(existsSync(join(home, "allowed_signers")), true);
+    assert.equal(existsSync(join(home, "allowed_signers.tmp")), false, "换入后不留半截");
+    assert.equal(statSync(join(home, "allowed_signers")).mode & 0o777, 0o600);
 
     // From here on, an unsigned version is refused and the old one keeps working.
     const unsigned = cli("add", dir, "--ref", "v1.2.0");

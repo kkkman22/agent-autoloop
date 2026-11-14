@@ -7,6 +7,7 @@ import { execFile, spawn } from "node:child_process";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 import { eachLine } from "../../host/lines.ts";
 import { commandLine } from "../../host/command.ts";
+import { fit } from "../../worker/contract.ts";
 
 /** Feishu sends these values as JSON in a string, which may be empty. */
 function safeJson(text: unknown): any {
@@ -114,7 +115,7 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
     });
     const out = JSON.parse(printed);
     if (out.ok === false || out.error) {
-      throw new Error(`lark-cli ${args.slice(0, 3).join(" ")}: ${JSON.stringify(out.error ?? out).slice(0, 300)}`);
+      throw new Error(`lark-cli ${args.slice(0, 3).join(" ")}: ${fit(JSON.stringify(out.error ?? out), 300)}`);
     }
     return out;
   };

@@ -9,6 +9,7 @@
 // An ask card that only takes choices loses the account someone would type; words without a choice must still answer.
 // A U+2028 or U+2029 in what someone typed, which JSON leaves as it is, cuts the click's line and loses the click.
 // Older lark-cli releases reject `--content -`, so a first card must not depend on that stdin convention.
+// A failing send's reason keeps whole characters at the cap.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -278,6 +279,49 @@ esac
   assert.deepEqual(
     calls.filter((c) => c[0] === "answer"),
     [["answer", 5, { choice: 1, by: "ou_me", ref: "om_5" }]],
+  );
+});
+
+test("feishu: a failing send's reason keeps whole characters at the cap", async () => {
+  const lark = join(dir, "lark-cli-cut");
+  // lark-cli answers ok:false with an error long enough to be capped, an emoji sitting across the cut.
+  writeFileSync(
+    lark,
+    `#!/bin/sh
+cat > /dev/null; echo '{"ok":false,"error":"${"A".repeat(298)}😀尾巴"}'
+`,
+  );
+  chmodSync(lark, 0o755);
+  const stop = new AbortController();
+  const calls: unknown[][] = [];
+  const hub = {
+    async nextCard() {
+      if (calls.some((c) => c[0] === "failed")) {
+        stop.abort();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { card: null };
+      }
+      return { card: { ...base, id: 7, title: "cut-me" } };
+    },
+    async delivered(...args: unknown[]) {
+      calls.push(["delivered", ...args]);
+      return {};
+    },
+    async failed(...args: unknown[]) {
+      calls.push(["failed", ...args]);
+      return {};
+    },
+    async answer(...args: unknown[]) {
+      calls.push(["answer", ...args]);
+      return { changed: true };
+    },
+  };
+  await feishu({ hub: hub as any, options: { user: "ou_me", lark }, log: () => {}, signal: stop.signal });
+  const reason = String(calls.find((c) => c[0] === "failed")?.[3] ?? "");
+  assert.ok(reason.startsWith("Error: lark-cli"), reason.slice(0, 60));
+  assert.ok(
+    !/[\ud800-\udbff](?!\udc00)|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(reason),
+    "no half a character anywhere",
   );
 });
 

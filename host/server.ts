@@ -10,6 +10,7 @@ import * as hub from "./runtime.ts";
 import { PAGE_HEADERS, wordsPage } from "../kernel/card-page.ts";
 import { whose } from "../kernel/credentials.ts";
 import { AuthError, InputError, NotFound } from "../kernel/errors.ts";
+import { fit } from "../worker/contract.ts";
 import { createHandler } from "../kernel/http.ts";
 
 /** Past this setTimeout fires at once. */
@@ -125,7 +126,7 @@ async function adaptWebhook(source: string, headers: Headers, body: string) {
     return Array.isArray(events) ? events : [];
   } catch (error) {
     if (error instanceof AuthError) throw error;
-    throw new InputError(`适配器读不了这个请求：${(error as Error).message}`.slice(0, 300));
+    throw new InputError(fit(`适配器读不了这个请求：${(error as Error).message}`, 300));
   }
 }
 

@@ -8,7 +8,8 @@
 // option; a card link answers more than its card; a webhook with a bad signature is taken, or one without an adapter; a
 // webhook's secret leaks into anything it returns; the owner's key opens the worker's door; a page other than a card's exists;
 // a card's link still answers or shows the card after its week, or sends you to a command that doesn't work; a link opens
-// when no channel takes links; a card that names its answerers takes an answer from a link that proves nobody.
+// when no channel takes links; a card that names its answerers takes an answer from a link that proves nobody. A source
+// adapter's long failure reason keeps whole characters at the cap.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -31,6 +32,21 @@ export default function ({ headers, body, secret, refuse }) {
 }`,
 );
 process.env.AGENT_AUTOLOOP_SECRET_HOOKS = "hook-secret";
+// A source whose adapter always fails, with a reason long enough to be capped: the cap lands inside an emoji, so a cut
+// by code units hands the caller's client half a character.
+mkdirSync(join(home, "plugins", "noisy"), { recursive: true });
+writeFileSync(
+  join(home, "plugins", "noisy", "source.ts"),
+  `export default function () {
+  throw new Error("${"A".repeat(288)}😀尾巴");
+}`,
+);
+const rulesFile = join(home, "rules.json");
+const rules = JSON.parse(readFileSync(join(import.meta.dirname, "rules.fixture.json"), "utf8"));
+rules.sources.noisy = { name: "吵闹", adapter: "noisy" };
+writeFileSync(rulesFile, JSON.stringify(rules, null, 2));
+process.env.AGENT_AUTOLOOP_RULES = rulesFile;
+process.env.AGENT_AUTOLOOP_SECRET_NOISY = "noisy-secret";
 const { serve } = await import("../host/http.ts");
 const { addKey, createCard, getView, reloadRules, view } = await import("./hub.ts");
 const { all, one } = await import("./hub.ts");
@@ -466,6 +482,21 @@ test("someone else's webhook goes through its source's adapter: signed, or not t
   assert.ok(!broken.text.includes("hook-secret"));
   assert.equal((await call("/v1/in/app", { raw: items })).status, 404, "a source without an adapter takes no webhooks");
   assert.equal((await call("/v1/in/nowhere", { raw: items })).status, 404);
+});
+
+test("a source adapter's long failure reason is cut whole characters at the cap", async () => {
+  const sign = (body: string) => "sha256=" + createHmac("sha256", "noisy-secret").update(body).digest("hex");
+  const body = "{}";
+  const broken = await call("/v1/in/noisy", { raw: body, headers: { "x-sign": sign(body) } });
+  assert.equal(broken.status, 400);
+  const error = broken.json.error as string;
+  assert.ok(error.startsWith("适配器读不了"), error.slice(0, 40));
+  assert.ok(
+    !/[\ud800-\udbff](?!\udc00)|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(error),
+    "no half a character anywhere",
+  );
+  assert.ok(error.length < 300, `${error.length} units`);
+  assert.ok(error.endsWith("A"), "the straddled character is left out whole");
 });
 
 test("there's no other page: what's going on is read through the doors", async () => {

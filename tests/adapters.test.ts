@@ -368,6 +368,10 @@ test("a plain command: placeholders filled in, stdout is its last message, a bad
   assert.deepEqual(command.read("好了\n", 0, ""), { text: "好了\n" });
   assert.deepEqual(command.read("中途", null, ""), {});
   assert.match(command.read("", 3, "boom").error!, /退出码 3：boom/);
+  // The reason keeps the end of what the agent printed, cut from the left: a cut that starts inside a character drops
+  // the half, not shows it.
+  const straddled = `${"A".repeat(99)}😀${"y".repeat(299)}`;
+  assert.equal(command.read("", 3, straddled).error, `退出码 3：${"y".repeat(299)}`);
   assert.equal(command.link, undefined, "it has no session to go on in");
 });
 

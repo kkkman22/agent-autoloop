@@ -1,7 +1,7 @@
 // The `plugins` commands and the reworked `add`: every install records what it is, so versions and signers can be
 // traced. The loader (host/plugins.ts) stays free of network and signature work; only the commands verify.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HOME } from "../host/home.ts";
 import { PLUGIN_NAME, VERSION, parseManifest, readManifest, type Manifest } from "../host/plugins.ts";
@@ -39,7 +39,9 @@ function loadLock(): Lock {
 
 function saveLock(lock: Lock) {
   mkdirSync(PLUGINS_DIR, { recursive: true, mode: 0o700 });
-  writeFileSync(LOCK_FILE, `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
+  // A kill during the write must not leave half a lock in its place: the finished file is swapped in at once.
+  writeFileSync(`${LOCK_FILE}.tmp`, `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
+  renameSync(`${LOCK_FILE}.tmp`, LOCK_FILE);
 }
 
 /** This name's trusted keys, as they stand in allowed_signers; an unlisted plugin installs with a note instead. */
@@ -205,7 +207,11 @@ function trust(args: string[]) {
   const existing = trustedSigners(name).map((line) => line.split(" ").slice(1).join(" "));
   const key = publicKey.split("\n")[0];
   if (existing.includes(key)) return console.log("已经登记过这把公钥。");
-  writeFileSync(SIGNERS_FILE, `${[...existing, key].map((one) => `${name} ${one}`).join("\n")}\n`, { mode: 0o600 });
+  // Same swap as the lock: a trust record written halfway would silently lose every registered key.
+  writeFileSync(`${SIGNERS_FILE}.tmp`, `${[...existing, key].map((one) => `${name} ${one}`).join("\n")}\n`, {
+    mode: 0o600,
+  });
+  renameSync(`${SIGNERS_FILE}.tmp`, SIGNERS_FILE);
   console.log(`登记了 ${name} 的签名人公钥。以后安装和更新 ${name}，都要这把钥匙签过名的版本标签。`);
 }
 

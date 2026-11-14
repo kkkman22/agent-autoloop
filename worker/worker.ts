@@ -26,7 +26,7 @@ import { commandLine, processCommand } from "../host/command.ts";
 import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
-import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
+import { fit, promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 import { loadUsage, saveUsage, usageDelta } from "./usage.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
@@ -340,7 +340,7 @@ export function createWorker({
       save(entry);
       launch(entry, adapter, entry.prompt);
     } catch (error) {
-      endWith(entry, { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) });
+      endWith(entry, { outcome: "failed", error: fit(String((error as Error).message ?? error), 500) });
     }
   }
 
@@ -402,10 +402,10 @@ export function createWorker({
           launch(entry, adapter, entry.prompt);
           return;
         } catch (failure) {
-          return endWith(entry, { outcome: "failed", error: String(failure).slice(0, 500) });
+          return endWith(entry, { outcome: "failed", error: fit(String(failure), 500) });
         }
       }
-      return endWith(entry, { outcome: "failed", error: error.slice(0, 500), ...known, ...usage });
+      return endWith(entry, { outcome: "failed", error: fit(error, 500), ...known, ...usage });
     }
     const { result, problem } = resultFrom(readMessage(seen.text), { session, usage: entry.usage });
     if (entry.repairs && !problem && result.outcome === "failed") return discardReceipt(entry, adapter, result.error!);
@@ -432,7 +432,7 @@ export function createWorker({
     try {
       adapter = await adapterFor(entry.job.agent.use);
     } catch (error) {
-      return endWith(entry, { outcome: "failed", error: String((error as Error).message).slice(0, 500) });
+      return endWith(entry, { outcome: "failed", error: fit(String((error as Error).message), 500) });
     }
     if (entry.turn === 0) {
       // The worker stopped while starting it, before anything was launched.
@@ -443,7 +443,7 @@ export function createWorker({
         });
         return launch(entry, adapter, entry.prompt);
       } catch (error) {
-        return endWith(entry, { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) });
+        return endWith(entry, { outcome: "failed", error: fit(String((error as Error).message ?? error), 500) });
       }
     }
     const { exit } = files(entry);

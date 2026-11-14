@@ -23,7 +23,7 @@
 // session open just now, and one the agent refuses or can't go on in doesn't get a new one; a "没跑成" after a finished tool
 // call is run together with what came before it and counts as work done; a failed turn whose agent won't go, or leaves
 // something holding its output, or closes its output and stays, holds its place until the time limit and loses the real
-// reason.
+// reason. A reason cut at its cap keeps whole characters.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -261,6 +261,27 @@ test("a bad exit code, or no last message, is a failure saying why", async () =>
   assert.equal(resultOf(hub, bad).outcome, "failed");
   assert.match(resultOf(hub, bad).error, /退出码 3：boom/);
   assert.deepEqual([resultOf(hub, silent).outcome, resultOf(hub, silent).error], ["failed", "没留下结果"]);
+});
+
+test("a reason cut at the cap keeps whole characters", async () => {
+  const hub = fakeHub();
+  const straddled = job({
+    use: "scripted",
+    command: [`printf '%s' "${"A".repeat(499)}😀尾巴" >&2; exit 3`],
+  });
+  const fits = job({
+    use: "scripted",
+    command: [`printf '%s' "${"A".repeat(498)}😀尾" >&2; exit 3`],
+  });
+  hub.jobs.push(straddled, fits);
+  const w = worker(hub);
+  await until(w, () => hub.results.length === 2);
+  const cut = resultOf(hub, straddled).error as string;
+  assert.ok(!/[\ud800-\udbff](?!\udc00)|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(cut), "no half a character anywhere");
+  assert.equal(cut.length, 499, "the straddled character is left out whole");
+  const kept = resultOf(hub, fits).error as string;
+  assert.ok(kept.includes("😀"), "a character the cap allows stays whole");
+  assert.ok(!kept.includes("尾"));
 });
 
 test("a last message saying it couldn't, or that there was nothing to do, is what it says", async () => {
