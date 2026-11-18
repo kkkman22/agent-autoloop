@@ -48,13 +48,18 @@ export function eventsOf(view: View, runId: number) {
   return links.map((link) => view.get("events", link.event_id)!).sort((a, b) => a.id - b.id);
 }
 
-/** The ids of the events a round worked on, with an answer it was woken by followed back to what that question was about. */
-function askedAbout(view: View, runId: number | null, seen = new Set<number>()): string[] {
+/** The ids of the events a round worked on, with a wake-up it was called by followed back to what that was about. */
+export function askedAbout(view: View, runId: number | null, seen = new Set<number>()): string[] {
   if (runId === null || seen.has(runId)) return [];
   seen.add(runId);
   const ids = eventsOf(view, runId).flatMap((event) => {
     const cards = rows(view, "cards", { answer_event: event.id });
-    if (cards.length === 0) return [event.key];
+    if (cards.length === 0) {
+      // A check that came due: its row names no run, so what it was set for was written on it when it was set; the row
+      // itself is gone once this round ends. A check set before that was written down keeps its own event.
+      const [fired] = rows(view, "timers", { event_id: event.id }).filter((timer) => timer.events);
+      return fired ? JSON.parse(fired.events) : [event.key];
+    }
     return cards.flatMap((card) => (card.run_id === null ? [event.key] : askedAbout(view, card.run_id, seen)));
   });
   return [...new Set(ids)];
@@ -161,7 +166,13 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
     .flatMap((state) => rows(view, "cards", { ...thread, state }, 20, true))
     .sort((a, b) => b.id - a.id)
     .slice(0, 20);
-  const timerView = (timer: Row) => ({ key: timer.key, about: timer.about, at: timer.at });
+  const timerView = (timer: Row) => ({
+    key: timer.key,
+    about: timer.about,
+    at: timer.at,
+    // Recorded when the check was set: the row names no run to follow back from, and it goes once the round it wakes ends.
+    events: JSON.parse(timer.events ?? "[]"),
+  });
   return {
     run: run.id,
     token: credential(env, "run", run.id, run.issued),

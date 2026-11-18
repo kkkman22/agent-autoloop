@@ -1,7 +1,8 @@
 // The clock's events. Failure cases: a schedule fires when it isn't due, twice for one moment, or on a schedule that has
 // just been changed; a hub asleep through several runs each of them (only the latest is owed) or none; a timer fires early,
 // twice, or doesn't wake its own thread in its session; writing the same key makes a second timer; cancelling leaves it; a
-// fired timer stops a new one being set under its key; a bad rules file stops the hub or isn't told; told every tick, or
+// fired timer stops a new one being set under its key; a fired check doesn't name the event the source posted, or stops
+// naming it once a check is set by a check round; a bad rules file stops the hub or isn't told; told every tick, or
 // the card stays after it's fixed; a rules file that is gone stops the hub, or isn't picked up when it's moved back, or
 // brings back a card the owner closed at every tick.
 // Cancelling a timer that isn't waiting spoils the receipt it's in; a timer coming due after its rule has gone stops the
@@ -119,6 +120,11 @@ test("a run's look-again fires once at its time, on its thread, in its session, 
     next.context.timers.map((t) => [t.key, t.about]),
     [["recheck", "看原站恢复了没有"]],
   );
+  assert.deepEqual(
+    next.context.timers.map((t) => t.events),
+    [["1"]],
+    "the check names the event the source posted, so what it concludes can be tied back to that id",
+  );
   finish(
     next.run,
     next.token,
@@ -141,6 +147,21 @@ test("a run's look-again fires once at its time, on its thread, in its session, 
       (change) => change.table === "timers" && change.row?.about === "看原站恢复了没有" && change.row.event_id !== null,
     );
   assert.ok(fired, "the facts log keeps the timer and event link after the projection row is removed");
+  // A check set by a check round names the source's event too. The timer that woke this round is gone by the time the
+  // next one starts, so the lineage has to be written down when the check is set rather than walked back afterwards.
+  keepWorkersHere(at(120));
+  tick(at(120));
+  let later = claim("w1", at(121))!;
+  if (later.rule.name !== "意见") {
+    finish(later.run, later.token, { outcome: "nothing" }, at(121));
+    later = claim("w1", at(121))!;
+  }
+  assert.equal(later.rule.name, "意见");
+  assert.deepEqual(
+    later.context.timers.map((t) => t.events),
+    [["1"]],
+    "a check set by a check round still names the event the source posted",
+  );
 });
 
 test("cancelling a queued timer run removes its fired timer from the live projection", () => {

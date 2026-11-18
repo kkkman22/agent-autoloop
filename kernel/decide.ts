@@ -16,6 +16,7 @@ import { AuthError, Conflict, InputError, NotFound } from "./errors.ts";
 import { iso, rows, type Change, type Fact, type Row, type Table, type View } from "./evolve.ts";
 import {
   agentsOf,
+  askedAbout,
   cardView,
   configuration,
   eventsOf,
@@ -532,6 +533,9 @@ function scheduleReview(draft: Draft, run: Row, later: Later) {
     session,
     agent: run.agent,
     hops: hopsOf(draft, run),
+    // Written now, like `hops`: the row names no run for a later round to follow back from, and it is removed when the
+    // round it wakes ends, so the ids are recorded while the round that set the check is still here.
+    events: JSON.stringify(askedAbout(draft.view, run.id)),
   };
   if (existing) return void put(draft, "timers", existing.id, fields);
   const source = sourceOf(draft.view, run.id) ?? SCHEDULE;

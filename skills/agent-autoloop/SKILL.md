@@ -127,7 +127,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 { "channels": { "feishu": { "key": "…", "user": "ou_用户的 open_id" } } }
 ```
 
-同一个飞书应用的卡片点击只能有一个监听，只在一台电脑上跑。
+同一个飞书应用的卡片点击只能有一个监听，只在一台电脑上跑。重启后日志说“飞书那边还记着这个应用的另一条事件连接”，是飞书还没放开旧连接，可能要几个小时；中台每分钟重试一次，期间卡片点击收不到。`lark-cli event status`、`event stop` 只管本机，管不了飞书那边的旧连接；别的电脑也在跑这个应用的监听就先停掉它。
 
 **只会发文字的（钉钉、企微的群机器人，Slack、Discord 的 Webhook）**：用 `plugins/webhook/channel.ts`，`config.json` 的通道项写 `"use": "webhook"`、`"platform": "dingtalk"` 和 `"url": "已有的 Webhook 地址"`；平台也可选 `wecom`、`slack`、`discord`。别的平台只要收 JSON POST 也能接：不写 `platform`，写 `url` 和带 `{text}` 的 `body`，比如 Telegram 写 `"url": "https://api.telegram.org/bot<机器人令牌>/sendMessage"`、`"body": { "chat_id": "…", "text": "{text}" }`。钉钉机器人用加签时再写 `"secret": "SEC…"`；要 @ 人就写 `"at": ["userid、手机号或群里那个人的写法", …]` 白名单——正文里写了同一个写法、且它在白名单里，才会真的提醒那个人；名字要和白名单里那一项对得上，纯文字（`@张三`）而白名单里没有 `张三`，就不算提及。`rules.json` 里写 `"links": true`，卡片链接本身就能回答；`config.json` 的 `hub.publicUrl` 要配成手机或电脑能打开的地址。
 
@@ -168,14 +168,14 @@ PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-l
     "trusted": [12345678],
     "agents": {
       "codex": null,
-      "claude": { "model": "gpt-6.1-sol", "effort": "xhigh" },
+      "claude": { "model": "gpt-6.2-sol", "effort": "xhigh" },
       "gemini": { "command": ["/绝对路径/reviewer", "{input}"] }
     }
   }
 }
 ```
 
-`agents` 给每个 Agent 写一个审查器：`null` 是免审；`model`、`effort` 是内置 Codex 审查用的模型和推理深度，没写的那项用默认（`gpt-6.1-sol`、`high`）；`command` 换成一条命令，约定同 `review.command`。没列出的 Agent 和没声明来源的改动走默认审查，也就是 `review.command`，没写就是内置 Codex。免审的改动碰到 `xhigh` 的路径或打了 `deliver-review`，照样走默认审查；内置 Codex 在 `xhigh` 的路径上深度不低于 `xhigh`。
+`agents` 给每个 Agent 写一个审查器：`null` 是免审；`model`、`effort` 是内置 Codex 审查用的模型和推理深度，没写的那项用默认（`gpt-6.2-sol`、`high`）；`command` 换成一条命令，约定同 `review.command`。没列出的 Agent 和没声明来源的改动走默认审查，也就是 `review.command`，没写就是内置 Codex。免审的改动碰到 `xhigh` 的路径或打了 `deliver-review`，照样走默认审查；内置 Codex 在 `xhigh` 的路径上深度不低于 `xhigh`。
 
 来源用提交状态声明。整份改动都是同一个 Agent 写的，才在要交付的提交上写这一条，说明里填 Agent 名字（小写字母开头，只用小写字母、数字和 `-`）：
 

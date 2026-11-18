@@ -43,8 +43,8 @@ export type Job = {
       at: string;
       events: string[];
     }[];
-    timers: { key: string; about: string; at: string }[];
-    waiting: { key: string; about: string; at: string }[];
+    timers: { key: string; about: string; at: string; events: string[] }[];
+    waiting: { key: string; about: string; at: string; events: string[] }[];
     open: { card: number; title: string; text: string; at: string }[];
     decided: { card: number; title: string; choice: string | null; at: string }[];
   };

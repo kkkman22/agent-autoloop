@@ -1486,9 +1486,15 @@
         },
         "at": {
           "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
-      "required": ["key", "about", "at"],
+      "required": ["key", "about", "at", "events"],
       "additionalProperties": true
     },
     "context-open": {
