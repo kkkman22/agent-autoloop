@@ -3,7 +3,7 @@ export type Job = {
   run: number;
   token: string;
   attempt: number;
-  rule: Pick<Rule, "name" | "cwd" | "skill" | "prompt" | "title" | "emits">;
+  rule: Pick<Rule, "name" | "cwd" | "skill" | "prompt" | "title" | "emits" | "crossGroup">;
   agent: {
     id: string;
     name: string;

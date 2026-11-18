@@ -16,6 +16,9 @@
 // A stopped run's receipt takes effect, or the answer it carried shows as carried out. A failed run merged with what came
 // in meanwhile loses the session of the answer in it, or has it wiped by what had none. A run with events from two
 // sources is given, or closes, cards that have no source. A channel that takes a card and never reports gets it for ever.
+// A rule that declares crossGroup sees and closes its source's open cards in other groups; without the declaration the
+// same-source other-group card stays out (the widening is the rule's own, not a default), and even with it cards from
+// another source or made after the run was claimed stay out.
 // A card closed while its first message is on the way never gets that message updated.
 // A channel whose program keeps coming but whose last card didn't get through looks fine in the state (issue #290).
 // A rule that lists its channels has its cards, and the notices of its runs, sent to others as well; one that lists none
@@ -439,6 +442,112 @@ test("a card made after this run was claimed isn't in its scope", () => {
     receipt.rejected.map((r) => r.card),
     [later],
   );
+});
+
+/** One round of a second rule of the app source, in a group of its own, leaving an open ask behind. */
+function gateCard(step: number, key: string, at_: number) {
+  ingest("app", { id: `gate:${step}`, type: "gate.raised", subject: "gate" }, at_);
+  const job = claim("w1", at_)!;
+  finish(
+    job.run,
+    job.token,
+    { outcome: "done", summary: "等批准", ask: [{ title: "批准吗", text: "高危操作", options: ["批", "不批"], key }] },
+    at_ + 1,
+  );
+  return one<{ id: number }>("SELECT id FROM cards WHERE run_id = ?", [job.run])!.id;
+}
+
+/** A second rule of the app source in a group of its own, and 意见 optionally declared crossGroup. */
+const gateRules = (crossGroup: boolean) => (rules: any) => {
+  if (crossGroup) rules.rules[0].crossGroup = true;
+  rules.rules.push({
+    name: "门禁",
+    when: { source: "app", types: ["gate.raised"] },
+    to: "a1",
+    cwd: "~/x",
+    prompt: "看门。",
+    group: "gates",
+    tell: "never",
+  });
+};
+
+test("without a declaration, a same-source card in another group is as far out of reach as another source's", () => {
+  clean();
+  underRules(gateRules(false), () => {
+    const gate = gateCard(1, "gate-1", at(0));
+    ingest("ops", { id: "a", type: "alert.raised", subject: "x" }, at(0));
+    const w2 = claim("w2", at(0))!;
+    const w1 = claim("w1", at(0))!;
+    finish(w1.run, w1.token, { outcome: "nothing" }, at(1));
+    finish(w2.run, w2.token, { outcome: "done", notice: [{ title: "外组的", text: "x" }] }, at(1));
+    const ops = one<{ id: number }>("SELECT id FROM cards WHERE title = '外组的'")!.id;
+    ingest("app", note(1), at(2));
+    const job = claim("w1", at(2))!;
+    assert.deepEqual(job.context.open, []);
+    const receipt = finish(
+      job.run,
+      job.token,
+      {
+        outcome: "done",
+        resolve: [
+          { card: gate, reason: "批过了" },
+          { card: ops, reason: "越界" },
+        ],
+      },
+      at(3),
+    );
+    assert.deepEqual(
+      receipt.rejected.map((r) => [r.card, r.reason]),
+      [
+        [gate, "不在本轮核对范围"],
+        [ops, "不在本轮核对范围"],
+      ],
+    );
+    assert.equal(card(gate).state, "open");
+  });
+});
+
+test("a rule that declares crossGroup sees and closes its source's open cards in other groups, and no others", () => {
+  clean();
+  underRules(gateRules(true), () => {
+    const gate = gateCard(1, "gate-1", at(0));
+    ingest("ops", { id: "a", type: "alert.raised", subject: "x" }, at(0));
+    const w2 = claim("w2", at(0))!;
+    const w1 = claim("w1", at(0))!;
+    finish(w1.run, w1.token, { outcome: "nothing" }, at(1));
+    finish(w2.run, w2.token, { outcome: "done", notice: [{ title: "外组的", text: "x" }] }, at(1));
+    const ops = one<{ id: number }>("SELECT id FROM cards WHERE title = '外组的'")!.id;
+    ingest("app", note(1), at(2));
+    const job = claim("w1", at(2))!;
+    assert.deepEqual(
+      job.context.open.map((c) => c.card),
+      [gate],
+    );
+    const later = gateCard(2, "gate-2", at(3));
+    const receipt = finish(
+      job.run,
+      job.token,
+      {
+        outcome: "done",
+        summary: "清了",
+        resolve: [
+          { card: gate, reason: "批过了" },
+          { card: later, reason: "晚了" },
+          { card: ops, reason: "越界" },
+        ],
+      },
+      at(4),
+    );
+    assert.deepEqual(
+      receipt.rejected.map((r) => [r.card, r.reason]),
+      [
+        [later, "不在本轮核对范围"],
+        [ops, "不在本轮核对范围"],
+      ],
+    );
+    assert.deepEqual([card(gate).state, card(gate).result, card(gate).by], ["closed", "批过了", `第 ${job.run} 轮`]);
+    assert.equal(card(later).state, "open");
+  });
 });
 
 test("each channel gets each card once, and an update when its state changes; a lost report sends no second message", () => {

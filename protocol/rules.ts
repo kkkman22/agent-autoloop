@@ -105,6 +105,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["maxActive", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["resume", (value) => typeof value === "boolean", "只能是 true 或 false", true],
+    ["crossGroup", (value) => typeof value === "boolean", "只能是 true 或 false", true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],
     ["disabled", (value) => typeof value === "boolean", "要是 true 或 false", true],
     [

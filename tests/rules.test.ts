@@ -142,6 +142,9 @@ test("a mistake says which rule and what is wrong", () => {
     r.rules[0].resume = "thread";
   }, /规则「意见」.*resume/);
   problem((r) => {
+    r.rules[0].crossGroup = "yes";
+  }, /规则「意见」.*crossGroup/);
+  problem((r) => {
     r.rules[0].title = "";
   }, /规则「意见」.*title/);
   problem((r) => {

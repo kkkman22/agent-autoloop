@@ -110,11 +110,13 @@ export function eventOutcome(view: View, source: string, id: number) {
   };
 }
 
-/** The cards a run may close: open before it was claimed, from the same source and group. */
+/** The cards a run may close: open before it was claimed, from the same source and group — or, for a rule that
+ * declares crossGroup, from that source's other groups as well. */
 export function openInScope(view: View, run: Row) {
   const source = sourceOf(view, run.id);
   if (!source || !run.claimed_at) return [];
-  return rows(view, "cards", { state: "open", grp: run.grp, source }).filter(
+  const wide = ruleOf(configuration(view, run.rules_version)!, run.rule)?.crossGroup;
+  return rows(view, "cards", { state: "open", source, ...(!wide && { grp: run.grp }) }).filter(
     (card) => card.created_at <= run.claimed_at,
   );
 }
@@ -147,7 +149,7 @@ export function cardView(card: Row, env: Environment, ref: string | null = null,
 
 export function jobOf(view: View, run: Row, env: Environment): Job {
   const rules = configuration(view, run.rules_version);
-  const { name, cwd, skill, prompt, title, emits } = ruleOf(rules, run.rule)!;
+  const { name, cwd, skill, prompt, title, emits, crossGroup } = ruleOf(rules, run.rule)!;
   const { maxActive: _maxActive, ...agent } = rules.agents[run.agent];
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
@@ -164,7 +166,7 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
     run: run.id,
     token: credential(env, "run", run.id, run.issued),
     attempt: run.attempts + 1,
-    rule: { name, cwd, skill, prompt, title, emits },
+    rule: { name, cwd, skill, prompt, title, emits, ...(crossGroup && { crossGroup }) },
     agent: { ...agent, id: run.agent },
     session: run.session ?? run.resume,
     askFirst: rules.askFirst,

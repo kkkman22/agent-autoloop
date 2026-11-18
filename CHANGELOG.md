@@ -8,6 +8,7 @@
 
 ### 要注意
 
+- 规则加了可选的 `crossGroup` 字段（回执跨组核对）。用过之后再回滚到没有这个字段的版本，旧版本会拒绝规则文件，回滚前先删掉这个字段。
 - 卡片行加了 `channels` 列，升级后第一次启动会从日志重建视图；重建可以中途停下再接着做。
 - 规则加了可选的 `disabled` 字段（暂停）。用过之后再回滚到没有这个字段的版本，旧版本会拒绝规则文件，回滚前先恢复规则或删掉这个字段。
 - 通道要在 `rules.json` 里写 `answerers` 才能转达回答；没写或写成空的只能发通知。只有 `["*"]` 允许任何人回答。
@@ -23,6 +24,7 @@
 
 ### 新增
 
+- 规则的可选 `crossGroup: true`：这条规则一轮的 `open` 和回执 `resolve` 的核对范围从「同来源同组、领活前就有」放宽到「同来源、含其他组」，给跨组收陈旧卡的状态回执类规则用；不写的规则照旧，其他来源和领取之后才开的卡仍不在范围内。Job 的 `rule` 带上这个字段，提示词里 `open` 的说法跟着变。
 - 交付流水线抽象出平台无关的 `DeliveryHost` 接口，GitHub 与 GitLab（走已登录的 `glab`，`AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`）各是一个翻译层。同一张行为场景表对两个平台的假 REST 各跑一遍；GitLab 的草稿是标题前缀、检查是流水线（manual/skipped 只算等待）、合并钉住已审查提交，定义一致性比较 `.gitlab-ci.yml`，Ship 判定走 `gitlab-ci.yml` 模板。GitLab 上 `admin_merge` 不起作用，合并权限就是 `glab` 登录者自己的角色。
 
 - 插件生态：`plugin.json` 清单（版本、`engine` 兼容范围）、`plugins.lock.json` 安装记录、`plugins list|update|trust|remove`；`plugins trust` 登记发布者 SSH 公钥后，安装和更新都要签过名的版本标签，签名不对拒装拒更新、留在原版本；`doctor` 报没有清单、不兼容的插件。`add` 支持 `--ref v版本`。

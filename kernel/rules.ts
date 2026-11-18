@@ -33,6 +33,8 @@ type RuleOptions = RuleWords & {
   severity?: Severity;
   /** People who may answer these cards through a channel: plain names, or "role:" plus a name in rules.roles. */
   answerers?: string[];
+  /** Its rounds check and close open cards of their source's other groups too, not only their own (receipt `resolve`). */
+  crossGroup?: boolean;
 };
 /** Without channels a rule's cards reach defaultChannels, or every channel if there are none; with them, only those. */
 type Reach = { channels?: string[] };
