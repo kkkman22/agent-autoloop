@@ -145,6 +145,7 @@ POST /v1/events                    Authorization: Bearer <来源的密钥>
 - `id` 和 `type` 必填。同一来源同一 `id` 只记一次，所以来源尽管重发。
 - `subject` 只能是标识符（字母、数字和 `# . _ : / @ -`），`link` 只能是纯 ASCII 网址，因为它们会进提示词。`summary`、`detail` 不进提示词。
 - 没有规则匹配的事件也留着，`agent-autoloop status` 看得到。
+- `routed` 只表示规则接了这件事，不表示马上开跑：同一事项已经有在跑或排队的一轮时，事件并进那一轮；什么时候开新的一轮由规则的 `parallel`、组的并行上限和接单程序的容量决定，满了就一直排着，没有通知。想知道到了哪一步，拿应答里的 `event` 编号查下面的 `GET /v1/events/<编号>`，`runs` 里的 `state` 是 `queued` 就还在排队，`claimed` 是在跑。
 - 字段上限：`id` 200 个字、`subject` 100、`summary` 200、`detail` 4000、`link` 500，`type` 64 个字符。
 
 来源想知道发出去的事件后来怎么样了，用同一把密钥按应答里的 `event` 编号查，隔一段时间查一下还没结束的就行：
