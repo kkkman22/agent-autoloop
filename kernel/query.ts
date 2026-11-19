@@ -55,10 +55,11 @@ export function askedAbout(view: View, runId: number | null, seen = new Set<numb
   const ids = eventsOf(view, runId).flatMap((event) => {
     const cards = rows(view, "cards", { answer_event: event.id });
     if (cards.length === 0) {
-      // A check that came due: its row names no run, so what it was set for was written on it when it was set; the row
-      // itself is gone once this round ends. A check set before that was written down keeps its own event.
+      // A check that came due: what it was set for was written on the event when it fired, and on the row before that for
+      // logs written then. The row is gone once the round it wakes ends, and an answer can wake a round later still.
       const [fired] = rows(view, "timers", { event_id: event.id }).filter((timer) => timer.events);
-      return fired ? JSON.parse(fired.events) : [event.key];
+      const written = event.events ?? fired?.events;
+      return written ? JSON.parse(written) : [event.key];
     }
     return cards.flatMap((card) => (card.run_id === null ? [event.key] : askedAbout(view, card.run_id, seen)));
   });

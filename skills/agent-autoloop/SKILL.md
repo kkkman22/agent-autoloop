@@ -157,7 +157,7 @@ PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-l
 
 多个项目共用规则时，在接单命令后加 `--review-policy owner/config:ops/review-policy.json`。插件从这个仓库的 main 读取文件。`reviewers` 按名字给出模型（字符串简写）或 `{ "model": "…", "effort": "xhigh" }`，`default` 是默认审查器名称列表，`agents` 给每种开发 Agent 写列表，空列表免审，同名写两次独立审查两次。`trusted_submitters` 列出可以登记来源的 GitHub 数字账号。深审路径和显式只审查都可覆盖免审。已有分支规则指定审查状态时，用 `--review-status` 传它的名字。
 
-`AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"title":"文件:行号和问题","text":"触发条件和后果"}]}`；没问题交空列表。每个审查器最多跑 30 分钟。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
+`AGENTS.md` 要有 `## 审查要点`。`review.command` 可用命令数组替换审查程序：提示词从标准输入读，`{input}` 替换成文字差异文件，标准输出必须是 `{"findings":[{"level":"挡上线或建议","title":"文件:行号和问题","how":"在项目现在的用法下怎么发生","text":"后果"}]}`；没问题交空列表。只有挡上线的退回改动，建议只记进审查记录。每个审查器最多跑 30 分钟。默认 Codex 忽略用户配置、禁用记忆，只读单独的审查快照。`admin_merge` 默认为空；只有 main 明确列出的 PR 作者才能使用管理员合并。没有线上服务的项目可以省略 `health`，回执会明确写只完成合并。
 
 要按写代码的 Agent 定审查，在 `review` 里加 `agents` 和 `trusted`：
 
@@ -225,7 +225,7 @@ gh api repos/owner/app/statuses/<完整提交编号> -f context=delivery-agent/<
 }
 ```
 
-轮询无需配置新的 Webhook 或密钥，事件编号由标签记录与 PR 提交组成，重复读取不会重新派发；也可以直接接现有 GitHub 来源。事项按 `owner/repo#编号` 分开，`parallel` 控制并发。打 `deliver` 进入流程；同时打 `deliver-review` 只审查，在等待检查期间加上也会阻止合并；`deliver-attended` 表示有人盯着：受保护路径和检查定义的改动要靠它放行，发现问题只写回执、不另发通知。审查发现问题后，同一个提交不再审第二次，修复后推新提交才重新审查。普通 issue 打 `ask-owner` 会变成一张问题卡片，回答后去掉标签；不替你在 GitHub 发评论。
+轮询无需配置新的 Webhook 或密钥，事件编号由标签记录与 PR 提交组成，重复读取不会重新派发；也可以直接接现有 GitHub 来源。事项按 `owner/repo#编号` 分开，`parallel` 控制并发。打 `deliver` 进入流程；同时打 `deliver-review` 只审查，在等待检查期间加上也会阻止合并；`deliver-attended` 表示有人盯着：受保护路径和检查定义的改动要靠它放行，发现问题只写回执、不另发通知。审查发现挡上线的问题后，同一个提交不再审第二次，修复后推新提交，下一轮只核对这几条；连续两轮仍有挡上线的，不再审第三轮，等你决定：放行就由 `trusted` 里的账号在提交上写 `delivery-owner/<PR 编号>` 成功状态（说明里写你的原话）后重交。普通 issue 打 `ask-owner` 会变成一张问题卡片，回答后去掉标签；不替你在 GitHub 发评论。
 
 合并后发布失败时，修复发布后重新跟进原 PR 的 Ship 和健康检查。
 

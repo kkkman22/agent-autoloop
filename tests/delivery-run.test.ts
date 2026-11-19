@@ -5,7 +5,8 @@
 // an obsolete Ship run requires a remote compare that fails, hiding the successful release of this merge; a manual retry
 // reuses its scratch folder and fails because the origin already exists; closing a labelled PR leaves its status pending;
 // a restarted check that still has no jobs is counted as an execution error instead of returned with its cause and notice;
-// syncing main before a restart saves that restart under the old head, so the next round restarts the same check again.
+// syncing main before a restart saves that restart under the old head, so the next round restarts the same check again;
+// an owner's decision written by anyone lets a commit with findings through; a suggestion returns the change.
 // Nothing here reaches GitHub: `gh` is a stand-in first on PATH, and the Git remote is a local folder.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -462,7 +463,7 @@ appendFileSync(${JSON.stringify(notices)}, input + "\\n");
   assert.match(called, /pr edit 8 --repo example\/app --remove-label deliver,deliver-review/);
   assert.doesNotMatch(called, /pr ready/);
 });
-const dataLoss = [{ title: "数据会丢", text: "先修复" }];
+const dataLoss = [{ level: "挡上线", title: "数据会丢", how: "每次保存都会", text: "先修复" }];
 
 test("a failed round in between does not open a commit with findings to another review", async () => {
   startOver();
@@ -482,6 +483,37 @@ test("a failed round in between does not open a commit with findings to another 
   assert.equal(timesReviewed(), 1);
   assert.equal(lastStatus("my-review").state, "failure");
   assert.match(third, /第 1 条还没有处理/);
+  // An owner's decision on the commit sends it back to the review, which checks who wrote it; one round of findings
+  // isn't the owner's to decide, so it still waits for a fix.
+  writeFileSync(
+    statuses,
+    readFileSync(statuses, "utf8") +
+      JSON.stringify({
+        sha: code,
+        creator: { id: 7 },
+        context: "delivery-owner/8",
+        state: "success",
+        description: "放行",
+      }) +
+      "\n",
+  );
+  const written = JSON.parse(readFileSync(bodies, "utf8"));
+  const key = "repos/example/app/pulls/8";
+  writeFileSync(bodies, JSON.stringify({ ...written, [key]: written[key].replace("处理：", "处理：不改") }));
+  answers(delivering(openPr));
+  const fourth = await run("example/app", about(8), true).catch((error) => error.message);
+  assert.equal(timesReviewed(), 1);
+  assert.match(fourth, /修复/);
+});
+test("a suggestion alone is recorded and doesn't hold the change back", async () => {
+  startOver();
+  reviewFinds([{ level: "建议", title: "可以更好", how: "两个人同一秒改同一行时", text: "后写的盖掉先写的" }]);
+  answers(delivering(openPr));
+  const result = await run("example/app", about(8), true).catch((error) => error.message);
+  assert.equal(timesReviewed(), 1);
+  assert.doesNotMatch(String(result), /审查发现问题/);
+  assert.match(JSON.parse(readFileSync(bodies, "utf8"))["repos/example/app/pulls/8"], /可以更好/);
+  assert.notEqual(lastStatus("my-review")?.state, "failure");
 });
 
 const merged = { ...openPr, state: "closed", merged_at: "now", merge_commit_sha: code };

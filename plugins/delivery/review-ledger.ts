@@ -4,7 +4,6 @@ import type { Finding } from "./review.ts";
 const SECTION = "## Codex 审查";
 const ROUND = /^第 (\d+) 轮（([^）\n]+)，([a-z]+(?: \+ [a-z]+)*)，审到 ([0-9a-f]{7,40})）：/gm;
 const ITEM = /^(\d+)\. /;
-export const REVIEW_ROUNDS = 3;
 
 function section(body: string) {
   return /^## Codex 审查\n([\s\S]*?)(?=^## |$(?![\s\S]))/m.exec(body);
@@ -15,21 +14,27 @@ export function ledger(description: string | null | undefined) {
   const match = section(body);
   const record = match?.[1] ?? "";
   const matches = [...record.matchAll(ROUND)];
-  const rounds = matches.map(([, number, signature, effort, head], index) => ({
-    number: Number(number),
-    signature,
-    effort,
-    head,
-    // Bind all earlier rounds too. Removing an old finding must invalidate the latest proof.
-    digest: createHash("sha256")
-      .update(
-        record
-          .slice(0, matches[index + 1]?.index)
-          .replace(/^   处理：[^\n]*$/gm, "   处理：")
-          .trim(),
-      )
-      .digest("hex"),
-  }));
+  const rounds = matches.map(([, number, signature, effort, head], index) => {
+    const text = record.slice(matches[index].index, matches[index + 1]?.index).trim();
+    return {
+      number: Number(number),
+      signature,
+      effort,
+      head,
+      text,
+      // Only blocking findings are numbered; a suggestion is a bullet with nothing to handle.
+      blocking: text.split("\n").filter((line) => ITEM.test(line)).length,
+      // Bind all earlier rounds too. Removing an old finding must invalidate the latest proof.
+      digest: createHash("sha256")
+        .update(
+          record
+            .slice(0, matches[index + 1]?.index)
+            .replace(/^   处理：[^\n]*$/gm, "   处理：")
+            .trim(),
+        )
+        .digest("hex"),
+    };
+  });
   const waiting = new Map<number, boolean>();
   let current: number | undefined;
   for (const line of record.split("\n")) {
@@ -60,6 +65,14 @@ export function ledger(description: string | null | undefined) {
   };
 }
 
+/** Two rounds in a row left blocking findings: the second checked the first's fixes and still found some. */
+export const stalled = (current: ReturnType<typeof ledger>) =>
+  current.rounds.length >= 2 && current.rounds.slice(-2).every((round) => round.blocking > 0);
+
+export const OWNER = "已经审了两轮仍有挡上线的问题，不再自动审第三轮，交给负责人定";
+
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+
 export function renderRound(
   current: ReturnType<typeof ledger>,
   signature: string,
@@ -69,22 +82,31 @@ export function renderRound(
 ) {
   const header = `第 ${current.rounds.length + 1} 轮（${signature}，${effort.join(" + ")}，审到 ${head}）：`;
   if (!findings.length) return `${header}没有发现问题。`;
-  const round = current.rounds.length + 1;
+  const blocking = findings.filter((finding) => finding.level === "block");
+  const suggestions = findings.filter((finding) => finding.level === "suggest");
   return [
-    `${header}发现 ${findings.length} 条。`,
-    // Patching the same spot round after round rarely converges. Later rounds still review only the new commits.
-    ...(round >= REVIEW_ROUNDS
+    `${header}挡上线 ${blocking.length} 条，建议 ${suggestions.length} 条。`,
+    ...(blocking.length && current.rounds.at(-1)?.blocking
       ? [
-          `\n已经审了 ${round} 轮还有问题，先退一步想想是不是要换个做法。换做法就推新提交，下一轮只审新改的部分；不换就在每条的“处理：”后写清不改的理由。`,
+          `\n${OWNER}：放行就在每条“处理：”后写上负责人的原话，由可信账号在提交上写 \`delivery-owner/<PR 编号>\` 状态后重交；不放行就照负责人说的改。`,
         ]
       : []),
-    ...findings.map(({ title, text }, index) => {
-      const body = text
+    ...blocking.map(({ title, how, text }, index) => {
+      const body = `怎么发生：${how}\n${text}`
         .replaceAll("\r\n", "\n")
         .split("\n")
         .map((line) => (line ? `   ${line}` : ""))
         .join("\n");
-      return `\n${current.numbered + index + 1}. **${title.replace(/\s+/g, " ").trim()}**\n\n${body}\n\n   处理：`;
+      return `\n${current.numbered + index + 1}. **${oneLine(title)}**\n\n${body}\n\n   处理：`;
     }),
+    ...(suggestions.length
+      ? [
+          "\n建议（不挡上线）：\n",
+          ...suggestions.map(
+            ({ title, how, text }) =>
+              `- **${oneLine(title)}**：${oneLine(how).replace(/[。.]$/, "")}。${oneLine(text)}`,
+          ),
+        ]
+      : []),
   ].join("\n");
 }

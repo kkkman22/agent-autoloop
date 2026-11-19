@@ -336,7 +336,7 @@ test("a delivery withdrawn during checks does not leave its status pending", asy
 });
 test("findings and review-only mode stop before merge", async () => {
   const first = fixture();
-  first.io.review = async () => [{ title: "数据会丢", text: "先修复" }];
+  first.io.review = async () => [{ level: "block" as const, title: "数据会丢", how: "每次保存都会", text: "先修复" }];
   const result = await deliver("example/app", 1, first.io);
   assert.equal(result.findings?.length, 1);
   assert.equal(first.state.merges, 0);
@@ -346,7 +346,7 @@ test("findings and review-only mode stop before merge", async () => {
   assert.equal(second.state.merges, 0);
 });
 const latest = (state: any, context: string) => state.statuses.filter((s: any) => s.context === context).at(-1);
-const problem = [{ title: "数据会丢", text: "先修复" }];
+const problem = [{ level: "block" as const, title: "数据会丢", how: "每次保存都会", text: "先修复" }];
 test("another event on a commit with findings ends the run: no second review, no new status", async () => {
   const { io, state } = fixture();
   io.review = async () => {

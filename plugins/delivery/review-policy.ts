@@ -91,9 +91,8 @@ export function reviewCovers(
 ) {
   const ran = round.effort.split(" + ");
   const done = round.signature.split(" + ").map((entry, index) => {
-    // Entries are "command/hash", "name/model[@configured depth]", or a bare model from older rounds; the depth that ran is
-    // recorded apart.
-    const plan = entry.startsWith("command/") || !entry.includes("/") ? entry : entry.slice(entry.indexOf("/") + 1);
+    // Entries are "command/hash" or "name/model[@configured depth]"; the depth that ran is recorded apart.
+    const plan = entry.startsWith("command/") ? entry : entry.slice(entry.indexOf("/") + 1);
     return `${plan.replace(/@[a-z]+$/, "")}@${ran[index]}`;
   });
   return reviewers.every(({ command, model = DEFAULT_MODEL }, index) => {
@@ -106,17 +105,6 @@ export function reviewCovers(
 
 export function reviewSignature(reviewers: NamedReviewer[]) {
   const model = DEFAULT_MODEL;
-  if (reviewers.length === 1) {
-    const [reviewer] = reviewers;
-    // Match the name that older rounds used for the default plan.
-    if (
-      reviewer.name === "codex" &&
-      (reviewer.model ?? model) === model &&
-      (reviewer.effort ?? "high") === "high" &&
-      !reviewer.command
-    )
-      return model;
-  }
   return reviewers
     .map(({ name, model: selected = model, effort = "high", command }) => {
       if (command) return commandPlan(command);

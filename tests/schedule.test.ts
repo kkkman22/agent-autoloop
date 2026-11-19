@@ -2,7 +2,8 @@
 // just been changed; a hub asleep through several runs each of them (only the latest is owed) or none; a timer fires early,
 // twice, or doesn't wake its own thread in its session; writing the same key makes a second timer; cancelling leaves it; a
 // fired timer stops a new one being set under its key; a fired check doesn't name the event the source posted, or stops
-// naming it once a check is set by a check round; a bad rules file stops the hub or isn't told; told every tick, or
+// naming it once a check is set by a check round, or once that round asks a question and the answer wakes the next; a bad
+// rules file stops the hub or isn't told; told every tick, or
 // the card stays after it's fixed; a rules file that is gone stops the hub, or isn't picked up when it's moved back, or
 // brings back a card the owner closed at every tick.
 // Cancelling a timer that isn't waiting spoils the receipt it's in; a timer coming due after its rule has gone stops the
@@ -20,7 +21,7 @@ writeFileSync(rulesFile, readFileSync(process.env.AGENT_AUTOLOOP_RULES!, "utf8")
 process.env.AGENT_AUTOLOOP_RULES = rulesFile;
 const { execute, reloadRules, tick } = await import("./hub.ts");
 const { ingest } = await import("./hub.ts");
-const { claimNext, finish, started, heartbeat, cancel } = await import("./hub.ts");
+const { claimNext, finish, started, heartbeat, cancel, answer } = await import("./hub.ts");
 const { all, one, run } = await import("./storage.ts");
 
 const clean = () => {
@@ -161,6 +162,53 @@ test("a run's look-again fires once at its time, on its thread, in its session, 
     later.context.timers.map((t) => t.events),
     [["1"]],
     "a check set by a check round still names the event the source posted",
+  );
+});
+
+test("an answer to a question a check round asked still names the event the source posted", () => {
+  clean();
+  ingest("app", { id: "1", type: "feedback.new", subject: "#1" }, at(0));
+  const job = claim("w1", at(0))!;
+  started(job.run, job.token, { session: "s-1" }, at(0));
+  finish(
+    job.run,
+    job.token,
+    { outcome: "done", later: [{ key: "recheck", at: new Date(at(60)).toISOString(), about: "看原站恢复了没有" }] },
+    at(1),
+  );
+  keepWorkersHere(at(60));
+  tick(at(60));
+  // 11:00 is also when the five-minutely rule comes due, on the same worker.
+  let check = claim("w1", at(61))!;
+  if (check.rule.name !== "意见") {
+    finish(check.run, check.token, { outcome: "nothing" }, at(61));
+    check = claim("w1", at(61))!;
+  }
+  assert.equal(check.rule.name, "意见");
+  assert.deepEqual(
+    check.context.timers.map((t) => t.events),
+    [["1"]],
+    "the check round itself names the event the source posted",
+  );
+  finish(
+    check.run,
+    check.token,
+    { outcome: "done", ask: [{ title: "原站恢复了吗", text: "恢复了要不要接着做", options: ["接着做", "算了"] }] },
+    at(62),
+  );
+  assert.equal(
+    all("SELECT id FROM timers WHERE event_id IS NOT NULL").length,
+    0,
+    "the timer row is gone before the answer arrives, so the lineage cannot be read from it",
+  );
+  const asked = one<{ id: number }>("SELECT id FROM cards WHERE run_id = ?", [check.run])!.id;
+  answer(asked, { choice: 0, by: "me" }, at(63));
+  keepWorkersHere(at(63));
+  const woke = claim("w1", at(63))!;
+  assert.deepEqual(
+    woke.context.answers.map((a) => a.events),
+    [["1"]],
+    "the round the answer wakes names the event the source posted, not the timer that woke the check round",
   );
 });
 

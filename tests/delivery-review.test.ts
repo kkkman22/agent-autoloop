@@ -7,6 +7,8 @@
 // commit or a conflict resolved by hand keeps the declaration of the commit before it, while a clean sync with main loses it;
 // the model and depth set for a reviewer never reach Codex; a declaration its account took back still counts; a path Git
 // prints in quotes matches no pattern, so an exempt agent's change to a path reviewed in depth merges unreviewed.
+// Final change: code written and taken back on the branch, or brought by a sync with main, reaches the reviewer; tests
+// aren't set apart from the code they test, or a project's guard tests are read as lightly as other tests.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -55,10 +57,23 @@ function reviewPullRequest(
     ...(budget && { budget }),
   });
 }
-test("a review must explicitly report a valid findings list", () => {
+test("a review must explicitly report a valid findings list, each with its level and how it happens", () => {
   assert.deepEqual(parseReview('{"findings":[]}'), []);
-  assert.equal(parseReview('{"findings":[{"title":"错误","text":"这里会丢数据"}]}').length, 1);
-  for (const text of ["", "Reviewer failed", "{}", '{"findings":null}', '{"findings":[{}]}'])
+  const finding = { level: "挡上线", title: "错误", how: "每次保存都会", text: "这里会丢数据" };
+  assert.deepEqual(parseReview(JSON.stringify({ findings: [finding, { ...finding, level: "建议" }] })), [
+    { ...finding, level: "block" },
+    { ...finding, level: "suggest" },
+  ]);
+  for (const text of [
+    "",
+    "Reviewer failed",
+    "{}",
+    '{"findings":null}',
+    '{"findings":[{}]}',
+    '{"findings":[{"title":"错误","text":"这里会丢数据"}]}',
+    JSON.stringify({ findings: [{ ...finding, level: "严重" }] }),
+    JSON.stringify({ findings: [{ ...finding, how: " " }] }),
+  ])
     assert.throws(() => parseReview(text));
 });
 test("Codex ignores developer configuration and only reads the review snapshot", () => {
@@ -156,8 +171,8 @@ function project(review: (stand: (name: string) => string[]) => object = () => (
       mkdirSync(join(repo, name, ".."), { recursive: true });
       writeFileSync(join(repo, name), content);
     },
-    review: (head: string, source?: { agent: string | null; required: boolean }) =>
-      reviewPullRequest(repo, snapshot, main, head, config, source),
+    review: (head: string, source?: { agent: string | null; required: boolean }, base = main) =>
+      reviewPullRequest(repo, snapshot, base, head, config, source),
     changes: () => readFileSync(join(snapshot, "1", "changes.txt"), "utf8"),
     reviewed: (name = "called") => existsSync(join(root, name)),
     [Symbol.dispose]: () => rmSync(root, { recursive: true, force: true }),
@@ -199,6 +214,40 @@ test("a Chinese path still matches the settings", async () => {
   p.write("docs/说明.md", "docs");
   assert.deepEqual(await p.review(p.commit()), { docsOnly: true });
   assert.ok(!p.reviewed());
+});
+test("the reviewer reads the branch's final change: code it wrote and took back, and what main brought, stay out", async () => {
+  using p = project();
+  p.git("switch", "-q", "-c", "topic", "main");
+  p.write("app.ts", "export const version = 'written then taken back';\n");
+  p.commit();
+  p.write("app.ts", "export const version = 1;\n");
+  p.write("kept.ts", "export const kept = true;\n");
+  p.commit();
+  p.git("switch", "-q", "main");
+  p.write("main.ts", "export const fromMain = true;\n");
+  const main = p.commit();
+  p.git("switch", "-q", "topic");
+  p.git(...p.identity, "merge", "-q", "--no-edit", "main");
+  assert.deepEqual(await p.review(p.git("rev-parse", "HEAD"), undefined, main), []);
+  const changes = p.changes();
+  assert.match(changes, /kept = true/);
+  assert.doesNotMatch(changes, /taken back/);
+  assert.doesNotMatch(changes, /fromMain/);
+});
+test("tests are set apart for a light read, except the project's guard tests and paths reviewed in depth", async () => {
+  using p = project(() => ({ xhigh: [".github/**/*"] }));
+  p.write(".github/workflows/ship.test.yml", "name: ship\n");
+  p.write("app.ts", "export const version = 2;\n");
+  p.write("tests/app.test.ts", "// checks the version\n");
+  p.write("tests/guard-writes.test.ts", "// guards the writes\n");
+  assert.deepEqual(await p.review(p.commit()), []);
+  const changes = p.changes();
+  const tests = changes.indexOf("# 测试");
+  assert.ok(tests > 0);
+  assert.ok(changes.indexOf("tests/app.test.ts") > tests);
+  assert.ok(changes.indexOf("tests/guard-writes.test.ts") < tests);
+  assert.ok(changes.indexOf("ship.test.yml") < tests);
+  assert.ok(changes.indexOf("app.ts") < tests);
 });
 test("a root file named like a commit is reviewed as a file", async () => {
   using p = project();

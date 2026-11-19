@@ -732,6 +732,9 @@ function tick(draft: Draft) {
     const rule = ruleNamed(draft, timer.rule);
     const event = { id: `timer:${timer.id}`, type: "timer.due", subject: timer.lane, hops: timer.hops ?? 0 };
     const eventId = recordEvent(draft, timer.source, event, rule ? [rule.name] : []);
+    // The row these were written on is removed once the round this wakes ends, and an answer can wake a round after that:
+    // they travel with the event itself, which every later reader already has (#338).
+    if (timer.events) put(draft, "events", eventId, { events: timer.events });
     if (rule) {
       put(draft, "timers", timer.id, { event_id: eventId });
       enqueue(draft, rule, eventId, timer.lane, timer.agent === rule.to ? timer.session : null);

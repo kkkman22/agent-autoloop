@@ -23,7 +23,7 @@
 | 提问 | `cards.state`: `open → decided → done` 或 `open → closed` | `createCard` 创建；`answer` 核对本人、通道和消息 ref，只改 open，产生 `answer_event`；成功处理回答的 `applyReceipt` 才写 done；`resolve/closeCard` 表示无需决定 |
 | 通知 | 普通通知 open → closed；FYI 创建时就是 closed | `cardFromReceipt/notify/tell` 创建，本人或允许范围内的回执结案。decided 不等于执行过；续办被取消仍保留决定，不伪造 done |
 | 投递 | `deliveries[card_id:channel]` 的 `version/ref/tries/not_before/given_up` 组合：未发、已租出、重试等待、已同步、放弃 | `nextCard` 租给通道，`delivered` 确认，`failed` 排重试；卡片版本更高时更新原消息。超过窗口放弃，重复 tell 可重新启动已放弃投递 |
-| 复查 | `timers.event_id=null` 等待，非空已触发；同 `rule/lane/key` 只一个待触发 | `scheduleReview` 设置、改期、取消；`tick` 记唯一 timer.due 并派回原事项；已触发 timer 的资料留在投影直到关联 run 进入终态，供排队和重试续接使用，终态后从活动投影移除（事实日志保留完整变更）；删规则或改名后到期只留事件记录、不派发，并发通知卡片写明原规则名和复查开头 |
+| 复查 | `timers.event_id=null` 等待，非空已触发；同 `rule/lane/key` 只一个待触发 | `scheduleReview` 设置、改期、取消；`tick` 记唯一 timer.due 并派回原事项，同时把它为哪条事件而设（`events`）抄到这条事件上：触发行随关联 run 进入终态从活动投影移除，事件留在日志里，所以之后由回答叫醒的一轮仍能对回来源给的 id；已触发 timer 的资料留在投影直到关联 run 进入终态，供排队和重试续接使用，终态后从活动投影移除（事实日志保留完整变更）；删规则或改名后到期只留事件记录、不派发，并发通知卡片写明原规则名和复查开头 |
 | 定时计划 | `schedules.cron/next_at/skipped_at`，不是业务完成态 | `tick` 更新；错过只补最近一次，配置改变重新计时，暂停时跳过 |
 | 暂停 | `pauses[name]` 有效记录表示暂停，含 since/until；恢复删除，应答带回删掉的那条 | 本人 `pauseRule/resumeRule`、到期 `tick`。已经领取的不受影响，队列及回答复查留队，新来源事件跳过且恢复不自动补派；本人 `replayRule` 补跑 since 起跳过的事件，每条一次；暂停不能手动运行或补跑 |
 
@@ -58,7 +58,7 @@
 | withdrawn | 检查中撤 deliver，关闭 auto-merge，成功结束但未合并发布，明确报告撤回；不等于 live |
 | retrying | 中台 later 的 delivery-retry 保存 head、GitHub/执行错误计数；换 head 清计数，达限退回；不可写结果时保留重交 |
 
-关闭未合并的 PR 先写 delivery 失败再清标签，避免等待者卡 pending。ask-owner 是独立 Issue 的转告状态，转告成功才清除，不是上线阶段。来源只认可信账号的 `delivery-agent/<PR号>` 状态；PR 正文审查账本与可信状态绑定轮次、head、审查器和正文摘要。免审不是审查通过，填写「处理」不是复审完成。
+关闭未合并的 PR 先写 delivery 失败再清标签，避免等待者卡 pending。ask-owner 是独立 Issue 的转告状态，转告成功才清除，不是上线阶段。来源只认可信账号的 `delivery-agent/<PR号>` 状态；PR 正文审查账本与可信状态绑定轮次、head、审查器和正文摘要。免审不是审查通过，填写「处理」不是复审完成；连续两轮挡上线后只认可信账号写的 `delivery-owner/<PR号>`。
 
 ## 历史依据与已知旧记录
 

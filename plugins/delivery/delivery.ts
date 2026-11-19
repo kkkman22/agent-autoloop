@@ -224,10 +224,11 @@ export async function deliver(
   if (!change.merged && !io.verifyReview) {
     // The label stays on after findings, so another event lands here: a second review that misses them would merge the commit.
     // The review status keeps the record, since a failed round writes its error over `delivery`.
+    // An owner's decision goes on to the review, which checks who wrote it.
     const statuses = await host.statuses(head);
-    if (statuses.some((item) => item.context === config.review.status && item.state === "failure")) {
+    const decided = statuses.some((item) => item.context === `delivery-owner/${number}` && item.state === "success");
+    if (!decided && statuses.some((item) => item.context === config.review.status && item.state === "failure"))
       return { summary: "这个提交审查发现过问题，修复后推新提交才会重审" };
-    }
   }
   if (!io.verifyReview) await accept();
   let guarded = false;
