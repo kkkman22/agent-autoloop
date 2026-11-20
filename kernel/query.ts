@@ -14,6 +14,12 @@ export function pauseOf(view: View, rule: Rule, now: number): Row | null {
   return row && (row.until === null || Date.parse(row.until) > now) ? row : null;
 }
 
+/** The usage limit an agent has hit and that hasn't reset yet: until then none of its rounds is handed out. */
+export function limitOf(view: View, agent: string, now: number): Row | null {
+  const row = view.get("limits", agent);
+  return row && Date.parse(row.until) > now ? row : null;
+}
+
 export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);

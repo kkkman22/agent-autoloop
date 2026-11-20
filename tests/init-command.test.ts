@@ -1,7 +1,7 @@
 // `init --command` turning what a person typed into the command line in rules.json. Failure modes: a quoted path with a
 // space in it is cut at the space, quotes and all, and installs without a word, to fail only when a rule first runs; a quote
 // left open is taken as part of a word; a program that isn't there installs as if it were, and every run of every rule then
-// fails. Run the real program in a home of its own; no service, hub or Agent is started.
+// fails, and so does one only a terminal's shell finds, since rules run through a login shell. Run the real program in a home of its own; no service, hub or Agent is started.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,12 +14,12 @@ const dir = mkdtempSync(join(tmpdir(), "agent-autoloop-init-command-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 let homes = 0;
-function init(command: string) {
+function init(command: string, env: NodeJS.ProcessEnv = {}) {
   const home = join(dir, `home-${++homes}`);
   const ran = spawnSync(
     process.execPath,
     ["--disable-warning=ExperimentalWarning", program, "init", "--command", command, "--no-service"],
-    { env: { ...process.env, AGENT_AUTOLOOP_HOME: home }, encoding: "utf8", timeout: 60_000 },
+    { env: { ...process.env, ...env, AGENT_AUTOLOOP_HOME: home }, encoding: "utf8", timeout: 60_000 },
   );
   return { code: ran.status, stderr: ran.stderr, home };
 }
@@ -50,4 +50,17 @@ test("a program that isn't there stops it and installs nothing", () => {
     assert.equal(existsSync(join(ran.home, "config.json")), false);
     assert.equal(existsSync(join(ran.home, "rules.json")), false);
   }
+});
+
+test("a program only a terminal's shell finds stops it", { skip: process.platform === "win32" }, () => {
+  const folder = join(dir, "terminal");
+  mkdirSync(folder);
+  writeFileSync(join(folder, "terminal-agent"), "", { mode: 0o755 });
+  // A login shell that isn't interactive skips ~/.zshrc, which is where this one's folder is put on PATH.
+  const shell = join(folder, "shell.sh");
+  writeFileSync(shell, `#!/bin/sh\n[ "$1 $2" = "+m -ic" ] || exit 1\nprintf '%s\\n' "${folder}"\n`, { mode: 0o755 });
+  const ran = init("terminal-agent {prompt}", { SHELL: shell });
+  assert.equal(ran.code, 1);
+  assert.match(ran.stderr, /找不到 terminal-agent/);
+  assert.equal(existsSync(join(ran.home, "rules.json")), false);
 });

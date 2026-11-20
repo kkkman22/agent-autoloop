@@ -52,6 +52,7 @@ export function deadlines(view: View, now: number) {
   for (const pause of rows(view, "pauses")) {
     if (pause.until !== null) add("pause", pause.name, Date.parse(pause.until));
   }
+  for (const limit of rows(view, "limits")) add("limit", limit.agent, Date.parse(limit.until));
   for (const timer of rows(view, "timers", { event_id: null })) add("later", String(timer.id), Date.parse(timer.at));
   // Only a round waiting out its backoff needs a deadline of its own: a ready one goes the moment a worker asks.
   for (const run of rows(view, "runs", { state: "queued", not_before: { gt: iso(now) } })) {

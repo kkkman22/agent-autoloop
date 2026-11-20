@@ -1,5 +1,6 @@
 // `agent-autoloop runs`: the finished runs before the few `status` shows, so `why` can be given a number. It pages through
-// /v1/state the way any owner's client can; picking one rule is done here, so the protocol stays as it is.
+// /v1/state on older hubs; newer ones can return one rule's finished runs in one request.
+import { HubError, type Hub } from "../protocol/client.ts";
 import { finished, runRows, shellWord } from "./status.ts";
 
 type Page = (before?: number) => Promise<any>;
@@ -29,6 +30,18 @@ export async function findRuns(
     if (runs.length === want) return { state: first, runs, more: runs.at(-1).id as number };
     cursor = state.nextBefore;
   }
+}
+
+export async function readRuns(owner: Pick<Hub, "state" | "ruleRuns">, rule?: string, before?: number) {
+  if (rule) {
+    try {
+      const page = await owner.ruleRuns(rule, before);
+      return { state: page, runs: page.runs, more: page.nextBefore };
+    } catch (error) {
+      if (!(error instanceof HubError && error.status === 404)) throw error;
+    }
+  }
+  return findRuns(owner.state, { rule, before });
 }
 
 export function runsText(

@@ -1,7 +1,8 @@
 // Failure modes: empty/failed reviews pass; findings are unhandled but attested; Codex reads developer
 // config or memories, writes files, sees credentials, or executes a PR's programs/settings. Review receives a text snapshot;
 // what an octopus merge brings never reaches the reviewer, so it passes unseen; Git escapes a Chinese path so it matches no
-// pattern; a root file named like a commit is taken for one and the review can't finish; a Windows npm shim cannot start the reviewer.
+// pattern; a root file named like a commit is taken for one and the review can't finish; a Windows npm shim cannot start the reviewer; a failed reviewer's
+// reason starts half way through a character.
 // Reviewers by agent: an agent's exemption passes a path reviewed in depth, or a review asked for by label; a change nobody
 // declared, or declared by an account the project doesn't trust or for another PR, takes a listed agent's reviewer; a new
 // commit or a conflict resolved by hand keeps the declaration of the commit before it, while a clean sync with main loses it;
@@ -208,6 +209,17 @@ test("an ordinary merge still goes to the reviewer", async () => {
   p.git(...p.identity, "merge", "-q", "--no-edit", "one");
   assert.deepEqual(await p.review(p.git("rev-parse", "HEAD")), []);
   assert.ok(p.reviewed());
+});
+test("a reviewer that failed says why in whole characters, however its output was cut", async () => {
+  const failing = [process.execPath, "-e", "process.stderr.write('😀' + 'x'.repeat(999)); process.exit(1)"];
+  using p = project(() => ({ command: failing }));
+  p.write("app.ts", "export const version = 2;\n");
+  const head = p.commit();
+  await assert.rejects(p.review(head), (error: Error) => {
+    assert.ok(error.message.isWellFormed(), error.message);
+    assert.equal(error.message, `审查没有完成：${"x".repeat(999)}`);
+    return true;
+  });
 });
 test("a Chinese path still matches the settings", async () => {
   using p = project();

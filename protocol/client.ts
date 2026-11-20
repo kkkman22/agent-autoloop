@@ -52,6 +52,11 @@ export function hubClient(url: string, key: string) {
     why: (id: number) => call("GET", `/v1/runs/${id}/why`),
     removeKey: (kind: string, name: string) =>
       call("DELETE", `/v1/keys/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
+    ruleRuns: (rule: string, before?: number) => {
+      const query = new URLSearchParams({ rule });
+      if (before !== undefined) query.set("before", String(before));
+      return call("GET", `/v1/runs?${query}`);
+    },
     state: (before?: number) => call("GET", before === undefined ? "/v1/state" : `/v1/state?before=${before}`),
     cancel: (run: number) => call("POST", `/v1/runs/${run}/cancel`, { body: {} }),
     resolve: (card: number, reason: string) => call("POST", `/v1/cards/${card}/resolve`, { body: { reason } }),

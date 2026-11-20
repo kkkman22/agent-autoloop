@@ -5,6 +5,7 @@
 // a round that is or may still be running has its session opened by a second process, by a new event, an answer or a due
 // check; one such round stops its thread resuming for ever; a session that keeps failing is gone back into by each new event,
 // ten tries each, though the card said it would start over; a due check hands the previous agent's session to a new agent.
+// A rule moved to another group starts a thread's next round alongside the one still going (issue #362).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -284,7 +285,7 @@ test("without the option, an answer doesn't open a session a round may still be 
   assert.equal(it.claim().session, null);
 });
 
-test("a round still going keeps its session to itself when its rule's group changes under it", () => {
+test("a rule moved to another group under a round still going waits for it, then goes on in its session", () => {
   const it = hub();
   it.round("S");
   it.message();
@@ -294,7 +295,10 @@ test("a round still going keeps its session to itself when its rule's group chan
   regrouped.rules.find((rule) => rule.name === "意见")!.group = "新组";
   it.act("rules", regrouped);
   it.message();
-  assert.equal(it.claim().session, null);
+  assert.equal(it.claim(), null, "its round is still going");
+  it.act("finish", going.run, going.token, { outcome: "done", session: "T" });
+  assert.equal(it.claim().session, "T");
+  it.check();
 });
 
 test("a round stopped for failing too often starts its thread over, as the card says", () => {

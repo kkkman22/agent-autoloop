@@ -3,7 +3,7 @@
 // so columns after it drift and lines wrap past the edge; what waits for the owner sinks below what only reports; a
 // notice dealt with spreads its whole text over the list, or loses it, though that's the only place what `tell` said is read.
 // A paused rule doesn't say how many events it has let go by since when, which ones, or that there are more than it lists,
-// or prints one of them wider than the terminal.
+// or prints one of them wider than the terminal. An agent out of quota doesn't say when it starts taking work again.
 // The replay command it prints, copied as it is, runs something else: a rule name with $ or a backquote expands, one
 // starting with # turns the rest of the line into a comment.
 import assert from "node:assert/strict";
@@ -193,6 +193,12 @@ test(
     }
   },
 );
+
+test("an agent out of quota says when it takes work again", () => {
+  const limited = { until: "2026-11-07T05:50:00.000Z", reason: "You've hit your 5-hour limit", since: now };
+  const agents = [{ name: "Claude", worker: "m4", online: true, seenAt: now, limited }];
+  assert.match(render({ ...state, agents }, { color: false }), /Claude {2}m4 {2}用量到上限，13:50 自动恢复/);
+});
 
 test("on Windows the replay command quotes the way PowerShell reads single quotes", () => {
   assert.equal(replayCommand("中台意见", since, true), `agent-autoloop replay 中台意见 --since ${since}`);

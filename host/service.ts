@@ -295,9 +295,16 @@ export function systemUnit() {
   return spawnSync("systemctl", ["is-active", "--quiet", label()], { stdio: "ignore" }).status === 0 ? label() : null;
 }
 
+/** A system-level unit running this, and no service of ours: installing one beside it would start a second hub. */
+export function leftToSystem() {
+  const name = systemUnit();
+  return name && !serviceRunning()
+    ? `这台电脑用的是系统级服务，运行 systemctl restart ${name} 才会用上新版。`
+    : undefined;
+}
+
 /** New code counts once what's running starts again. What can't be restarted from here is said back, for the owner. */
 export function restartService() {
   if (serviceRunning()) return void installService();
-  const name = systemUnit();
-  return name ? `这台电脑用的是系统级服务，运行 systemctl restart ${name} 才会用上新版。` : undefined;
+  return leftToSystem();
 }

@@ -1,5 +1,5 @@
 // The clock's events. Failure cases: a schedule fires when it isn't due, twice for one moment, or on a schedule that has
-// just been changed; a hub asleep through several runs each of them (only the latest is owed) or none; a timer fires early,
+// just been changed, or by the old zone's clock once the timezone has changed; a hub asleep through several runs each of them (only the latest is owed) or none; a timer fires early,
 // twice, or doesn't wake its own thread in its session; writing the same key makes a second timer; cancelling leaves it; a
 // fired timer stops a new one being set under its key; a fired check doesn't name the event the source posted, or stops
 // naming it once a check is set by a check round, or once that round asks a question and the answer wakes the next; a bad
@@ -19,7 +19,7 @@ const home = setup("schedule");
 const rulesFile = join(home, "rules.json");
 writeFileSync(rulesFile, readFileSync(process.env.AGENT_AUTOLOOP_RULES!, "utf8"));
 process.env.AGENT_AUTOLOOP_RULES = rulesFile;
-const { execute, reloadRules, tick } = await import("./hub.ts");
+const { execute, reloadRules, stateOf, tick } = await import("./hub.ts");
 const { ingest } = await import("./hub.ts");
 const { claimNext, finish, started, heartbeat, cancel, answer } = await import("./hub.ts");
 const { all, one, run } = await import("./storage.ts");
@@ -82,6 +82,29 @@ test("a schedule that changes starts counting from the change", () => {
   changed.rules[4].when.cron = "*/5 * * * *";
   writeFileSync(rulesFile, JSON.stringify(changed));
   tick(at(121));
+});
+
+test("a timezone that changes moves a schedule to the new zone's clock from the change", () => {
+  clean();
+  const before = readFileSync(rulesFile, "utf8");
+  const morning = () => ticks().filter((key) => key.startsWith("早报@"));
+  // 10:00 in Shanghai: the morning one is next due tomorrow, but 09:00 in UTC is still to come today.
+  tick(at(0));
+  writeFileSync(rulesFile, JSON.stringify({ ...JSON.parse(before), timezone: "UTC" }));
+  tick(at(1));
+  const due = one<{ next_at: string }>("SELECT next_at FROM schedules WHERE rule = '早报'")!.next_at;
+  const shown = stateOf(at(1)).lines.find((line: { name: string }) => line.name === "早报")!.next;
+  assert.deepEqual(
+    [due, shown],
+    ["2026-10-18T09:00:00.000Z", due],
+    "what the status says is next is when it comes due",
+  );
+  tick(at(419));
+  assert.deepEqual(morning(), []);
+  tick(at(420));
+  assert.deepEqual(morning(), ["早报@2026-10-18T09:00:00.000Z"]);
+  writeFileSync(rulesFile, before);
+  tick(at(421));
 });
 
 test("a run's look-again fires once at its time, on its thread, in its session, with what it left", () => {

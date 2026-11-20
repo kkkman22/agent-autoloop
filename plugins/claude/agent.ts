@@ -25,6 +25,20 @@ export function inTheApp() {
   });
 }
 
+const HOUR = 3_600_000;
+
+/**
+ * When a subscription's usage limit lets it work again. At its 5-hour limit 2.1.318 ends the turn within two seconds with
+ * `api_error` "usage_limit_reached" and the result "You've hit your 5-hour limit · resets 1:50pm (Asia/Shanghai)", after a
+ * `rate_limit_event` whose `rate_limit_info.resetsAt` is that moment in Unix seconds. Without one, an hour.
+ */
+function limitedUntil(messages: any[], result: any) {
+  if (result.api_error !== "usage_limit_reached") return {};
+  const info = messages.findLast((message) => message?.type === "rate_limit_event")?.rate_limit_info;
+  const resets = Number(info?.resetsAt) * 1000;
+  return { limitedUntil: new Date(resets > 0 ? resets : Date.now() + HOUR).toISOString() };
+}
+
 export default {
   command: (turn) => [
     turn.program ?? findProgram("claude", inTheApp),
@@ -102,7 +116,7 @@ export default {
     const text = carried === undefined ? said : `${said}\n\n${carried}`;
     if (result.is_error || result.subtype !== "success") {
       const error = said.split("\n")[0] || result.errors?.[0] || result.subtype || "没留下结果";
-      return { ...known, usage, sessionUsage, finished: true, error };
+      return { ...known, usage, sessionUsage, finished: true, error, ...limitedUntil(messages, result) };
     }
     return { text, ...known, usage, sessionUsage, finished: true };
   },

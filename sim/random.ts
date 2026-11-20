@@ -78,6 +78,8 @@ export function simulate(seed = 0x5eed, steps = 200000) {
         const fail = rng(4) === 0;
         const body = {
           outcome: fail ? "failed" : "done",
+          // An agent out of quota now and then: its hold and the time it ends go through the log and the due table too.
+          ...(fail && rng(3) === 0 ? { limitedUntil: new Date(world.now + 60000 * (1 + rng(120))).toISOString() } : {}),
           ...(!fail && rng(4) === 0
             ? {
                 ask: [{ title: "选择", text: "内容", options: ["甲", "乙"], key: `card-${r.id}` }],

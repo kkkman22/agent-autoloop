@@ -5,7 +5,7 @@
 // line break or backslash breaking its JSON), or an event the rules wouldn't let through, or asks GitHub for something else
 // when called with one argument; the jira watcher asks the MCP something other than the configured JQL, or hands back an
 // unstable id (so every poll notifies again), or loses the creator the notifier needs, or notifies someone the local map
-// never carried.
+// never carried; a rule still naming the shell watcher stops working.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -143,17 +143,13 @@ test("ops-alerts: the curl in the README reaches the rule, and that key can't se
   }
 });
 
-// Stands in for gh and does what gh does with --jq, so the watcher's own filter really runs.
+// Stands in for gh: notes what it was asked and prints the issues as gh's --json does.
 const FAKE_GH = `#!/bin/sh
 printf '%s\\n' "$*" > "$GH_LOG"
-while [ $# -gt 0 ]; do
-  [ "$1" = "--jq" ] && filter=$2
-  shift
-done
-exec jq -c "$filter" "$GH_ISSUES"
+cat "$GH_ISSUES"
 `;
 
-function watch(args: string[]) {
+function watch(args: string[], program = [process.execPath, join(RECIPES, "github-issues", "watch.ts")]) {
   const dir = mkdtempSync(join(scratch, "gh-"));
   writeFileSync(join(dir, "gh"), FAKE_GH);
   chmodSync(join(dir, "gh"), 0o755);
@@ -168,7 +164,8 @@ function watch(args: string[]) {
     { number: 14, title: "Long", url: "https://example.com/issues/14", body: "字".repeat(5000) },
   ];
   writeFileSync(join(dir, "issues.json"), JSON.stringify(issues));
-  const done = spawnSync("sh", [join(ROOT, "examples", "watch-github-issues.sh"), ...args], {
+  const [command, ...script] = program;
+  const done = spawnSync(command, [...script, ...args], {
     env: {
       ...cleanEnv(),
       PATH: `${dir}:${process.env.PATH}`,
@@ -181,35 +178,47 @@ function watch(args: string[]) {
   return { said: done.stdout, asked: readFileSync(join(dir, "log"), "utf8"), issues };
 }
 
-test("github-issues: what the watcher prints goes through the worker whole, and the rules let it in", () => {
-  const { said, issues } = watch(["owner/repo"]);
-  const { result, problem } = resultFrom(readMessage(said), {});
-  assert.equal(problem, undefined);
-  assert.equal(result.outcome, "done");
-  const events = result.events!;
-  assert.equal(events[0].id, "issue-12");
-  assert.equal(events[0].subject, "#12");
-  assert.equal(events[0].summary, issues[0].title);
-  assert.equal(events[0].detail, issues[0].body, "the body has to reach an Agent that can't go and read it");
-  assert.equal(events[0].link, issues[0].url);
-  assert.equal(events[1].detail, "");
-  assert.equal([...events[2].detail].length, 4000);
-  const rules = readRules("github-issues").rules;
-  const watcher = rules.find((rule: { emits?: unknown }) => rule.emits);
-  const handler = rules.find((rule: { skill?: string }) => rule.skill);
-  for (const { type } of events) {
-    assert.ok(watcher.emits.types.includes(type));
-    assert.ok(handler.when.types.includes(type));
-  }
-  assert.equal(handler.when.source, watcher.emits.source);
-});
+// The stand-in gh is a shell script, so this only runs where a POSIX shell is.
+test(
+  "github-issues: what the watcher prints goes through the worker whole, and the rules let it in",
+  { skip: process.platform === "win32" && "the stand-in gh is a shell script" },
+  () => {
+    const { said, issues } = watch(["owner/repo"]);
+    const { result, problem } = resultFrom(readMessage(said), {});
+    assert.equal(problem, undefined);
+    assert.equal(result.outcome, "done");
+    const events = result.events!;
+    assert.equal(events[0].id, "issue-12");
+    assert.equal(events[0].subject, "#12");
+    assert.equal(events[0].summary, issues[0].title);
+    assert.equal(events[0].detail, issues[0].body, "the body has to reach an Agent that can't go and read it");
+    assert.equal(events[0].link, issues[0].url);
+    assert.equal(events[1].detail, "");
+    assert.equal([...events[2].detail].length, 4000);
+    const rules = readRules("github-issues").rules;
+    const watcher = rules.find((rule: { emits?: unknown }) => rule.emits);
+    const handler = rules.find((rule: { skill?: string }) => rule.skill);
+    for (const { type } of events) {
+      assert.ok(watcher.emits.types.includes(type));
+      assert.ok(handler.when.types.includes(type));
+    }
+    assert.equal(handler.when.source, watcher.emits.source);
+  },
+);
 
-test("github-issues: the watcher's search is optional, and the rules use it to leave old issues alone", () => {
-  assert.doesNotMatch(watch(["owner/repo"]).asked, /--search/);
-  assert.match(watch(["owner/repo", "created:>=2026-11-04"]).asked, /--search created:>=2026-11-04/);
-  const { agents } = readRules("github-issues");
-  assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
-});
+test(
+  "github-issues: the watcher's search is optional, and the rules use it to leave old issues alone",
+  { skip: process.platform === "win32" && "the stand-in gh is a shell script" },
+  () => {
+    assert.doesNotMatch(watch(["owner/repo"]).asked, /--search/);
+    assert.match(watch(["owner/repo", "created:>=2026-11-04"]).asked, /--search created:>=2026-11-04/);
+    // A rule written for the shell version still names it, and gets the same events.
+    const shell = watch(["owner/repo"], ["sh", join(ROOT, "examples", "watch-github-issues.sh")]);
+    assert.equal(shell.said, watch(["owner/repo"]).said);
+    const { agents } = readRules("github-issues");
+    assert.ok(agents.watcher.command.some((part: string) => part.startsWith("created:>=")));
+  },
+);
 
 // Stands in for the local jira MCP: answers the stdio handshake, the main jira_search, and the search for linked cases.
 const FAKE_MCP = `const fs = require("node:fs");

@@ -10,7 +10,8 @@
 // that doesn't exist; a session title with a space, which a client taking the first word would cut, with a placeholder
 // it doesn't know, which would reach the Agent as written, or not starting with a letter or digit, so a subject from
 // outside can lead the prompt and be read by the Agent's command line as an option (-x) or a command (/x); the reserved source redefined; a null rule crashes reload instead of keeping the old rules;
-// a task elsewhere that can't say which model its app runs it on, so a client showing it borrows the Agent's, or one that says so with an empty word.
+// a task elsewhere that can't say which model its app runs it on, so a client showing it borrows the Agent's, or one that says so with an empty word;
+// a source adapter name that can never name a plugin is accepted and every webhook to it is then refused.
 // A good file changing on disk takes effect; a bad one doesn't, and says why. A file that is gone or can't be read
 // crashes the hub, at reload or at restart, instead of keeping the rules it had. A file broken while the hub was down
 // is never told, because nothing about it changes after startup has read it.
@@ -185,6 +186,9 @@ test("a mistake says which rule and what is wrong", () => {
   problem((r) => {
     r.sources["Bad Id"] = { name: "x" };
   }, /来源的编号/);
+  problem((r) => {
+    r.sources.hooks.adapter = "GitHub/Source";
+  }, /来源 hooks.*adapter/);
   problem((r) => {
     r.channels.chat.answerers = "me";
   }, /通道 chat.*answerers/);

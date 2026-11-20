@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT, git, matches, PLAIN_FILE_MODES, type Reviewer, type Settings } from "./project.ts";
 import { IN_THE_APP } from "../codex/agent.ts";
-import { findProgram } from "../../worker/agents.ts";
+import { findProgram, tail } from "../../worker/agents.ts";
 import { reviewCovers, reviewSignature, selectReview, type SharedPolicy } from "./review-policy.ts";
 import { ledger, OWNER, renderRound, stalled } from "./review-ledger.ts";
 
@@ -267,7 +267,7 @@ async function runReviewer(
             new Error(
               signal && child.killed
                 ? `审查超过 ${Math.round(timeout / 60_000)} 分钟没有完成，已停止`
-                : `审查没有完成：${stderr.slice(-1000)}`,
+                : `审查没有完成：${tail(stderr, 1000)}`,
             ),
           ),
     );

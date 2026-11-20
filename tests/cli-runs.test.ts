@@ -1,7 +1,8 @@
 // Listing earlier runs with `agent-autoloop runs`. Failure modes: only the newest page is ever read, so a rule's runs
 // from yesterday never show and `why` can't be given their number; a run still going, or an old one still unsettled that the
 // hub adds to its first page, is listed twice or out of order; the next page skips or repeats a run; a page number that
-// isn't one reaches the hub as a bad address instead of saying how to use the command.
+// isn't one reaches the hub; a new CLI can't page on an older hub or silently ignores a failed history request; the shell
+// drops the rule filter when a printed next-page command is copied.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,7 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { promisify } from "node:util";
-import { findRuns, runsText } from "../cli/runs.ts";
+import { HubError } from "../protocol/client.ts";
+import { findRuns, readRuns, runsText } from "../cli/runs.ts";
 
 const now = "2026-11-10T02:00:00.000Z";
 const run = (id: number, rule: string, state = "done") => ({
@@ -69,6 +71,33 @@ test("a rule's runs older than the first page are found, and the next page start
   assert.equal(last.more, null);
 });
 
+test("an older hub still pages by rule, while a failed request to a newer hub is reported", async () => {
+  const { page } = hub(100);
+  const old = {
+    state: page,
+    ruleRuns: async () => {
+      throw new HubError(404, "没有这个地址");
+    },
+  };
+  const found = await readRuns(old, "B", 50);
+  assert.deepEqual(
+    found.runs.map((run: any) => run.id),
+    [49, 42, 35, 28, 21, 14, 7],
+  );
+  await assert.rejects(
+    readRuns(
+      {
+        ...old,
+        ruleRuns: async () => {
+          throw new HubError(500, "读取失败");
+        },
+      },
+      "B",
+    ),
+    { status: 500 },
+  );
+});
+
 test("--before starts the list there", async () => {
   const { page, asked } = hub(100);
   const found = await findRuns(page, { before: 50 });
@@ -117,6 +146,13 @@ test("the continue command reads back a rule name any shell would take as words"
     // 127 would mean the shell split the name and went looking for a program called, say, `curl`.
     assert.notEqual(done, "127", `the suggested command must parse as one word for ${rule}`);
   }
+});
+
+test("a next-page command keeps a rule starting with # as a shell argument", () => {
+  const rule = "#周报";
+  const found = { state: { now, timezone: "Asia/Shanghai" }, runs: [run(29, rule)], more: 29 };
+  const text = runsText(found, { rule, color: false });
+  assert.equal(text.split("\n").at(-1), "更早的：agent-autoloop runs '#周报' --before 29");
 });
 
 const program = join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");

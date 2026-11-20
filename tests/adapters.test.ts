@@ -1,6 +1,7 @@
 // What's different about each agent. Failure cases: a level of access maps to the wrong flag, full access is given unasked,
-// a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, a
-// reconnect Codex announced and got over before its turn finished fails the finished run, a program's warning is taken
+// a retry starts a new conversation instead of going on, an error or a turn that never finished counts as an answer, the
+// reason a run failed starts half way through a character when the CLI printed more than 300 units, a reconnect Codex
+// announced and got over before its turn finished fails the finished run, a program's warning is taken
 // for its answer, a finished Claude run printed as one JSON array is read as a failure, the
 // session isn't picked out, a command line's placeholder isn't filled in, or a background Codex run assumes it inherited
 // an application's browser connection. A turn that got going and then broke, or was killed before it finished, doesn't
@@ -16,7 +17,9 @@
 // something other than what the event said. A built-in agent starts the program it finds, not the one its rules name,
 // so a wrapper that sends Claude Code to another service is never run. A service tier the rules name for Codex never
 // reaches its command line, so the run takes whatever tier the machine's own Codex config has that day. A program
-// missing for a moment, as while an update reinstalls it, stays missing until the worker restarts.
+// missing for a moment, as while an update reinstalls it, stays missing until the worker restarts. A program a terminal
+// finds only because ~/.zshrc or ~/.bashrc puts its folder on PATH is missing for a worker launchd or systemd started.
+// Claude at its usage limit doesn't say when it resets, so the hub keeps handing it rounds that fail within seconds.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -175,6 +178,23 @@ test("Claude Code: a resume that never got going doesn't say it started, and say
   assert.equal(claude.read("", 1, "No conversation found").started, undefined, "printed as json: nothing on stdout");
   assert.equal(claude.read(stream(hook), 1, "boom").started, undefined, "a hook runs before it has the prompt");
   assert.deepEqual(claude.read(stream(hook), null, ""), { session: "s" });
+});
+
+test("Claude Code: at its usage limit it says when that resets", () => {
+  // Cut down from a real 2.1.318 run on 2026-11-06.
+  const limit = {
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", resetsAt: 1793944200, rateLimitType: "five_hour" },
+    session_id: "s",
+  };
+  const words = "You've hit your 5-hour limit · resets 1:50pm (Asia/Shanghai)";
+  const refused = { ...said(words), is_error: true, api_error: "usage_limit_reached", api_error_status: 429 };
+  const reading = claude.read(stream(init, limit, refused), 1, "");
+  assert.deepEqual([reading.error, reading.limitedUntil], [words, "2026-11-06T05:50:00.000Z"]);
+  const unsaid = Date.parse(claude.read(stream(init, refused), 1, "").limitedUntil!) - Date.now();
+  assert.ok(unsaid > 59 * 60_000 && unsaid <= 60 * 60_000, "no time given: an hour");
+  const other = claude.read(stream(init, { ...said("API Error: 500"), is_error: true }), 1, "");
+  assert.equal(other.limitedUntil, undefined, "any other error is retried as before");
 });
 
 test("Claude Code: the raw messages of a broken run aren't the reason it failed", () => {
@@ -372,6 +392,11 @@ test("a plain command: placeholders filled in, stdout is its last message, a bad
   // the half, not shows it.
   const straddled = `${"A".repeat(99)}😀${"y".repeat(299)}`;
   assert.equal(command.read("", 3, straddled).error, `退出码 3：${"y".repeat(299)}`);
+  // Its output is kept from the end, so the window can begin half way through a character; a lone half can't be stored or
+  // printed, and the hub holds this string in `runs.error` for `status` to read.
+  const half = command.read("", 3, `😀${"x".repeat(299)}`).error!;
+  assert.ok(half.isWellFormed(), half);
+  assert.equal(half, `退出码 3：${"x".repeat(299)}`);
   assert.equal(command.link, undefined, "it has no session to go on in");
 });
 
@@ -394,6 +419,29 @@ test("a plain command's prompt reaches the program as it was written, whatever i
 
 test("a program that isn't there says so", () => {
   assert.throws(() => findProgram("surely-not-installed-anywhere"), /找不到 surely-not-installed-anywhere/);
+});
+
+test("a program on the PATH a terminal's shell sets up is found", { skip: process.platform === "win32" }, () => {
+  const folder = setup("adapters-terminal");
+  const program = join(folder, "terminal-agent");
+  writeFileSync(program, "", { mode: 0o755 });
+  // Like zsh: a login shell that isn't interactive skips ~/.zshrc, and an interactive one may print before the PATH.
+  const terminal = join(folder, "shell.sh");
+  writeFileSync(
+    terminal,
+    `#!/bin/sh\n[ "$1 $2" = "+m -ic" ] || exit 1\nprintf '%s\\n' 'Welcome back' "/nonexistent:${folder}"\n`,
+    {
+      mode: 0o755,
+    },
+  );
+  const shell = process.env.SHELL;
+  process.env.SHELL = terminal;
+  try {
+    assert.equal(findProgram("terminal-agent"), program);
+  } finally {
+    if (shell === undefined) delete process.env.SHELL;
+    else process.env.SHELL = shell;
+  }
 });
 
 test("a program missing at one lookup is found at the next once it's back", () => {

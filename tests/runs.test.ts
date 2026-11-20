@@ -15,6 +15,7 @@
 // A report of starting is taken whatever it holds, however long; stopping a run that isn't there or has ended crashes,
 // or marks it as stopping.
 // Reloading rules must not combine an old agent with a new folder, or change an already claimed job and its worker.
+// A rule moved to another group counts what it already has going in its old group, so it runs twice at once (issue #362).
 // Rule and agent limits must hold across different subjects and rules, without losing their separate queued work.
 // A card about a failing run hands the owner an agent's whole multi-line error.
 import assert from "node:assert/strict";
@@ -109,6 +110,29 @@ test("queued work takes the current agent and folder together; a held claim keep
     cancel(first.run, at(6));
     assert.deepEqual(cancels("w2"), [first.run]);
     assert.deepEqual(cancels("w3"), []);
+  } finally {
+    hub.execute("rules", [before], at(7));
+  }
+});
+
+test("a rule moved to another group still runs one at a time, counting the run it has going", async () => {
+  clean();
+  const hub = await import("./hub.ts");
+  const before = hub.getView().get("config", "rules")!.value;
+  const next = structuredClone(before);
+  next.rules[1].group = "moved";
+  ingest("ops", alert("first"), at(0));
+  const first = claim("w2", at(1))!;
+  try {
+    // Queued before the change, so the queued run has to move as well as the one going.
+    ingest("ops", alert("second"), at(2));
+    hub.execute("rules", [next], at(3));
+    assert.equal(claim("w2", at(4)), null, "the rule already has a run going");
+    finish(first.run, first.token, { outcome: "done" }, at(5));
+    assert.deepEqual(
+      claim("w2", at(6))!.context.events.map((e) => e.subject),
+      ["second"],
+    );
   } finally {
     hub.execute("rules", [before], at(7));
   }

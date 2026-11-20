@@ -11,6 +11,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 `agent-autoloop status` 列出谁在线、等用户什么、在做什么、做过什么，还有按完成时间统计的今天和最近 7 天的轮数、Token 和费用（Token 含缓存，写出其中缓存占多少；同一轮重试的已报用量相加，没上报的轮数会写出来）。终端里它带颜色，接管道、被 Agent 调用或设了 `NO_COLOR` 时是纯文本。`agent-autoloop status --json` 输出 `/v1/state` 的原样结构，给脚本和看板用。`agent-autoloop answer <卡片> <序号>` 回答，`agent-autoloop resolve <卡片> <结果>` 结案，`agent-autoloop stop <第几轮>` 停掉一轮，等整个进程组退出才报告已停。
 
+用户说 Agent 额度用完了、中台还在一轮轮派活时：内置的 Claude Code 插件已经会报恢复时间，中台到那时前不派活给这个 Agent，排着的事件到点自动接着做，不用暂停规则或调小 `parallel`；`status` 在这个 Agent 后面写着几点恢复。想提前试，对用它的一条规则 `agent-autoloop run`，跑通就恢复派活。别的 CLI 要有这个行为，在它的插件 `read` 里返回 `limitedUntil`（见 `docs/plugins.md`）。
+
 续接会话也只算这次新增的用量。`~/.agent-autoloop/worker/usage/` 存着相减要用的累计值，没有记录的续接（比如删了这个目录）这次不报 Codex 的 Token 和 Claude Code 的费用，下一次恢复正常。本人打开链接在同一个会话里接着聊用掉的量，会算进下一次续接。旧回执不重算。
 
 这里没有网页。用户想要一个页面看全局，就替他写一个：读 `GET /v1/state`，密钥是 `config.json` 的 `owner`，要跟着变化就从状态里的 `seq` 接 `GET /v1/stream?after=<seq>`，请求见 `docs/protocol.md` 的「本人」一节。
@@ -64,7 +66,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 1. **对方能发 HTTP**：`agent-autoloop key new source <名字>` 拿密钥（这是新建密钥，先问用户），`rules.json` 的 `sources` 登记，对方 `POST /v1/events`。对方要知道这件事后来做完没有、结论是什么，用同一把密钥 `GET /v1/events/<应答里的 event>`，不用给它本人的密钥。
 2. **对方有自己的 Webhook 格式**：在 `~/.agent-autoloop/plugins/<名字>/source.ts` 写一个函数，验签并翻译成事件（见 `plugins/github/source.ts`），来源写 `"adapter": "<名字>"`，地址是 `/v1/in/<来源>`，秘密放 `~/.agent-autoloop/secrets.env` 的 `AGENT_AUTOLOOP_SECRET_<来源>`（来源名转大写，`-` 换成 `_`），改完重启中台（`agent-autoloop service install`）。对方要能连到中台，所以中台要在服务器上，或者用隧道。
-3. **对方推不过来，或者中台在家里**：定时跑一段脚本轮询，见 `examples/watch-github-issues.sh`。规则用 `use: "command"` 的 Agent，写上 `emits`。没新东西不花 Token。
+3. **对方推不过来，或者中台在家里**：定时跑一段脚本轮询，见 `examples/recipes/github-issues/watch.ts`（规则里写 `["node", "<路径>", "owner/repo"]`，Windows 也能跑）。规则用 `use: "command"` 的 Agent，写上 `emits`。没新东西不花 Token。
 
 ## 接一个 Agent
 
@@ -270,7 +272,7 @@ MCP 服务不区分调用方，都按本人记录（`answer` 记成本人，`emi
 
 中台按调用者限量：每把密钥、每一轮、每个 Webhook 来源各算各的，对不上的密钥合起来算一个。超了回 429，接单程序会留着结果稍后再交。正常用量碰不到默认上限；真碰到了（比如一个来源一次推几百条），在 `config.json` 的 `hub.limits` 里调大 `perMinute`、`burst`、`inFlight` 或 `waiting`，再 `agent-autoloop service install` 重启。中台日志里的 `limited <调用者>` 说明是谁、超了哪一项。通道插件一启动就退出时会越等越久再重启，最长 5 分钟，日志里能看到原因。
 
-服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。`agent-autoloop update` 不碰它，更新后自己运行 `systemctl restart` 才会用上新版。
+服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。`agent-autoloop update`、再跑一遍安装命令和 `service install` 都不碰它，只提示你自己运行 `systemctl restart`，运行后才会用上新版。
 
 ## 日志与恢复
 

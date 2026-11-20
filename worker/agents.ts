@@ -3,7 +3,8 @@
 // then the ones that ship. Anything with a print mode needs no file at all: `use: "command"` with a command line in
 // rules.json.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
+import path from "node:path";
 import { findOnPath } from "../host/command.ts";
 import { loadPlugin } from "../host/plugins.ts";
 import type { Usage } from "../protocol/validate.ts";
@@ -35,6 +36,8 @@ export type Reading = {
   /** What the session has used so far, for amounts the program only gives that way. */
   sessionUsage?: Usage;
   error?: string;
+  /** With `error`: it's out of quota, such as a subscription's usage limit, and can take no work before this ISO time. */
+  limitedUntil?: string;
   /** Its turn is over, though it may not have exited. */
   finished?: boolean;
   /** It has this turn's prompt, in a conversation that's there. From here on the work may be half done. */
@@ -65,23 +68,53 @@ export async function adapterFor(use: string): Promise<Adapter> {
 // first), and a kept miss would fail every later run until the worker restarts.
 const found = new Map<string, string>();
 
-/** Where a program is: on the login shell's PATH (launchd and systemd start with a bare one), or in one of these. */
+/** The last line a shell prints for a script, or null if it fails or prints nothing. */
+function shellSays(flags: string[], script: string) {
+  try {
+    const printed = execFileSync(process.env.SHELL ?? "/bin/sh", [...flags, script], {
+      encoding: "utf8",
+      timeout: 15_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return printed.trim().split("\n").at(-1) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A program on the PATH a rule's command line runs with: the login shell's on Unix. */
+export function onPath(name: string) {
+  if (process.platform === "win32") return findOnPath(name, [".exe", ".com", ".cmd", ".ps1"]);
+  return shellSays(["-lc"], `command -v ${name}`);
+}
+
+/** A program on the PATH an interactive shell sets up: ~/.zshrc and ~/.bashrc are where installers tell people to add it. */
+function inTerminal(name: string) {
+  // The PATH, not `command -v`: in a terminal that can print an alias. +m: an interactive zsh with job control takes the
+  // terminal's foreground and doesn't hand it back, so Ctrl-C would no longer reach the command that asked.
+  const folders = shellSays(["+m", "-ic"], "printenv PATH")?.split(":") ?? [];
+  // An empty entry or `.` means the folder the shell was in, not one the worker can name.
+  const absolute = folders.filter((folder) => path.isAbsolute(folder));
+  return absolute.map((folder) => path.join(folder, name)).find(isProgram) ?? null;
+}
+
+function isProgram(file: string) {
+  try {
+    accessSync(file, constants.X_OK);
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Where a program is: on the login shell's PATH (launchd and systemd start with a bare one), on the PATH a terminal sets
+ * up, or in one of these.
+ */
 export function findProgram(name: string, elsewhere: () => string[] = () => []) {
   let program = found.get(name);
   if (!program) {
-    let onPath: string | null = null;
-    if (process.platform === "win32") onPath = findOnPath(name, [".exe", ".com", ".cmd", ".ps1"]);
-    else {
-      try {
-        const printed = execFileSync(process.env.SHELL ?? "/bin/sh", ["-lc", `command -v ${name}`], {
-          encoding: "utf8",
-          timeout: 15_000,
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        onPath = printed.trim().split("\n").at(-1) || null;
-      } catch {}
-    }
-    program = onPath ?? elsewhere().find(existsSync);
+    program = onPath(name) ?? (process.platform === "win32" ? null : inTerminal(name)) ?? elsewhere().find(existsSync);
     if (!program) throw new Error(`找不到 ${name}：先装好并登录`);
     found.set(name, program);
   }

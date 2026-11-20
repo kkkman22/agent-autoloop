@@ -19,6 +19,7 @@ export type Services = {
   /** What a pause has kept from a rule since it began and nothing has made up yet, newest first: how many, and the
    * latest of them, or all of them. */
   skipped(rule: string, since: string, everything?: boolean): { count: number; events: Row[] };
+  ruleRuns(rule: string, before?: number): { runs: Row[]; nextBefore: number | null };
   why(id: number): unknown;
   metrics(): string;
   card(token: string): Row | undefined;
@@ -345,6 +346,16 @@ async function route(call: Call): Promise<Response> {
   if (method === "POST" && card) return cardAction(call, Number(card[1]), card[2]);
   const ruleControl = /^\/v1\/rules\/([^/]+)\/(pause|resume|run|replay)$/.exec(path);
   if (method === "POST" && ruleControl) return control(call, ruleControl[1], ruleControl[2]);
+  if (method === "GET" && path === "/v1/runs") {
+    requireKey(call, "owner");
+    const rule = call.url.searchParams.get("rule");
+    if (!rule) throw new InputError("缺规则名");
+    const before = call.url.searchParams.get("before");
+    if (before !== null && (!POSITIVE_ID.test(before) || !Number.isSafeInteger(Number(before))))
+      throw new InputError("编号不正确");
+    const page = services.ruleRuns(rule, before === null ? undefined : Number(before));
+    return json({ now: iso(call.now), timezone: call.rules.timezone, ...page });
+  }
   if (method === "GET" && path === "/v1/state") return state(call);
   if (method === "POST" && path === "/v1/rules/preview") {
     requireKey(call, "owner");

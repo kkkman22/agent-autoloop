@@ -217,7 +217,7 @@ export function parseRules(json: string, now: number, timezone: string): Rules {
     if (!isName(id)) issues.push(`来源的编号${ID_WORDS}：${id}`);
     checkFields(issues, `来源 ${id} `, source, [
       ["name", isText, NOT_EMPTY],
-      ["adapter", isText, NOT_EMPTY, true],
+      ["adapter", isId, ID_WORDS, true],
     ]);
   }
   rules.sources[SCHEDULE] = { name: "定时" };

@@ -20,6 +20,7 @@
 // same-source other-group card stays out (the widening is the rule's own, not a default), and even with it cards from
 // another source or made after the run was claimed stay out.
 // A card closed while its first message is on the way never gets that message updated.
+// After a rule moves to another group, its next run isn't given the cards its earlier runs left open (issue #362).
 // A channel whose program keeps coming but whose last card didn't get through looks fine in the state (issue #290).
 // A rule that lists its channels has its cards, and the notices of its runs, sent to others as well; one that lists none
 // stops reaching every channel; a notice of nobody's rule reaches only some. With defaultChannels, a card that names no
@@ -548,6 +549,21 @@ test("a rule that declares crossGroup sees and closes its source's open cards in
     assert.deepEqual([card(gate).state, card(gate).result, card(gate).by], ["closed", "批过了", `第 ${job.run} 轮`]);
     assert.equal(card(later).state, "open");
   });
+
+test("a rule moved to another group still gets the cards it left open", () => {
+  clean();
+  const mine = asked(1).id;
+  underRules(
+    (rules) => (rules.rules[0].group = "moved"),
+    () => {
+      ingest("app", note(2), at(1));
+      assert.deepEqual(
+        claim("w1", at(2))!.context.open.map((c) => c.card),
+        [mine],
+      );
+    },
+  );
+
 });
 
 test("each channel gets each card once, and an update when its state changes; a lost report sends no second message", () => {

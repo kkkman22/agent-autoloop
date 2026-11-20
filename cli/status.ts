@@ -66,21 +66,30 @@ function stylesFor(color: boolean) {
 export function clockFor(state: { now: string; timezone: string }) {
   const zone = state.timezone;
   const now = Date.parse(state.now);
+  const calendar = new Intl.DateTimeFormat("en-CA", { timeZone: zone });
+  const hour = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: zone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const short = new Intl.DateTimeFormat("zh-CN", { timeZone: zone, month: "numeric", day: "numeric" });
   const dayOf = (at: number) => {
-    const [y, m, d] = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(at).split("-").map(Number);
+    const [y, m, d] = calendar.format(at).split("-").map(Number);
     return Date.UTC(y, m - 1, d) / 86_400_000;
   };
-  const clock = (at: number) =>
-    new Date(at).toLocaleString("zh-CN", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const clock = (at: number) => hour.format(at);
   /** Today's is just the time; yesterday, tomorrow and the coming week by name; further off by date. */
+  const today = dayOf(now);
   const when = (iso: string) => {
     const at = Date.parse(iso);
-    const days = dayOf(at) - dayOf(now);
+    const day = dayOf(at);
+    const days = day - today;
     if (days === 0) return clock(at);
     if (days === -1) return `昨天 ${clock(at)}`;
     if (days === 1) return `明天 ${clock(at)}`;
-    if (days > 1 && days < 7) return `${WEEK[new Date(dayOf(at) * 86_400_000).getUTCDay()]} ${clock(at)}`;
-    const date = new Date(at).toLocaleString("zh-CN", { timeZone: zone, month: "numeric", day: "numeric" });
+    if (days > 1 && days < 7) return `${WEEK[new Date(day * 86_400_000).getUTCDay()]} ${clock(at)}`;
+    const date = short.format(at);
     return `${date} ${clock(at)}`;
   };
   const lasted = (iso: string) => {
@@ -95,7 +104,7 @@ const PLAIN = /^[\p{L}\p{N}_./][\p{L}\p{N}_.#@:/-]*$/u;
 
 /** A word the user's shell reads back unchanged: single quotes, which neither expands inside, as each shell escapes them.
  * PowerShell also takes the curly single quotes (common in Chinese text) as quotes, so each of those is doubled too. */
-export const shellWord = (word: string, windows: boolean) =>
+export const shellWord = (word: string, windows = process.platform === "win32") =>
   PLAIN.test(word)
     ? word
     : windows
@@ -185,10 +194,11 @@ export function render(state: any, { color, columns }: { color: boolean; columns
   const whereRoom = Math.max(0, ...presence.map((one) => width(one.where)));
   for (const one of presence) {
     const head = `  ${one.online ? green("●") : red("○")} ${pad(one.name, nameRoom)}  `;
-    if (one.online) say(head + dim(one.where));
+    const limited = one.limited ? `  ${yellow(`用量到上限，${when(one.limited.until)} 自动恢复`)}` : "";
+    if (one.online) say(head + dim(one.where) + limited);
     else
       say(
-        `${head}${dim(pad(one.where, whereRoom))}  ${red(`离线，最后在线 ${one.seenAt ? when(one.seenAt) : "没见过"}`)}`,
+        `${head}${dim(pad(one.where, whereRoom))}  ${red(`离线，最后在线 ${one.seenAt ? when(one.seenAt) : "没见过"}`)}${limited}`,
       );
   }
 

@@ -247,6 +247,11 @@
           "type": "string",
           "maxLength": 500
         },
+        "limitedUntil": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(Z|[+-]\\d\\d:\\d\\d)$"
+        },
         "session": {
           "type": "string",
           "maxLength": 500

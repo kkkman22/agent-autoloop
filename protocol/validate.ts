@@ -26,6 +26,8 @@ export type Result = {
   outcome: "done" | "nothing" | "failed" | "cancelled";
   summary?: string;
   error?: string;
+  /** A failed round's agent can't work again before this time, such as a subscription's usage limit resetting then. */
+  limitedUntil?: string;
   session?: string;
   usage?: Usage;
   ask?: Ask[];
@@ -158,7 +160,19 @@ export function parseResult(input: unknown): Result {
   }
   const result = { ...input } as Item;
   if (
-    !only(result, ["outcome", "summary", "error", "session", "usage", "ask", "notice", "resolve", "later", "events"])
+    !only(result, [
+      "outcome",
+      "summary",
+      "error",
+      "limitedUntil",
+      "session",
+      "usage",
+      "ask",
+      "notice",
+      "resolve",
+      "later",
+      "events",
+    ])
   ) {
     throw new InputError("结果里有不认识的字段");
   }
@@ -167,6 +181,9 @@ export function parseResult(input: unknown): Result {
   }
   if (!optional(result.summary, 500) || !optional(result.error, 500) || !optional(result.session, 500)) {
     throw new InputError("summary、error、session 最多 500 字");
+  }
+  if (result.limitedUntil !== undefined && (result.outcome !== "failed" || !dateTime(result.limitedUntil))) {
+    throw new InputError("limitedUntil 只能跟 failed 一起交，要是带时区的 ISO 时间");
   }
   if (!validUsage(result.usage)) throw new InputError("usage 要是对象，里面要是有限的非负数字");
   if (!listOf(result.ask, 5, validAsk)) {

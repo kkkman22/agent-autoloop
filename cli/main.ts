@@ -14,6 +14,7 @@ import { privateDirectory } from "../host/files.ts";
 import {
   aboveDesktop,
   installService,
+  leftToSystem,
   removeService,
   restartService,
   runningUp,
@@ -316,7 +317,7 @@ function commandWords(line: string) {
 /** What was asked for on the command line, or whichever of the usual Agents is installed. */
 async function agentsToUse(named: Flags, worker: string) {
   const agents: Record<string, { name: string; worker: string; use: string; command?: string[] }> = {};
-  const { adapterFor, findProgram } = await import("../worker/agents.ts");
+  const { adapterFor, onPath } = await import("../worker/agents.ts");
   const command = text(named.command);
   if (command) {
     const words = commandWords(command);
@@ -325,14 +326,8 @@ async function agentsToUse(named: Flags, worker: string) {
     const [first] = words;
     const there = /[\\/]/.test(first)
       ? existsSync(path.resolve(first))
-      : /^[\w.+@-]+$/.test(first) &&
-        (() => {
-          try {
-            return Boolean(findProgram(first));
-          } catch {
-            return false;
-          }
-        })();
+      : // Where the rule will look, not where a built-in Agent may also look: a rule's command runs in a login shell.
+        /^[\w.+@-]+$/.test(first) && Boolean(onPath(first));
     if (!there) return fail(`找不到 ${first}：先装好它，或者在 --command 里写它的完整路径。`);
     agents.agent = { name: "Agent", worker, use: "command", command: words };
     return agents;
@@ -525,8 +520,8 @@ async function runs(args: string[]) {
   if (rest.length > 1 || named.before === true) return fail(RUNS_USAGE);
   const before = named.before === undefined ? undefined : runOf(named.before, RUNS_USAGE);
   const owner = ownerClient();
-  const { findRuns, runsText } = await import("./runs.ts");
-  const found = await findRuns((at) => owner.state(at), { rule: rest[0], before });
+  const { readRuns, runsText } = await import("./runs.ts");
+  const found = await readRuns(owner, rest[0], before);
   if (named.json !== undefined) return console.log(JSON.stringify({ runs: found.runs, before: found.more }, null, 2));
   const color = colorFor(process.stdout, process.env);
   console.log(runsText(found, { rule: rest[0], color, columns: process.stdout.columns }));
@@ -902,6 +897,8 @@ async function service(args: string[]) {
   if (args[0] === "install") {
     // Installing over kept data comes here and not to init, and uninstalling took the links away.
     linkSkill();
+    const told = leftToSystem();
+    if (told) return console.log(told);
     installService();
     return waitForHub();
   }

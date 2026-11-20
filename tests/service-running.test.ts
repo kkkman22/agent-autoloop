@@ -1,6 +1,7 @@
 // Which service runs this on a machine. Failure cases: doctor says a service running from a system-level unit isn't
 // running; an update takes that unit for its own, writes a user-level one beside it, and fails where there's no user
-// manager or starts a second hub where there is; a user-level service isn't restarted by an update; a Mac is asked about
+// manager or starts a second hub where there is; running the installer again, which is how it updates, does the same through
+// `service install`; a user-level service isn't restarted by an update; a Mac is asked about
 // systemd; a service just started counts as done before its hub answers, so the command run next finds nothing there.
 // The fake systemctl stands in for both managers, and no test installs anything real.
 import assert from "node:assert/strict";
@@ -57,6 +58,29 @@ test("an update leaves a system-level unit to its owner, and says how to restart
   assert.match(said, /systemctl restart agent-autoloop/);
   assert.ok(!called().some((call) => call.includes("daemon-reload") || call.includes("enable")));
   assert.equal(existsSync(userUnits), false, "no second unit beside it");
+});
+
+test("running the installer again leaves a system-level unit to its owner just as an update does", () => {
+  systemctl({ system: true, manager: false });
+  const onLinuxFirst = `data:text/javascript,Object.defineProperty(process,"platform",{value:"linux"})`;
+  const installed = spawnSync(
+    process.execPath,
+    [
+      "--disable-warning=ExperimentalWarning",
+      "--import",
+      onLinuxFirst,
+      join(import.meta.dirname, "..", "bin", "agent-autoloop.ts"),
+      "service",
+      "install",
+    ],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  const beside = existsSync(userUnits);
+  rmSync(userUnits, { recursive: true, force: true });
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.match(installed.stdout, /systemctl restart agent-autoloop/);
+  assert.ok(!called().some((call) => call.includes("daemon-reload") || call.includes("enable")));
+  assert.equal(beside, false, "no second unit beside it");
 });
 
 test("an update restarts a user-level service as before", () => {

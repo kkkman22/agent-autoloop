@@ -24,7 +24,7 @@ import { HubError, type Hub } from "../protocol/client.ts";
 import { HOME } from "../host/home.ts";
 import { commandLine, processCommand } from "../host/command.ts";
 import type { Job } from "../protocol/job.ts";
-import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
+import { addUsage, dateTime, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { fit, promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 import { loadUsage, saveUsage, tidyUsage, usageDelta } from "./usage.ts";
@@ -414,7 +414,8 @@ export function createWorker({
       if (entry.repairs) return discardReceipt(entry, adapter, error);
       // The conversation may not be there to go on in, or something else has it open: this go carries on in a new one.
       // Not once the turn has started: a new one would do its work again. The hub tries again later, in this one.
-      if (entry.resume && !entry.triedFresh && entry.repairs === 0 && !seen.started) {
+      // Out of quota, a new one would fail the same way.
+      if (entry.resume && !entry.triedFresh && entry.repairs === 0 && !seen.started && !seen.limitedUntil) {
         log(`run ${entry.run}: couldn't go on in ${entry.resume} (${error}); starting a new session`);
         entry.triedFresh = true;
         entry.resume = null;
@@ -426,7 +427,9 @@ export function createWorker({
           return endWith(entry, { outcome: "failed", error: fit(String(failure), 500) });
         }
       }
-      return endWith(entry, { outcome: "failed", error: fit(error, 500), ...known, ...usage });
+      // The hub refuses a whole result with a time it can't read, and the run would wait for a result that never comes.
+      const limited = dateTime(seen.limitedUntil) && { limitedUntil: seen.limitedUntil };
+      return endWith(entry, { outcome: "failed", error: fit(error, 500), ...limited, ...known, ...usage });
     }
     const { result, problem } = resultFrom(readMessage(seen.text), { session, usage: entry.usage });
     if (entry.repairs && !problem && result.outcome === "failed") return discardReceipt(entry, adapter, result.error!);
