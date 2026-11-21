@@ -420,9 +420,9 @@ function claimNext(draft: Draft, worker: string, claim: string) {
         Math.max(room, 1),
       );
       // An agent out of quota fails each round within seconds: only a round the owner asked for goes, to try it.
-      const held = limitOf(draft.view, rule.to, draft.now);
+      const limited = limitOf(draft.view, rule.to, draft.now);
       const found = waiting.find(
-        (queued) => !busyLanes.has(`${queued.grp}\0${queued.lane}`) && (queued.manual || !held),
+        (queued) => !busyLanes.has(`${queued.grp}\0${queued.lane}`) && (queued.manual || !limited),
       );
       if (found && (!run || found.id < run.id)) run = found;
     }
@@ -492,7 +492,8 @@ function retryLater(draft: Draft, run: Row, result: Result) {
   const limitedUntil = told > draft.now && told <= draft.now + LIMIT_LONGEST ? told : 0;
   if (limitedUntil) limit(draft, run, limitedUntil, error);
   const notBefore = Math.max(draft.now + Math.min(5 * MINUTE * 2 ** (attempts - 1), 60 * MINUTE), limitedUntil);
-  const unclaimed = nulls("claim", "claimed_at", "seen_at", "cancel_at");
+  // The owner's go-ahead was for the dispatch that just failed: a retry waits like any other, unless they ask again.
+  const unclaimed = nulls("claim", "claimed_at", "seen_at", "cancel_at", "manual");
   const rejected: Rejected[] = [];
   for (const what of ["ask", "resolve", "later", "events"] as const) {
     for (const _ of result[what] ?? []) rejected.push({ what, reason: "没跑成的一轮只能发通知" });
@@ -518,6 +519,7 @@ function retryLater(draft: Draft, run: Row, result: Result) {
   }
   put(draft, "runs", id, { state: "queued", not_before: iso(notBefore), ...failure });
   const waiting = rows(draft.view, "runs", { rule: run.rule, lane: run.lane, state: "queued" });
+  let asked = false;
   for (const other of waiting.filter((other) => other.id !== id)) {
     for (const link of rows(draft.view, "run_events", { run_id: other.id })) {
       put(draft, "run_events", `${id}:${link.event_id}`, { run_id: id, event_id: link.event_id });
@@ -525,7 +527,11 @@ function retryLater(draft: Draft, run: Row, result: Result) {
     }
     set(draft, "runs", other.id, null);
     if (other.resume) put(draft, "runs", id, { resume: other.resume });
+    if (other.manual) asked = true;
   }
+  // An ask came in while this round was running: the owner's go-ahead beats the backoff the failure earned.
+  if (asked) put(draft, "runs", id, { manual: 1, not_before: draft.at });
+
   if (!result.notice?.some((notice) => !notice.fyi) && attempts === 3) {
     const clock = { timeZone: draft.rules.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
     const time = new Intl.DateTimeFormat("zh-CN", clock).format(notBefore);

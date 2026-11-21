@@ -5,7 +5,9 @@
 // dropped or skipped instead of waiting; nothing starts again by itself at that time, or the round that hit the limit is
 // tried before it; the owner isn't told when it comes back, is told once per round or per agent that hit it, or the card
 // stays open after it's back; the owner can't try the agent before then, or a round that got through then leaves the hold
-// in place, or the rounds that hit the limit still wait for the reset; a time that isn't one, or one on a round that didn't
+// in place, or the rounds that hit the limit still wait for the reset; the ask is spent on the round it sent rather
+// than living on in its retries, and an ask made while the thread's round was running waits out that round's backoff
+// instead of going when it fails; a time that isn't one, or one on a round that didn't
 // fail, is taken; a time days off, which no usage limit gives, holds the agent that long; the hold is lost when the
 // projection is rebuilt from the log.
 import assert from "node:assert/strict";
@@ -122,6 +124,41 @@ test("a reset more than eight days off is no usage limit: the round fails as any
   assert.deepEqual(notices(), []);
   assert.equal(stateOf(at(3)).agents.find((agent) => agent.id === "a1")!.limited, null);
   assert.equal(claim(at(7))!.context.events[0].subject, "#1", "tried again after the usual wait");
+});
+
+test("an ask made while the thread's round was running goes when that round fails, not at the reset", () => {
+  clean();
+  heartbeat("w1", [], at(0));
+  feedback("#1", at(0));
+  const running = claim(at(1))!;
+  execute("runRule", ["意见", "owner", { subject: "#1" }], at(2));
+  finish(running.run, running.token, limited(at(60)), at(3));
+  const probe = claim(at(4))!;
+  assert.equal(probe.run, running.run, "the kept round carries the ask, and goes now");
+  assert.ok(
+    probe.context.events.some((event: any) => event.type === "run.manual"),
+    "with the ask's own event merged in",
+  );
+});
+
+test("the ask is spent on the round it sent, not on that round's retries", () => {
+  clean();
+  heartbeat("w1", [], at(0));
+  feedback("#1", at(0));
+  const first = claim(at(1))!;
+  finish(first.run, first.token, limited(at(300)), at(2));
+  execute("runRule", ["意见", "owner", {}], at(3));
+  const probe = claim(at(3))!;
+  assert.equal(probe.context.events[0].type, "run.manual");
+  finish(probe.run, probe.token, limited(at(300)), at(4));
+  assert.equal(claim(at(5)), null, "the probe failed, so what's left waits for the reset like any other round");
+  assert.equal(
+    stateOf(at(5)).runs.find((r: any) => r.id === probe.run)!.manual,
+    false,
+    "the ask was for that one dispatch; its retries aren't shown as the owner's",
+  );
+  tick(at(300));
+  assert.ok(claim(at(300)), "and goes again at the reset");
 });
 
 // Last: a rebuild replays the whole log, including what the fixture resets above only cleared from the projection.
