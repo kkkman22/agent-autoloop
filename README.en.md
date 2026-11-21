@@ -219,19 +219,19 @@ Apple M6, Node 24.22.1. Each write is a separate request, acknowledged only afte
 
 | Metric                                              |       Measured |
 | --------------------------------------------------- | -------------: |
-| Cold start                                          |       122.24 ms |
-| Idle memory                                         | 123.45 MB RSS |
-| 1,000 concurrent waiting polls                      | 200.25 MB RSS |
-| Durable writes                                      | 2,077 events/s |
-| Dispatch p99                                        |        2.28 ms |
-| Ingest / claim / finish P50 with 5,000 queued       | 1.2 / 1.7 / 1.1 ms |
-| Held-back heartbeat p99 and empty claim P50, 5,000 queued | 1.4 / 0.6 ms |
-| First claim after 50 capacity polls wake for one event |     18.06 ms |
-| Startup and status summary at 55k facts             | 104.0 ms / 1.72 ms |
-| Kernel lines (with comments and blanks)             |          2,564 |
+| Cold start                                          |        84.50 ms |
+| Idle memory                                         | 123.55 MB RSS |
+| 1,000 concurrent waiting polls                      | 204.06 MB RSS |
+| Durable writes                                      | 2,485 events/s |
+| Dispatch p99                                        |         1.72 ms |
+| Ingest / claim / finish P50 with 5,000 queued       | 0.9 / 1.3 / 0.9 ms |
+| Held-back heartbeat p99 and empty claim P50, 5,000 queued | 1.3 / 0.4 ms |
+| First claim after 50 capacity polls wake for one event |     19.96 ms |
+| Startup and status summary at 55k facts             |  80.5 ms / 1.54 ms |
+| Kernel lines (with comments and blanks)             |          2,684 |
 | Runtime dependencies                                |              0 |
 
-Ingest, claims, `why` and the status summary no longer slow down as history grows: the summary and `/v1/metrics` read derived counters and delivery indexes instead of scanning history, and with a deep queue only rounds actually waiting out a backoff enter the due table, while a claim with every lane taken reads no queue at all. The log and indexes keep using disk as history grows. The first start after a format change rebuilds from the log, which took 2.6 seconds for 55,000 facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
+Ingest, claims, `why` and the status summary no longer slow down as history grows: the summary and `/v1/metrics` read derived counters and delivery indexes instead of scanning history, and with a deep queue only rounds actually waiting out a backoff enter the due table, while a claim with every lane taken reads no queue at all. The log and indexes keep using disk as history grows. The first start after a format change rebuilds from the log, which took 2.0 seconds for 55,000 facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
 
 ## Usage and provider terms
 

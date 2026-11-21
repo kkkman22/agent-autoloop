@@ -1,6 +1,6 @@
 # 2026-11-21 全量审计 + 性能实测批
 
-**状态：进行中。** 审批过的范围：全项目审核修错、文档同步、性能实测与按实测取舍的优化。
+**状态：2026-11-21 完成。** 两项必修已带测试落地；性能四个候选按实测门槛全部否决并记录；文档数字全部按本机新数刷新。`npm test` 全量（含 20 万步模拟与穷举）977 条 0 挂（21 条平台条件跳过）、typecheck 过、format:check 过、test:nightly 过。
 
 全量审计 kernel/host/worker/protocol/cli/plugins/sim（内核亲读 + 三路探查，每条发现对源码核实）。「这些算出错」清单逐条过，均干净；上游 14 个合并提交（用量上限扣留、规则换组、时区重算、安装器、翻页、来源名校验）由测试护着，未发现必修错。基线：test:quick 970 过 0 挂（21 条平台条件跳过）。工作区遗留的 tests/cards.test.ts 结构修复（缺 `});` 把下一个测试嵌套成子测试）先行落地（d98fdc2）。
 
@@ -19,14 +19,16 @@
 
 ## 性能（先测、后改、复测、如实记录；无实测收益即回退）
 
-基线（本机，node scripts/benchmark.ts / --busy、scripts/history.ts 1000 5000、test:sim steps/s），每项优化独立复测。候选：
+**结果：四个候选全部不过实测门槛，一个都没改；性能是健康的，数字已刷新进文档。** Apple M6、Node 24.22.1（2026-11-21）：
 
-- host/metrics.ts 开卡计数读全行进 JS → SQL COUNT。
-- host/server.ts logStream 每事实一次 SQL → 每次唤醒批量取（SSE 逐条、背压、密钥复查不变）。
-- kernel/query.ts loadOf 每 worker 全量扫 claimed（deadlines 与 sweep 各一遍）→ 一次扫描按 worker 分组。
-- kernel/decide.ts due 表 diff 每行两次 JSON.stringify → 字段直比。
+- 默认口径：冷启动 84.5 ms、空闲 RSS 123.55 MB、千长轮询 204.06 MB、持久化写入 2485 条/秒、派活 p99 1.72 ms。
+- 深排队（5000 轮、1000 长轮询）：收事件/领活/交回执 P50 0.85/1.27/0.85 ms，被挡心跳 p99 1.25 ms，首领活 19.96 ms。
+- 5.5 万条事实：启动 80.5 ms、状态汇总 P50 1.54 ms、领活 P50 0.61 ms、全量重建 1.96 s（峰值 RSS 139.3 MB）、模拟 2077 步/秒。
+- CPU 剖析（20 万步之 2 万步采样）：候选处的自耗时——deadlines 0.45%、loadOf 0.14%、workers 0.06%、due-diff 的 stringify 不上榜；合计上限不足模拟 CPU 的 1%，量不出来。热点是 evolve 22%、逐行 select（parse+freeze）20%、模拟自身的 snapshot 15%，都是设计保证（逐条落盘、冻结视图、模拟复原）自身的代价，动它们没有实测收益撑腰。
 
-不碰：逐条落盘提交（口径的一部分）、per-row Object.freeze、空转长轮询的 BEGIN IMMEDIATE（busy 实测已够快，只记录）。内核项过了 `npm test` 全量与 test:nightly 才留。
+各候选的否决理由：metrics 开卡计数→COUNT（现实开卡数少，无可测场景）；logStream 批量取（记录口径只看内存不看追赶时延，且会把逐条密钥复查稀释成逐批，与「撤销密钥立即终止日志订阅」相抵）；loadOf 单遍扫与 due-diff 字段直比（剖析自耗时不足 1%，改了量不出差别）。README 两份实测表与行数、protocol.md 历史增长实测（补 2026-11-21 一行）已按本机新数刷新。
+
+不碰（维持原判）：逐条落盘提交（口径的一部分）、per-row Object.freeze、空转长轮询的 BEGIN IMMEDIATE。
 
 ## 验收
 
