@@ -422,9 +422,7 @@ function claimNext(draft: Draft, worker: string, claim: string) {
       // An agent out of quota fails each round within seconds: only a round the owner asked for goes, to try it.
       const held = limitOf(draft.view, rule.to, draft.now);
       const found = waiting.find(
-        (queued) =>
-          !busyLanes.has(`${queued.grp}\0${queued.lane}`) &&
-          (queued.manual || !held),
+        (queued) => !busyLanes.has(`${queued.grp}\0${queued.lane}`) && (queued.manual || !held),
       );
       if (found && (!run || found.id < run.id)) run = found;
     }

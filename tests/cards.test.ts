@@ -549,6 +549,7 @@ test("a rule that declares crossGroup sees and closes its source's open cards in
     assert.deepEqual([card(gate).state, card(gate).result, card(gate).by], ["closed", "批过了", `第 ${job.run} 轮`]);
     assert.equal(card(later).state, "open");
   });
+});
 
 test("a rule moved to another group still gets the cards it left open", () => {
   clean();
@@ -563,7 +564,6 @@ test("a rule moved to another group still gets the cards it left open", () => {
       );
     },
   );
-
 });
 
 test("each channel gets each card once, and an update when its state changes; a lost report sends no second message", () => {
