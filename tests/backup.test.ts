@@ -4,7 +4,10 @@
 // that fails halfway leaves the home without a working database, or is killed while copying and leaves half the new one
 // in place of the old; backup, restore or rotation runs with the hub up, so
 // two processes write one home; a name in the manifest reads or writes outside the backup; rotation moves the key
-// without saying that every card link and the token of every run in flight stops working at once.
+// without saying that every card link and the token of every run in flight stops working at once. The mode bits are
+// POSIX: Windows says 666 for everything, so the checks that read them stand down there. A restore that replaces the
+// home's files needs the hub's own connection gone, and that one is a constant here: on Windows the lock on the open
+// database forbids the very move the test is about, so those stand down too.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -80,8 +83,10 @@ test("备份带上数据、钥匙、配置和规则，权限不松，清单对�
   for (const name of ["hub.db", "master.key", "config.json", "secrets.env", "rules.json", "manifest.json"])
     assert.ok(existsSync(join(target, name)), name);
   assert.ok(!existsSync(join(target, "hub.db-wal")), "备份是一个一致的库文件，不是连 WAL 一起拷的");
-  assert.equal(mode(target) & 0o077, 0, `${target} 不对外开`);
-  for (const name of readdirSync(target)) assert.equal(mode(join(target, name)) & 0o077, 0, name);
+  if (process.platform !== "win32") {
+    assert.equal(mode(target) & 0o077, 0, `${target} 不对外开`);
+    for (const name of readdirSync(target)) assert.equal(mode(join(target, name)) & 0o077, 0, name);
+  }
 
   const manifest = JSON.parse(readFileSync(join(target, "manifest.json"), "utf8"));
   const { version } = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf8"));
@@ -222,7 +227,7 @@ test("换主密钥：换之前先留一份备份，普通密钥照旧，卡片�
   assert.match(done.stdout, /失效/);
   const after = readFileSync(join(home, "master.key"), "utf8");
   assert.notEqual(after, before);
-  assert.equal(mode(join(home, "master.key")), 0o600);
+  if (process.platform !== "win32") assert.equal(mode(join(home, "master.key")), 0o600);
 
   const saved = readdirSync(join(home, "backups")).filter((name) => name.startsWith("rotate-"));
   assert.equal(saved.length, 1, "换之前那把钥匙留了下来");
@@ -243,51 +248,69 @@ test("换主密钥：换之前先留一份备份，普通密钥照旧，卡片�
   );
 });
 
-test("恢复回到备份时的样子，改过的数据先挪到一边，恢复后的库能用", () => {
-  const target = join(home, "backup-final");
-  assert.equal(run("backup", target).status, 0);
-  const baseline = counted(home);
-  hub.ingest("app", { id: "e-later", type: "feedback.new", subject: "later" }, at(5));
-  const grown = counted(home);
-  assert.ok(grown.n > baseline.n && grown.seq > baseline.seq);
+test(
+  "恢复回到备份时的样子，改过的数据先挪到一边，恢复后的库能用",
+  { skip: process.platform === "win32" && "restore 要换入进程自己还开着的 hub.db，Windows 锁着不让动" },
+  () => {
+    const target = join(home, "backup-final");
+    assert.equal(run("backup", target).status, 0);
+    const baseline = counted(home);
+    hub.ingest("app", { id: "e-later", type: "feedback.new", subject: "later" }, at(5));
+    const grown = counted(home);
+    assert.ok(grown.n > baseline.n && grown.seq > baseline.seq);
 
-  const done = run("restore", target, "--yes");
-  assert.equal(done.status, 0, done.stderr);
-  assert.deepEqual(counted(home), baseline, "事实回到备份时的样子");
-  const aside = moved();
-  assert.equal(aside.length, 1, "换下来的东西在一个目录里");
-  assert.deepEqual(counted(join(home, aside[0])), grown, "改过的数据没有丢");
-  assert.ok(!readdirSync(home).some((name) => name.startsWith("restore-new-")), "成功的恢复不留暂存目录");
-  for (const name of ["hub.db", "master.key", "config.json", "secrets.env", "rules.json"])
-    assert.equal(mode(join(home, name)) & 0o077, 0, name);
-  assert.equal(mode(home) & 0o077, 0);
-  assert.ok(!existsSync(join(home, "hub.db-wal")), "恢复出来的是一份干净的库");
+    const done = run("restore", target, "--yes");
+    assert.equal(done.status, 0, done.stderr);
+    assert.deepEqual(counted(home), baseline, "事实回到备份时的样子");
+    const aside = moved();
+    assert.equal(aside.length, 1, "换下来的东西在一个目录里");
+    assert.deepEqual(counted(join(home, aside[0])), grown, "改过的数据没有丢");
+    assert.ok(!readdirSync(home).some((name) => name.startsWith("restore-new-")), "成功的恢复不留暂存目录");
+    if (process.platform !== "win32") {
+      for (const name of ["hub.db", "master.key", "config.json", "secrets.env", "rules.json"])
+        assert.equal(mode(join(home, name)) & 0o077, 0, name);
+      assert.equal(mode(home) & 0o077, 0);
+    }
+    assert.ok(!existsSync(join(home, "hub.db-wal")), "恢复出来的是一份干净的库");
 
-  const listed = run("key", "list");
-  assert.equal(listed.status, 0, listed.stderr);
-  assert.match(listed.stdout, /owner owner/);
-  assert.match(listed.stdout, /worker w1/);
-});
+    const listed = run("key", "list");
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.match(listed.stdout, /owner owner/);
+    assert.match(listed.stdout, /worker w1/);
+  },
+);
 
-test("恢复到空目录时 keyChanged 不看当前目录的 master.key", () => {
-  // Restoring into a home with nothing to replace reads no `was`: the relative path would land in whatever the
-  // process's working directory holds, and any master.key lying there would decide the answer.
-  const target = join(home, "backup-empty-home");
-  assert.equal(run("backup", target).status, 0);
-  const key = readFileSync(join(home, "master.key"), "utf8");
-  const elsewhere = mkdtempSync(join(tmpdir(), "agent-autoloop-restore-cwd-"));
-  writeFileSync(join(elsewhere, "master.key"), "not-a-real-key-in-cwd");
-  const previous = process.cwd();
-  process.chdir(elsewhere);
-  try {
-    for (const name of ["hub.db", "hub.db-wal", "hub.db-shm", "master.key", "config.json", "secrets.env", "rules.json"])
-      rmSync(join(home, name), { force: true });
-    const done = restoreFrom(target, { replace: true });
-    assert.equal(done.replaced, null, "nothing was there to replace");
-    assert.equal(done.keyChanged, false, "no replaced key, so no change to report — whatever the CWD holds");
-    assert.equal(readFileSync(join(home, "master.key"), "utf8"), key, "the backup's own key came back");
-  } finally {
-    process.chdir(previous);
-    rmSync(elsewhere, { recursive: true, force: true });
-  }
-});
+test(
+  "恢复到空目录时 keyChanged 不看当前目录的 master.key",
+  { skip: process.platform === "win32" && "这条要先删进程自己还开着的 hub.db，Windows 锁着不让动" },
+  () => {
+    // Restoring into a home with nothing to replace reads no `was`: the relative path would land in whatever the
+    // process's working directory holds, and any master.key lying there would decide the answer.
+    const target = join(home, "backup-empty-home");
+    assert.equal(run("backup", target).status, 0);
+    const key = readFileSync(join(home, "master.key"), "utf8");
+    const elsewhere = mkdtempSync(join(tmpdir(), "agent-autoloop-restore-cwd-"));
+    writeFileSync(join(elsewhere, "master.key"), "not-a-real-key-in-cwd");
+    const previous = process.cwd();
+    process.chdir(elsewhere);
+    try {
+      for (const name of [
+        "hub.db",
+        "hub.db-wal",
+        "hub.db-shm",
+        "master.key",
+        "config.json",
+        "secrets.env",
+        "rules.json",
+      ])
+        rmSync(join(home, name), { force: true });
+      const done = restoreFrom(target, { replace: true });
+      assert.equal(done.replaced, null, "nothing was there to replace");
+      assert.equal(done.keyChanged, false, "no replaced key, so no change to report — whatever the CWD holds");
+      assert.equal(readFileSync(join(home, "master.key"), "utf8"), key, "the backup's own key came back");
+    } finally {
+      process.chdir(previous);
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  },
+);
