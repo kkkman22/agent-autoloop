@@ -21,7 +21,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # test:windows carries the delivery, signing and plugin suites, and every one spawns real processes: a Windows
+    # runner needs well over twenty-five minutes for them.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
