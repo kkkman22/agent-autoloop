@@ -199,11 +199,13 @@ const closeStopped = (draft: Draft, run: number, result: string) =>
 const closeOffline = (draft: Draft, worker: string) =>
   closeOpen(draft, (key) => key.startsWith(`worker:${worker}:offline:`), "连上了");
 
-/** An agent's usage limit is over, and the card saying when it would be has nothing more to say. */
+/** An agent's usage limit is over; their shared card closes when nobody is waiting for that reset. */
 function lift(draft: Draft, agent: string, result: string) {
   const { until } = draft.view.get("limits", agent)!;
   set(draft, "limits", agent, null);
-  closeOpen(draft, (key) => key === `limit:${until}`, result);
+  if (rows(draft.view, "limits", { until }).length === 0) {
+    closeOpen(draft, (key) => key === `limit:${until}`, result);
+  }
 }
 
 /** Whether a new stamp would tell nothing this one doesn't. One in the future means a clock was set back: it gets redone. */
@@ -553,7 +555,6 @@ function limit(draft: Draft, run: Row, until: number, error: string) {
     reason: error,
     since: held?.since ?? draft.at,
   });
-  const agent = configuration(draft.view, run.rules_version).agents[run.agent]?.name ?? run.agent;
   const time = new Intl.DateTimeFormat("zh-CN", {
     timeZone: draft.rules.timezone,
     month: "numeric",
@@ -563,10 +564,10 @@ function limit(draft: Draft, run: Row, until: number, error: string) {
     hourCycle: "h23",
   }).format(until);
   const words =
-    `${agent} 用量到上限了（${briefError(error, run.id)}），${time} 前不再派活给它。排着的和这期间新来的活都留着，` +
-    `到时自动接着做。想提前试，手动运行一轮「${run.rule}」（agent-autoloop run），跑通就接着给它派活。`;
+    `有 Agent 用量到上限了，${time} 前不再派活给仍受限的 Agent。排着的和这期间新来的活都留着，到时自动接着做。` +
+    `运行 agent-autoloop status 可以查看当前受限项；想提前试，手动运行一条用到受限 Agent 的规则（agent-autoloop run），跑通就接着给它派活。`;
   // Agents on one account are told the same moment: keyed by it, the owner hears of it once.
-  notify(draft, `limit:${iso(until)}`, `${agent} 用量到上限`, words);
+  notify(draft, `limit:${iso(until)}`, "Agent 用量到上限", words);
 }
 
 function scheduleReview(draft: Draft, run: Row, later: Later) {

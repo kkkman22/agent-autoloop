@@ -153,12 +153,12 @@ More: [Claude-to-Codex browser handoff](examples/recipes/browser-handoff/README.
 
 Built-in plugins ship with the program and are enabled through configuration. Use `agent-autoloop add <git URL> [--ref vversion]` for third-party plugins. A `plugin.json` at the repository root declares the version and the compatible hub range (`engine`); every install is recorded in `plugins.lock.json` (version, commit, signer, time) for `plugins list` to show and `doctor` to check. `plugins trust <name> <public key>` registers a publisher's SSH key: from then on the plugin installs and updates only through version tags signed with that key, and a bad signature is a refusal. `plugins update <name>` moves to a newer version (`--check` only looks) and stays on the old one when a check fails. See [writing plugins](docs/plugins.md).
 
-| Side | Built in | Setup |
-|---|---|---|
-| **Events**: how work is found | [GitHub Webhook](plugins/github/source.ts), [GitLab Webhook](plugins/gitlab/source.ts), [HTTP API](docs/protocol.md#来源把世界变成事件), [cron rules](skills/agent-autoloop/SKILL.md#改规则), [issue polling script](examples/recipes/github-issues/watch.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个事件插件) |
-| **Agents**: who does the work | [Claude Code](plugins/claude/agent.ts), [Codex](plugins/codex/agent.ts), [ACP](plugins/acp/agent.ts), [DeepSeek Harness](plugins/dsh/agent.ts), [ZCode](plugins/zcode/agent.ts), [generic command](plugins/command/agent.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个-agent) |
-| **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个通道) |
-| **Delivery**: CI/CD as a plugin | [`delivery`](plugins/delivery/delivery.ts) | [Guide](skills/agent-autoloop/SKILL.md#交付流水线) |
+| Side                              | Built in                                                                                                                                                                                                                                                      | Setup                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| **Events**: how work is found     | [GitHub Webhook](plugins/github/source.ts), [GitLab Webhook](plugins/gitlab/source.ts), [HTTP API](docs/protocol.md#来源把世界变成事件), [cron rules](skills/agent-autoloop/SKILL.md#改规则), [issue polling script](examples/recipes/github-issues/watch.ts) | [Guide](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| **Agents**: who does the work     | [Claude Code](plugins/claude/agent.ts), [Codex](plugins/codex/agent.ts), [ACP](plugins/acp/agent.ts), [DeepSeek Harness](plugins/dsh/agent.ts), [ZCode](plugins/zcode/agent.ts), [generic command](plugins/command/agent.ts)                                  | [Guide](skills/agent-autoloop/SKILL.md#接一个-agent)   |
+| **Channels**: how cards reach you | [Desktop notifications](plugins/desktop/channel.ts) (on by default), [Feishu](plugins/feishu/channel.ts), [DingTalk / WeCom / Slack / Discord](plugins/webhook/templates.ts)                                                                                  | [Guide](skills/agent-autoloop/SKILL.md#接一个通道)     |
+| **Delivery**: CI/CD as a plugin   | [`delivery`](plugins/delivery/delivery.ts)                                                                                                                                                                                                                    | [Guide](skills/agent-autoloop/SKILL.md#交付流水线)     |
 
 **What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. ZCode has run a question, an answer, and the resumed session. [Agentica](https://github.com/shibing624/agentica) 1.6.1 has run multi-turn Q&A and cross-process session resumption over `use: "acp"`. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers, and the GitLab webhook against the payloads in its docs, not a real GitLab. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer. A channel that takes button answers must be registered under `channels` in `rules.json` and list its answerers in `answerers`; a missing or empty list means it can deliver notifications but nobody can answer through it, and only an explicit `["*"]` lets anyone with a name answer. An unregistered channel gets no cards.
 
@@ -198,11 +198,11 @@ On Windows use `npm run test:windows` and `node scripts/install-smoke-windows.ts
 
 Run these from `~/.agent-autoloop/app`:
 
-| What it checks                                                                                                        | Command                           |
-| --------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| The full story of any round                                                                                           | `agent-autoloop why 1`            |
-| 200,000 simulated steps of network loss, dropped packets, crashes, and duplicate requests, reproducible from one seed | `node sim/random.ts 24301 200000` |
-| 1,000 process kills with no acknowledged record lost                                                                  | `node sim/crash.ts 1000 12648430` |
+| What it checks                                                                                                        | Command                                                                          |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| The full story of any round                                                                                           | `agent-autoloop why 1`                                                           |
+| 200,000 simulated steps of network loss, dropped packets, crashes, and duplicate requests, reproducible from one seed | `node sim/random.ts 24301 200000`                                                |
+| 1,000 process kills with no acknowledged record lost                                                                  | `node sim/crash.ts 1000 12648430`                                                |
 | The benchmarks below                                                                                                  | `npm run benchmark`; for history growth also `node scripts/history.ts 1000 5000` |
 
 ```text
@@ -217,19 +217,19 @@ Round 1 · Demo
 
 Apple M6, Node 24.22.1. Each write is a separate request, acknowledged only after its transaction is durable. The deep-queue row is measured with 5,000 rounds queued and 1,000 long polls waiting (`BENCH_QUEUE=5000 node scripts/benchmark.ts --busy`).
 
-| Metric                                              |       Measured |
-| --------------------------------------------------- | -------------: |
-| Cold start                                          |        84.50 ms |
-| Idle memory                                         | 123.55 MB RSS |
-| 1,000 concurrent waiting polls                      | 204.06 MB RSS |
-| Durable writes                                      | 2,485 events/s |
-| Dispatch p99                                        |         1.72 ms |
-| Ingest / claim / finish P50 with 5,000 queued       | 0.9 / 1.3 / 0.9 ms |
-| Held-back heartbeat p99 and empty claim P50, 5,000 queued | 1.3 / 0.4 ms |
-| First claim after 50 capacity polls wake for one event |     19.96 ms |
-| Startup and status summary at 55k facts             |  80.5 ms / 1.54 ms |
-| Kernel lines (with comments and blanks)             |          2,684 |
-| Runtime dependencies                                |              0 |
+| Metric                                                    |           Measured |
+| --------------------------------------------------------- | -----------------: |
+| Cold start                                                |           84.50 ms |
+| Idle memory                                               |      123.55 MB RSS |
+| 1,000 concurrent waiting polls                            |      204.06 MB RSS |
+| Durable writes                                            |     2,485 events/s |
+| Dispatch p99                                              |            1.72 ms |
+| Ingest / claim / finish P50 with 5,000 queued             | 0.9 / 1.3 / 0.9 ms |
+| Held-back heartbeat p99 and empty claim P50, 5,000 queued |       1.3 / 0.4 ms |
+| First claim after 50 capacity polls wake for one event    |           19.96 ms |
+| Startup and status summary at 55k facts                   |  80.5 ms / 1.54 ms |
+| Kernel lines (with comments and blanks)                   |              2,684 |
+| Runtime dependencies                                      |                  0 |
 
 Ingest, claims, `why` and the status summary no longer slow down as history grows: the summary and `/v1/metrics` read derived counters and delivery indexes instead of scanning history, and with a deep queue only rounds actually waiting out a backoff enter the due table, while a claim with every lane taken reads no queue at all. The log and indexes keep using disk as history grows. The first start after a format change rebuilds from the log, which took 2.0 seconds for 55,000 facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
 

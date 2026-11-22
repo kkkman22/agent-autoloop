@@ -3,8 +3,9 @@
 // output it doesn't expect (a throw stops the worker) or loses the session, or never says a turn it went on in started, so
 // a resumed turn that broke is run again from scratch in a new session and does its work twice; hello-channel writes a card but never reports
 // it, so the hub sends it again every minute; hello-source takes a wrong or missing signature, or gives an event the hub
-// refuses; an example drifts from the engine's types; a command in the tutorial doesn't run as written; add takes a
-// repository whose name can't be a plugin name without saying which name it worked out and turned down.
+// refuses, or cuts a long note through a character; an example drifts from the engine's types; a command in the tutorial
+// doesn't run as written; add takes a repository whose name can't be a plugin name without saying which name it worked out
+// and turned down.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
@@ -177,6 +178,12 @@ test("hello-source: only what's signed with the secret gets through", () => {
   assert.throws(() => helloSource(given(sign("", body), "")), /refused/, "no secret set up accepts nothing");
   const ping = JSON.stringify({ id: "evt-2", kind: "ping" });
   assert.deepEqual(helloSource({ ...given(sign("s3cret", ping)), body: ping }), []);
+  // A note long enough to reach the cap: the hub stores half a character as a replacement one, so the cut has to land
+  // between characters rather than inside one.
+  const long = JSON.stringify({ id: "evt-3", kind: "paid", order: 42, note: `${"x".repeat(199)}😀tail` });
+  const [capped] = helloSource({ ...given(sign("s3cret", long)), body: long });
+  assert.ok(capped.summary.isWellFormed(), capped.summary);
+  assert.equal(capped.summary, `${"x".repeat(199)}😀`);
 });
 
 /** A repository of its own, the way someone publishes a plugin: the entry file at its root. */

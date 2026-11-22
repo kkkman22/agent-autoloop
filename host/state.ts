@@ -166,10 +166,17 @@ export function skippedOf(all: Reads["all"], rule: string, since: string, everyt
   return { count, events: events.map(skippedView) };
 }
 
-function runView(run: Row, all: Reads["all"]) {
+/** A rule's tags by its name, as the rules are now: none for one without them or no longer there. */
+function tagsOf(rules: Rules) {
+  const tags = new Map(rules.rules.map((rule) => [rule.name, rule.tags ?? []]));
+  return (rule: string) => tags.get(rule) ?? [];
+}
+
+function runView(run: Row, all: Reads["all"], tags: string[]) {
   return {
     id: run.id as number,
     rule: run.rule,
+    tags,
     agent: run.agent,
     state: run.state,
     attempts: run.attempts,
@@ -188,7 +195,7 @@ function runView(run: Row, all: Reads["all"]) {
   };
 }
 
-export function ruleHistory(all: Reads["all"], rule: string, before?: number) {
+export function ruleHistory(all: Reads["all"], rules: Rules, rule: string, before?: number) {
   const limit = 20;
   const rows = all<Row>(
     `SELECT * FROM runs WHERE rule = ? AND state NOT IN ('queued', 'claimed') ${before === undefined ? "" : "AND id < ?"}
@@ -196,7 +203,7 @@ export function ruleHistory(all: Reads["all"], rule: string, before?: number) {
     before === undefined ? [rule, limit + 1] : [rule, before, limit + 1],
   );
   return {
-    runs: rows.slice(0, limit).map((run) => runView(run, all)),
+    runs: rows.slice(0, limit).map((run) => runView(run, all, tagsOf(rules)(rule))),
     nextBefore: rows.length > limit ? rows[limit - 1].id : null,
   };
 }
@@ -250,6 +257,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
     const { by, reason, since, until, skipped } = pause;
     return { by, reason, since, until, skipped };
   };
+  const tags = tagsOf(rules);
   const skippedAt = new Map(
     all<Row>("SELECT rule, skipped_at FROM schedules").map((row) => [row.rule, row.skipped_at]),
   );
@@ -259,8 +267,13 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
     spending: spendingOf(all, now, rules.timezone),
     totals: { ...tally(counts), attention: openCards.length },
     // The owner's own: which matter a card is about, and what its asker left for whoever carries on. Channels don't get them.
-    cards: openCards.map((card) => ({ ...view(card), lane: card.lane, about: card.about })),
-    recentCards: recentCards.map((card) => ({ ...view(card), lane: card.lane, about: card.about })),
+    cards: openCards.map((card) => ({ ...view(card), tags: tags(card.rule), lane: card.lane, about: card.about })),
+    recentCards: recentCards.map((card) => ({
+      ...view(card),
+      tags: tags(card.rule),
+      lane: card.lane,
+      about: card.about,
+    })),
     timers: timers.map(({ rule, lane, key, about, at }) => ({ rule, lane, key, about, at })),
     sources: Object.entries(rules.sources).map(([id, { name }]) => ({
       id,
@@ -271,6 +284,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       id: rule.name,
       name: rule.name,
       group: rule.group,
+      tags: rule.tags ?? [],
       agent: rule.to,
       disabled: rule.disabled === true,
       source: eventRule(rule) ? rule.when.source : SCHEDULE,
@@ -308,7 +322,7 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
         : undefined;
       return { id, name, ...presence(`channel:${id}`), ...(lastFailure && { lastFailure }) };
     }),
-    runs: visible.map((run) => runView(run, all)),
+    runs: visible.map((run) => runView(run, all, tags(run.rule))),
     hasMore,
     nextBefore: hasMore ? page[PAGE - 1].id : null,
     unrouted: unrouted(),

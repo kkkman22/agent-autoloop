@@ -43,6 +43,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 - 对话这类要马上回的活，不想排在批量的长任务后面：把批量的规则都写进同一个 `group`，`parallel` 写得比 `worker.capacity` 小，留下的名额长任务占不了，对话来了直接领。比如 `capacity` 是 4，批量那组写 `"group": "batch", "parallel": 3`。同一组的规则 `parallel` 写成一样的。
 - 同组一共并行三轮，但单条规则每次只跑一轮时，在规则里加 `"maxActive": 1`。每个对象仍单独排队。在 `agents` 里也可以给单个 Agent 加 `maxActive`，限制它跨规则同时跑几轮。
 - 同一个对象的新事件要接着上一轮的会话（比如同一个对话的后续消息），就写 `"resume": true`；默认每次开新会话。上一轮被停掉、可能还在跑或者换了 Agent 时开新的。不写 `parallel` 时整条规则的事件都接同一个会话。
+- 规则多了要分组（按项目、团队）时，给规则写 `"tags": ["shop"]`：中台不解释，只原样带进 `/v1/state` 的规则、轮次和卡片，以及这条规则每一轮的资料文件。规则放在一个 `rules.json` 里；几份分开维护的，合并成一份再换上去，先用 `agent-autoloop check` 校验。
 - 一个事项一轮开一个会话、客户端里的会话名字都一样分不清时，给规则写 `"title": "tapd-{id}-测试"`：它单独占提示词第一行，`{subject}` 换成事件的对象，`{id}` 换成对象按 `/ # :` 分开的最后一段。要是字母或数字开头、不含空白的一个词。
 - 要停一条规则，用 `agent-autoloop pause <规则> --reason …`（到点自动恢复加 `--until`），恢复用 `resume <规则>`，现在就跑一轮用 `run <规则>`；不用为了停规则去改 `rules.json`。暂停期间来的事件这条规则不接、也不排队；`resume` 会列出这次暂停跳过的事件，有就如实告诉用户；用户说要补，再运行它给出的 `agent-autoloop replay <规则> --since <时间>`，一次补完、每条只补一次，不用 `run` 一条条补。
 - 改规则前可以先写成草稿，用 `agent-autoloop check <草稿>` 校验，不影响正在跑的中台。
@@ -92,7 +93,14 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 内置的 Claude Code、Codex、DeepSeek Harness 要走第三方网关、代理，或者启动前要先设好环境变量：写一个小脚本，设好变量再 `exec claude "$@"`（Codex、DSH 照此换成 `codex`、`dsh`），Agent 里写 `"program": "脚本的绝对路径"`。插件照旧解析输出、续接会话、统计用量，只是启动的是这个脚本；不用改成 `use: "command"`。令牌放在脚本读的文件里，不写进 `rules.json`。接单程序启动 Agent 前会去掉继承来的 `CLAUDE_CODE_*` 变量，要用的写在脚本里。`agent-autoloop doctor` 也用这个脚本检查登录。脚本能读到 `AGENT_AUTOLOOP_RUN`（第几轮）和 `AGENT_AUTOLOOP_CONTEXT`（资料文件），比如按轮次准备工作目录再 `cd` 进去。
 
 ```json
-{ "deepseek": { "name": "Claude Code（DeepSeek）", "worker": "my-mac", "use": "claude", "program": "/Users/me/.agent-autoloop/bin/claude-deepseek.sh" } }
+{
+  "deepseek": {
+    "name": "Claude Code（DeepSeek）",
+    "worker": "my-mac",
+    "use": "claude",
+    "program": "/Users/me/.agent-autoloop/bin/claude-deepseek.sh"
+  }
+}
 ```
 
 第三方仓库根目录放 `agent.ts`、`channel.ts` 或 `source.ts`，用 `agent-autoloop add <git 地址>` 安装到 `~/.agent-autoloop/plugins/<仓库名>`。仓库名转成小写就是插件名，规则的 `use` 写它；只能有小写字母、数字和 `-`，不合要求的 `add` 会拒绝。同名本机插件优先于内置插件，不自动更新。插件是可信代码，先读再装。

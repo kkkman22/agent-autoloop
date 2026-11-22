@@ -73,15 +73,17 @@ answer.ts(command agent, cwd=work/feishu-qa)
       "command": ["node", "{cwd}/answer.ts"]
     }
   },
-  "rules": [{
-    "name": "PM实现问答",
-    "when": { "source": "feishu-qa", "types": ["pm.question"] },
-    "to": "qa-answer",
-    "cwd": "~/.agent-autoloop/work/feishu-qa",
-    "parallel": 3,
-    "maxActive": 3,
-    "tell": "never"
-  }]
+  "rules": [
+    {
+      "name": "PM实现问答",
+      "when": { "source": "feishu-qa", "types": ["pm.question"] },
+      "to": "qa-answer",
+      "cwd": "~/.agent-autoloop/work/feishu-qa",
+      "parallel": 3,
+      "maxActive": 3,
+      "tell": "never"
+    }
+  ]
 }
 ```
 
@@ -119,13 +121,13 @@ answer.ts(command agent, cwd=work/feishu-qa)
 
 ## 里程碑
 
-| 期 | 内容 | 工期 |
-|---|---|---|
-| M1 | 飞书应用 + demo 收发消息验证(待验证 1、2) | 0.5 天 |
-| M2 | listen.ts + 事件进内核;answer.ts 用 echo 假答案回群 | 1 天 |
-| M3 | 真接 Claude Code(MiniMax)+ 系统 prompt + 正则闸 + 追问日志注入 | 1 天 |
-| M4 | launchd 常驻 + owner 自测一周(自己的测试群) | 0.5 天 + 1 周观察 |
-| M5 | 拉 PM 群灰度,逐群加白名单 | 按需 |
+| 期  | 内容                                                           | 工期              |
+| --- | -------------------------------------------------------------- | ----------------- |
+| M1  | 飞书应用 + demo 收发消息验证(待验证 1、2)                      | 0.5 天            |
+| M2  | listen.ts + 事件进内核;answer.ts 用 echo 假答案回群            | 1 天              |
+| M3  | 真接 Claude Code(MiniMax)+ 系统 prompt + 正则闸 + 追问日志注入 | 1 天              |
+| M4  | launchd 常驻 + owner 自测一周(自己的测试群)                    | 0.5 天 + 1 周观察 |
+| M5  | 拉 PM 群灰度,逐群加白名单                                      | 按需              |
 
 ## 验收标准
 
@@ -138,11 +140,11 @@ answer.ts(command agent, cwd=work/feishu-qa)
 
 ## 风险与对策
 
-| 风险 | 对策 |
-|---|---|
-| MiniMax 端点与 claude CLI 不兼容 | 待验证 1 先测;备选 GLM 兼容端点同参数换入 |
-| 模型把判断链答漏条件 | prompt 强制逐条列;金标集回归;owner 抽检 |
-| 正则闸误伤/漏放 | 闸命中日志全留;每周抽检校准规则;首月保守(宁可多拦) |
-| PM 问出圈(排期/八卦/诱导) | prompt 范围限定拒答;白名单外群零响应 |
-| MiniMax 额度耗尽/欠费 | answer.ts 识别 401/429 → 回「服务暂不可用」并 tell owner;并发 3 封顶 |
-| 群消息洪泛 | 每人日限 + 并发 3 封顶;超限友好提示 |
+| 风险                             | 对策                                                                 |
+| -------------------------------- | -------------------------------------------------------------------- |
+| MiniMax 端点与 claude CLI 不兼容 | 待验证 1 先测;备选 GLM 兼容端点同参数换入                            |
+| 模型把判断链答漏条件             | prompt 强制逐条列;金标集回归;owner 抽检                              |
+| 正则闸误伤/漏放                  | 闸命中日志全留;每周抽检校准规则;首月保守(宁可多拦)                   |
+| PM 问出圈(排期/八卦/诱导)        | prompt 范围限定拒答;白名单外群零响应                                 |
+| MiniMax 额度耗尽/欠费            | answer.ts 识别 401/429 → 回「服务暂不可用」并 tell owner;并发 3 封顶 |
+| 群消息洪泛                       | 每人日限 + 并发 3 封顶;超限友好提示                                  |

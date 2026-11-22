@@ -1,7 +1,8 @@
 // Failure modes: --json changes the state instead of printing it; the human output stops being the plain one; an
 // unknown flag is ignored and the command quietly does something else; a client can't tell where in the log the state
 // was read, so it replays the whole log or misses what came between; an owner's card can't be tied to the matter it's
-// about.
+// about; a rule's tags don't reach its line, its runs and cards or the round's context, so a client grouping by them or an
+// Agent wanting to know which group it works for has to guess; a rule without tags hands an Agent a context unlike before.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
@@ -68,6 +69,29 @@ test("the owner's cards say which matter they're about and what the asker left f
   const card = hub.stateOf(at(8)).cards.find((open: { title: string }) => open.title === ask.title)!;
   assert.equal(card.lane, "#77");
   assert.equal(card.about, ask.about);
+});
+
+test("a rule's tags go with its line, its runs and cards, and the context of its rounds", () => {
+  hub.ingest("app", { id: "tagged", type: "feedback.new", subject: "#tags" }, at(9));
+  const job = hub.claimNext("w1", "tagged", at(9))!;
+  assert.deepEqual(job.context.tags, ["shop", "反馈"]);
+  hub.finish(
+    job.run,
+    job.token,
+    { outcome: "done", ask: [{ title: "打标签了吗", text: "看看", options: ["是", "否"] }] },
+    at(10),
+  );
+  const state = hub.stateOf(at(11));
+  const tagged = ["shop", "反馈"];
+  assert.deepEqual(state.lines.find((line: any) => line.name === "意见")!.tags, tagged);
+  assert.deepEqual(state.lines.find((line: any) => line.name === "告警")!.tags, [], "a rule without tags has none");
+  assert.deepEqual(state.runs.find((run: any) => run.id === job.run)!.tags, tagged);
+  assert.deepEqual(state.cards.find((card: any) => card.title === "打标签了吗")!.tags, tagged);
+  assert.deepEqual(hub.runsOfRule("意见").runs[0].tags, tagged);
+  hub.ingest("ops", { id: "untagged", type: "alert.raised", subject: "#cpu" }, at(12));
+  const plain = hub.claimNext("w2", "untagged", at(12))!;
+  assert.equal(plain.rule.name, "告警");
+  assert.ok(!("tags" in plain.context), "a rule without tags hands over the same context as before");
 });
 
 test("status --json prints the same state the hub serves, and the plain output stays human", async () => {

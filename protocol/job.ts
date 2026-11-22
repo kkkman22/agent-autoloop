@@ -47,5 +47,7 @@ export type Job = {
     waiting: { key: string; about: string; at: string; events: string[] }[];
     open: { card: number; title: string; text: string; at: string }[];
     decided: { card: number; title: string; choice: string | null; at: string }[];
+    /** The rule's tags, as written; only when it has them. */
+    tags?: string[];
   };
 };

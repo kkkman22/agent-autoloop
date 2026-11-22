@@ -278,6 +278,12 @@ test("a bad exit code, or no last message, is a failure saying why", async () =>
   assert.equal(resultOf(hub, bad).outcome, "failed");
   assert.match(resultOf(hub, bad).error, /退出码 3：boom/);
   assert.deepEqual([resultOf(hub, silent).outcome, resultOf(hub, silent).error], ["failed", "没留下结果"]);
+  // A plugin's reason long enough to be cut, with a character across the cut: the hub stores half of one as a replacement.
+  const long = job({ use: "scripted", command: [`printf '%s' '${"x".repeat(499)}😀tail' >&2; exit 1`] });
+  hub.jobs.push(long);
+  await until(w, () => hub.results.length === 3);
+  assert.ok(resultOf(hub, long).error.isWellFormed(), "no half a character at the cut");
+  assert.equal(resultOf(hub, long).error, "x".repeat(499));
 });
 
 test("a reason cut at the cap keeps whole characters", async () => {

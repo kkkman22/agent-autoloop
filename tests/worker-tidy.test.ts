@@ -61,6 +61,7 @@ test("old output goes while the worker keeps running, not only when it starts", 
   assert.equal(existsSync(old), true, "cleared at the start, so not again at once");
   clock += 60 * 60_000 + 1;
   await until(() => !existsSync(old));
+  await worker.tidy();
   stop.abort();
   await running;
 });
@@ -69,49 +70,56 @@ test("a loop of its own, going round by round, gets the clearing too", async () 
   let clock = Date.now();
   const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0, now: () => clock });
   await worker.tick();
+  await worker.tidy();
   const old = finished("7-1", 15);
   await worker.tick();
   assert.equal(existsSync(old), true, "cleared at the first round, so not again at once");
   clock += 60 * 60_000 + 1;
   await worker.tick();
-  assert.equal(existsSync(old), false);
+  await until(() => !existsSync(old));
 });
 
-test("only finished runs' folders old enough go", () => {
+test("only finished runs' folders old enough go", async () => {
   const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0 });
   const old = finished("2-1", 15);
   const recent = finished("3-1", 13);
   const inHand = finished("4-1", 15);
   writeFileSync(join(inHand, "entry.json"), "{}");
   age(inHand, 15);
-  worker.tidy();
+  await worker.tidy();
   assert.equal(existsSync(old), false);
   assert.equal(existsSync(recent), true);
   assert.equal(existsSync(inHand), true);
   rmSync(inHand, { recursive: true });
 });
 
-test("a folder that can't be cleared is said and leaves the rest to go", { skip: process.getuid!() === 0 }, () => {
-  const lines: string[] = [];
-  const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0, log: (line) => lines.push(line) });
-  const stuck = finished("5-1", 15);
-  const locked = join(stuck, "locked");
-  mkdirSync(locked);
-  chmodSync(locked, 0o000);
-  age(stuck, 15);
-  const other = finished("6-1", 15);
-  try {
-    assert.doesNotThrow(() => worker.tidy());
-    assert.equal(existsSync(other), false);
-    assert.equal(existsSync(stuck), true);
-    assert.ok(lines.some((line) => line.includes("5-1")));
-  } finally {
-    chmodSync(locked, 0o700);
-    rmSync(stuck, { recursive: true });
-  }
-});
+test(
+  "a folder that can't be cleared is said and leaves the rest to go",
+  { skip: process.getuid!() === 0 },
+  async () => {
+    const lines: string[] = [];
+    const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0, log: (line) => lines.push(line) });
+    const stuck = finished("5-1", 15);
+    const locked = join(stuck, "locked");
+    mkdirSync(locked);
+    // Something inside: an empty folder goes even locked, since only its parent has to allow that.
+    writeFileSync(join(locked, "kept"), "");
+    chmodSync(locked, 0o000);
+    age(stuck, 15);
+    const other = finished("6-1", 15);
+    try {
+      await worker.tidy();
+      assert.equal(existsSync(other), false);
+      assert.equal(existsSync(stuck), true);
+      assert.ok(lines.some((line) => line.includes("5-1")));
+    } finally {
+      chmodSync(locked, 0o700);
+      rmSync(stuck, { recursive: true });
+    }
+  },
+);
 
-test("session baselines nobody resumed go with the runs; one in use stays", () => {
+test("session baselines nobody resumed go with the runs; one in use stays", async () => {
   const usage = join(home, "worker", "usage");
   mkdirSync(usage, { recursive: true });
   const baseline = (session: string) =>
@@ -127,7 +135,7 @@ test("session baselines nobody resumed go with the runs; one in use stays", () =
   const fresh = baseline("going");
   writeFileSync(fresh, "{}");
   const worker = createWorker({ hub: quiet() as any, name: "w1", wait: 0 });
-  worker.tidy();
+  await worker.tidy();
   assert.equal(existsSync(stale), false, "没人续接的基线跟着清理走了");
   assert.equal(existsSync(fresh), true, "还在用的基线留下");
 });

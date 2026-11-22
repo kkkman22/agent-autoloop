@@ -9,7 +9,8 @@
 // before, though the skill has changed since. A rule's session title isn't the first line, so every run of it looks the
 // same in a client that names a session after its first message; or it is filled from a subject the run doesn't share.
 // The prompt leaves out the receipt limits Agents trip on (a cancelled follow-up given a time, an event summary over 200
-// characters, a link that isn't a web address), so the whole receipt is sent back to be rewritten or dropped.
+// characters, a link that isn't a web address), so the whole receipt is sent back to be rewritten or dropped. A rule's
+// tags sit in the context file without the prompt saying what they are, or the prompt of a rule without them changes.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "../worker/contract.ts";
@@ -54,6 +55,13 @@ const job = (over: object = {}) => ({
     decided: [],
   },
   ...over,
+});
+
+test("the prompt names the rule's tags in the context file only when the rule has them", () => {
+  const base = job();
+  const tagged = { ...base, context: { ...base.context, tags: ["shop"] } };
+  assert.match(promptFor(tagged as any, "/tmp/ctx.json"), /tags 是这条规则的标签/);
+  assert.doesNotMatch(promptFor(base as any, "/tmp/ctx.json"), /tags/);
 });
 
 test("the prompt says what to do and how to end, but not what anyone wrote", () => {

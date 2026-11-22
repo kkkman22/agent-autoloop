@@ -19,7 +19,13 @@
 仓库根目录可以放一份 `plugin.json`：
 
 ```json
-{ "name": "qq", "version": "1.2.0", "provides": ["channel"], "engine": ">=1.1.0 <2.0.0", "description": "QQ 群机器人通道" }
+{
+  "name": "qq",
+  "version": "1.2.0",
+  "provides": ["channel"],
+  "engine": ">=1.1.0 <2.0.0",
+  "description": "QQ 群机器人通道"
+}
 ```
 
 - `name` 要和仓库名一致（仓库目录名就是插件名）；`version` 是三个数字；`provides` 只能是 `agent`、`channel`、`source`；`engine` 写这份插件能用的中台版本，只支持 `>=a.b.c` 和 `<a.b.c` 的组合。没有清单的老插件照常安装和加载。

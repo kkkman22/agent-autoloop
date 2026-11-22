@@ -13,13 +13,14 @@ type Input = {
   refuse: (why?: string) => never;
 };
 
+// By character, not UTF-16 unit, so a cut never leaves half of one.
+const cut = (text: string, limit: number) => [...text].slice(0, limit).join("");
+
 export default function helloSource({ headers, body, secret, refuse }: Input) {
   const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(body).digest("hex")}`);
   const given = Buffer.from(String(headers["x-shop-signature"] ?? ""));
   if (!secret || given.length !== expected.length || !timingSafeEqual(given, expected)) refuse();
   const { id, kind, order, note } = JSON.parse(body);
   if (kind === "ping") return [];
-  return [
-    { id: String(id), type: `order.${kind}`, subject: `order-${order}`, summary: String(note ?? "").slice(0, 200) },
-  ];
+  return [{ id: String(id), type: `order.${kind}`, subject: `order-${order}`, summary: cut(String(note ?? ""), 200) }];
 }

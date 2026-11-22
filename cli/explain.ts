@@ -21,6 +21,7 @@ function details(rule: Rule, rules: Rules, now: number) {
   if (rule.channels?.length) parts.push(`只发 ${rule.channels.join("、")}`);
   if (rule.resume) parts.push("接着上一轮的会话");
   if (rule.title) parts.push(`会话标题 ${rule.title}`);
+  if (rule.tags?.length) parts.push(`标签 ${rule.tags.join("、")}`);
   if (rule.group !== rule.name) parts.push(`组 ${rule.group}`);
   if (rule.tell !== "needed") parts.push(`通知 ${rule.tell}`);
   if (rule.skill) parts.push("有 Skill");

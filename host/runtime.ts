@@ -230,7 +230,7 @@ export const view = (card: Row, ref: string | null = null, links = false) =>
   query.cardView(card, environment, ref, links);
 export const unrouted = (limit = 20) => query.unrouted(getView(), limit);
 export const skipped = (rule: string, since: string, everything = false) => skippedOf(all, rule, since, everything);
-export const runsOfRule = (rule: string, before?: number) => snapshot(() => ruleHistory(all, rule, before));
+export const runsOfRule = (rule: string, before?: number) => snapshot(() => ruleHistory(all, rules, rule, before));
 
 /** Read in one snapshot: its seq is where the log stood for all of it, for a client to go on in /v1/stream from. */
 export function stateOf(now = Date.now(), before?: number) {

@@ -3,6 +3,7 @@
 // the impact of a change; an oversized body accepted; a candidate that reads like a rules file but isn't one.
 // Candidates come from file text, like the commands send them: the hub's own config value carries the injected
 // schedule source and would be refused, as any hand-made body without the required fields should be.
+// Explain prints a rule's private prompt; explain leaves out the tags a rule is grouped by.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -59,6 +60,10 @@ test("the explanation shows rule and Agent claim limits independently", () => {
   assert.match(
     lines.find((line) => line.startsWith("  意见："))!,
     /会话标题 note-\{id\}/,
+  );
+  assert.match(
+    lines.find((line) => line.startsWith("  意见："))!,
+    /标签 shop、反馈/,
   );
 });
 const file = readFileSync(new URL("./rules.fixture.json", import.meta.url), "utf8");

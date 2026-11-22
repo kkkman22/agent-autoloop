@@ -9,11 +9,11 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  promises as fs,
   readdirSync,
   readFileSync,
   readSync,
   renameSync,
-  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -89,11 +89,8 @@ export type WorkerOptions = {
   now?: () => number;
 };
 
-function save(entry: Entry) {
-  const file = path.join(entry.dir, "entry.json");
-  writeFileSync(`${file}.tmp`, JSON.stringify(entry), { mode: 0o600 });
-  renameSync(`${file}.tmp`, file);
-}
+const entryFile = (dir: string) => path.join(dir, "entry.json");
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 /** How far a launch took its session's total. One that didn't go on in that session started it from nothing. */
 function sessionRise(entry: Entry, { session, sessionUsage }: Reading) {
@@ -205,6 +202,10 @@ export function createWorker({
   let tries = 0;
   let blind = false;
   let tidied = -Infinity;
+  let restored = false;
+  let cleaning: Promise<void> | undefined;
+  const active = new Map<string, Entry>();
+  const unreadable = new Set<string>();
   const said = new Set<string>();
   /** Trouble that lasts comes round every second, and once in the log will do. */
   const sayOnce = (line: string) => {
@@ -213,14 +214,48 @@ export function createWorker({
   };
   mkdirSync(RUNS, { recursive: true, mode: 0o700 });
 
-  const entries = () =>
-    readdirSync(RUNS).flatMap((id) => {
-      try {
-        return [JSON.parse(readFileSync(path.join(RUNS, id, "entry.json"), "utf8")) as Entry];
-      } catch {
-        return [];
+  // Whoever holds the worker may ask before its first round, and sees the runs in hand then too.
+  const entries = () => {
+    if (!restored) restore();
+    return Array.from(active.values(), (entry) => ({ ...entry }));
+  };
+  const folders = async () =>
+    (await fs.readdir(RUNS, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(RUNS, entry.name));
+
+  function save(entry: Entry) {
+    const file = entryFile(entry.dir);
+    writeFileSync(`${file}.tmp`, JSON.stringify(entry), { mode: 0o600 });
+    renameSync(`${file}.tmp`, file);
+    // Keep the last persisted state even if a later update cannot be written.
+    active.set(entry.dir, { ...entry });
+  }
+
+  function recoverEntry(dir: string) {
+    try {
+      const entry = JSON.parse(readFileSync(entryFile(dir), "utf8")) as Entry;
+      if (!entry || !Number.isSafeInteger(entry.run)) throw new Error("invalid run entry");
+      active.set(dir, { ...entry, dir });
+      unreadable.delete(dir);
+    } catch (error) {
+      if (missing(error)) unreadable.delete(dir);
+      else {
+        unreadable.add(dir);
+        sayOnce(`couldn't recover ${dir}: ${error}`);
       }
-    });
+    }
+  }
+
+  /** Reads the folders once, when the worker starts or after the folder went wrong, not every round. */
+  function restore() {
+    active.clear();
+    unreadable.clear();
+    for (const entry of readdirSync(RUNS, { withFileTypes: true })) {
+      if (entry.isDirectory()) recoverEntry(path.join(RUNS, entry.name));
+    }
+    restored = true;
+  }
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
   function launch(entry: Entry, adapter: Adapter, prompt: string) {
@@ -584,7 +619,12 @@ export function createWorker({
       }
       log(`run ${entry.run}: the hub refused its result (${error.status}: ${error.message}); dropped`);
     }
-    unlinkSync(path.join(entry.dir, "entry.json"));
+    try {
+      unlinkSync(entryFile(entry.dir));
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+    active.delete(entry.dir);
   }
 
   /** Nothing else can tell the owner when the hub is what's gone. */
@@ -611,11 +651,18 @@ export function createWorker({
 
   /** One round: look at what's in hand, hand in what's ended, come for more. Whether the hub could be reached. */
   async function tick() {
+    if (restored) {
+      try {
+        if (!statSync(RUNS).isDirectory()) throw new Error(`Not a directory: ${RUNS}`);
+      } catch (error) {
+        restored = false;
+        throw error;
+      }
+      for (const dir of unreadable) recoverEntry(dir);
+    } else restore();
     // Here and not in run: whatever drives the worker comes through here.
-    if (now() - tidied >= TIDY_EVERY) {
-      tidied = now();
-      tidy(tidied);
-    }
+    const moment = now();
+    if (moment - tidied >= TIDY_EVERY) void tidy(moment);
     // One reading serves the checks; the settle pass reads again, so a result whose save failed is not handed in
     // from memory alone — what is on disk is what the hub has really been given.
     const held = entries();
@@ -633,18 +680,20 @@ export function createWorker({
         sayOnce(`run ${entry.run}: ${error}`);
       }
     }
+    // Read again after settling: what is asked for now is only what is still in hand as the hub is polled.
+    const inHand = entries();
     let reachable = true;
     // A hub that answers "too busy" is there: only one that doesn't answer is a reason to tell the owner.
     let answered = true;
     try {
       const answer = await hub.work({
         claim,
-        wait: held.length ? 1 : wait,
-        running: held.map((entry) => entry.run),
-        capacity: held.length < capacity,
+        wait: inHand.length ? 1 : wait,
+        running: inHand.map((entry) => entry.run),
+        capacity: inHand.length < capacity,
       });
       for (const id of answer?.cancel ?? []) {
-        const entry = held.find((entry) => entry.run === id);
+        const entry = inHand.find((entry) => entry.run === id);
         if (entry) stop(entry, "cancel");
       }
       if (answer?.job) {
@@ -663,16 +712,31 @@ export function createWorker({
 
   /** Output of finished runs is kept a while for looking into, then goes; so are session baselines nobody resumed. */
   function tidy(moment = now()) {
-    for (const id of readdirSync(RUNS)) {
-      const dir = path.join(RUNS, id);
-      try {
-        const expired = moment - statSync(dir).mtimeMs > KEEP_DAYS * 24 * 3600_000;
-        if (!existsSync(path.join(dir, "entry.json")) && expired) rmSync(dir, { recursive: true, force: true });
-      } catch (error) {
-        sayOnce(`couldn't clear ${dir}: ${error}`);
-      }
-    }
+    if (cleaning) return cleaning;
+    tidied = moment;
     tidyUsage(moment);
+    cleaning = (async () => {
+      for (const dir of await folders()) {
+        try {
+          if (active.has(dir) || moment - (await fs.stat(dir)).mtimeMs <= KEEP_DAYS * 24 * 3600_000) continue;
+          try {
+            await fs.access(entryFile(dir));
+            continue;
+          } catch (error) {
+            if (!missing(error)) throw error;
+          }
+          if (active.has(dir)) continue;
+          await fs.rm(dir, { recursive: true, force: true });
+        } catch (error) {
+          if (!missing(error)) sayOnce(`couldn't clear ${dir}: ${error}`);
+        }
+      }
+    })()
+      .catch((error) => sayOnce(`couldn't list old runs: ${error}`))
+      .finally(() => {
+        cleaning = undefined;
+      });
+    return cleaning;
   }
 
   async function run(signalled: AbortSignal) {

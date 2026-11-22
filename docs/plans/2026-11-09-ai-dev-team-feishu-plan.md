@@ -37,14 +37,14 @@ agent-autoloop 中台(一台 mac mini,launchd 常驻)
 
 ## 3. 组件清单:已有 vs 新增
 
-| 组件 | 状态 | 说明 |
-| --- | --- | --- |
-| 中台 + worker + 飞书卡片通道 | **已有** | `plugins/feishu/channel.ts`:发卡、PATCH、幂等键、按钮回调核验(id+ref+by) |
-| askFirst/answerers/hops/重试矩阵 | **已有** | 协议内置,见 `docs/protocol.md` |
-| `feishu-in` 守护 | **新增** | ~150 行 Node 脚本(外部装,不改仓):`lark-cli event consume im.message.receive_v1` → `POST /v1/events`(来源密钥);识别「进度/状态/卡在哪」→ `GET /v1/state` 渲染回帖(本人密钥) |
-| `rules.json` 三规则 | **新增** | 见 §5,`agent-autoloop rules check` 过 |
-| 三个 Skill(dispatch/dev/qa) | **新增** | 见 §6,装在工作目录 `~/code/work/ai-group/.agent/` 或 Skill 目录 |
-| agent-hud-open | 可选 | 工作站桌面观测配额/状态,不进关键路径(调研:`~/code/agent-hud-open-survey-2026-11-08.md`) |
+| 组件                             | 状态     | 说明                                                                                                                                                                       |
+| -------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 中台 + worker + 飞书卡片通道     | **已有** | `plugins/feishu/channel.ts`:发卡、PATCH、幂等键、按钮回调核验(id+ref+by)                                                                                                   |
+| askFirst/answerers/hops/重试矩阵 | **已有** | 协议内置,见 `docs/protocol.md`                                                                                                                                             |
+| `feishu-in` 守护                 | **新增** | ~150 行 Node 脚本(外部装,不改仓):`lark-cli event consume im.message.receive_v1` → `POST /v1/events`(来源密钥);识别「进度/状态/卡在哪」→ `GET /v1/state` 渲染回帖(本人密钥) |
+| `rules.json` 三规则              | **新增** | 见 §5,`agent-autoloop rules check` 过                                                                                                                                      |
+| 三个 Skill(dispatch/dev/qa)      | **新增** | 见 §6,装在工作目录 `~/code/work/ai-group/.agent/` 或 Skill 目录                                                                                                            |
+| agent-hud-open                   | 可选     | 工作站桌面观测配额/状态,不进关键路径(调研:`~/code/agent-hud-open-survey-2026-11-08.md`)                                                                                    |
 
 **P0 必须先实验的一件事:同一飞书应用两条 event 长连接(通道收 `card.action.trigger` + 守护收 `im.message.receive_v1`)是否互踢。** 互踢则守护用第二个飞书应用(现状本来就是两应用),其余设计不变。
 
@@ -52,11 +52,11 @@ agent-autoloop 中台(一台 mac mini,launchd 常驻)
 
 ### 4.1 角色表
 
-| 角色 | 引擎 | access | 职责 | 一句话边界 |
-| --- | --- | --- | --- | --- |
-| pm | **codex** | `read` | 解析任务、澄清 ask、escalate 裁决、收尾汇报 | 只路由不写码 |
-| dev | **zcode**(`use: "command"`) | `edit`(经 `--mode edit`) | 全栈实现(fe+be 合并:一个会话持有接口两端,接口对不齐这类问题在合并后消失) | 写码,拿不准就 escalate |
-| qa | **claude** | `read` | 只读审查:diff、测试、安全 | 审查独立性,与 dev 异构引擎 |
+| 角色 | 引擎                        | access                   | 职责                                                                     | 一句话边界                 |
+| ---- | --------------------------- | ------------------------ | ------------------------------------------------------------------------ | -------------------------- |
+| pm   | **codex**                   | `read`                   | 解析任务、澄清 ask、escalate 裁决、收尾汇报                              | 只路由不写码               |
+| dev  | **zcode**(`use: "command"`) | `edit`(经 `--mode edit`) | 全栈实现(fe+be 合并:一个会话持有接口两端,接口对不齐这类问题在合并后消失) | 写码,拿不准就 escalate     |
+| qa   | **claude**                  | `read`                   | 只读审查:diff、测试、安全                                                | 审查独立性,与 dev 异构引擎 |
 
 模型档位不在 rules.json 配:三个角色三个 CLI,模型在 **magpie 网关**按各 CLI 的接入固定(廉价档给 codex 的 pm、最强档给 zcode 的 dev、审查档给 claude 的 qa)。异构在本方案是引擎级异构(codex/zcode/claude 三家),比同引擎换模型更强;调档 = 改 magpie 配置,不动 rules.json。
 
@@ -69,14 +69,14 @@ agent-autoloop 中台(一台 mac mini,launchd 常驻)
 
 事件类型(source 统一为 `feishu`,`subject` 由 pm 生成,标识符如 `login-20261109`):
 
-| type | 谁发 | 语义 |
-| --- | --- | --- |
-| `im.message` | feishu-in 守护 | 本人发来的任务消息(全文在 detail) |
-| `im.note` | feishu-in 守护 | 本人对某事项的补充说明(并进该事项下一轮) |
-| `task.dev` | pm | 给 dev 的实现任务 |
-| `task.qa` | pm 或 dev | 审查请求(qa 的活) |
-| `task.escalate` | dev 或 qa | 拿不准/阻塞/打回,交 pm 裁决 |
-| `task.report` | dev 或 qa | 阶段汇报给 pm(不派活,pm 汇总) |
+| type            | 谁发           | 语义                                     |
+| --------------- | -------------- | ---------------------------------------- |
+| `im.message`    | feishu-in 守护 | 本人发来的任务消息(全文在 detail)        |
+| `im.note`       | feishu-in 守护 | 本人对某事项的补充说明(并进该事项下一轮) |
+| `task.dev`      | pm             | 给 dev 的实现任务                        |
+| `task.qa`       | pm 或 dev      | 审查请求(qa 的活)                        |
+| `task.escalate` | dev 或 qa      | 拿不准/阻塞/打回,交 pm 裁决              |
+| `task.report`   | dev 或 qa      | 阶段汇报给 pm(不派活,pm 汇总)            |
 
 ```
 本人 ──im.message──▶ pm ──task.dev──▶ dev ──task.qa──▶ qa
@@ -87,11 +87,11 @@ agent-autoloop 中台(一台 mac mini,launchd 常驻)
 
 emits 白名单(谁都没法派白名单外的活):
 
-| 规则 | to | emits |
-| --- | --- | --- |
-| 接任务(pm) | pm | `task.dev`、`task.qa` |
-| 开发(dev) | dev | `task.qa`、`task.escalate`、`task.report` |
-| 审查(qa) | qa | `task.escalate`、`task.report` |
+| 规则       | to  | emits                                     |
+| ---------- | --- | ----------------------------------------- |
+| 接任务(pm) | pm  | `task.dev`、`task.qa`                     |
+| 开发(dev)  | dev | `task.qa`、`task.escalate`、`task.report` |
+| 审查(qa)   | qa  | `task.escalate`、`task.report`            |
 
 防失控四道闸(全部内置,配置即得):`emits` 白名单;**hops 上限 8**(超了留记录不派发并通知本人);每轮 `timeout`;连续失败 3 警 10 停。防扯皮靠 Skill 约定:同一问题 escalate/打回 2 次没解决,必须 ask 本人。
 
@@ -107,28 +107,48 @@ emits 白名单(谁都没法派白名单外的活):
   "askFirst": ["删数据", "停服", "花钱", "对外发消息", "改产品方向", "新建或轮换密钥", "修改权限"],
   "sources": { "feishu": { "name": "飞书入口" } },
   "agents": {
-    "pm":  { "name": "PM 调度", "worker": "mac-mini", "use": "codex", "access": "read" },
-    "dev": { "name": "开发", "worker": "mac-mini", "use": "command", "timeout": 240,
-             "command": ["zcode", "--prompt", "{prompt}", "--mode", "edit"] },
-    "qa":  { "name": "审查", "worker": "mac-mini", "use": "claude", "access": "read" }
+    "pm": { "name": "PM 调度", "worker": "mac-mini", "use": "codex", "access": "read" },
+    "dev": {
+      "name": "开发",
+      "worker": "mac-mini",
+      "use": "command",
+      "timeout": 240,
+      "command": ["zcode", "--prompt", "{prompt}", "--mode", "edit"]
+    },
+    "qa": { "name": "审查", "worker": "mac-mini", "use": "claude", "access": "read" }
   },
   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_<本人>"] } },
   "rules": [
-    { "name": "接任务",
+    {
+      "name": "接任务",
       "when": { "source": "feishu", "types": ["im.message", "task.escalate"] },
-      "to": "pm", "cwd": "~/code/work/ai-group", "skill": "dispatch",
-      "resume": true, "parallel": 5,
-      "emits": { "source": "feishu", "types": ["task.dev", "task.qa"] } },
-    { "name": "开发",
+      "to": "pm",
+      "cwd": "~/code/work/ai-group",
+      "skill": "dispatch",
+      "resume": true,
+      "parallel": 5,
+      "emits": { "source": "feishu", "types": ["task.dev", "task.qa"] }
+    },
+    {
+      "name": "开发",
       "when": { "source": "feishu", "types": ["task.dev"] },
-      "to": "dev", "cwd": "~/code/work/ai-group", "skill": "dev-playbook",
-      "resume": true, "parallel": 3,
-      "emits": { "source": "feishu", "types": ["task.qa", "task.escalate", "task.report"] } },
-    { "name": "审查",
+      "to": "dev",
+      "cwd": "~/code/work/ai-group",
+      "skill": "dev-playbook",
+      "resume": true,
+      "parallel": 3,
+      "emits": { "source": "feishu", "types": ["task.qa", "task.escalate", "task.report"] }
+    },
+    {
+      "name": "审查",
       "when": { "source": "feishu", "types": ["task.qa"] },
-      "to": "qa", "cwd": "~/code/work/ai-group", "skill": "qa-playbook",
-      "resume": true, "parallel": 3,
-      "emits": { "source": "feishu", "types": ["task.escalate", "task.report"] } }
+      "to": "qa",
+      "cwd": "~/code/work/ai-group",
+      "skill": "qa-playbook",
+      "resume": true,
+      "parallel": 3,
+      "emits": { "source": "feishu", "types": ["task.escalate", "task.report"] }
+    }
   ]
 }
 ```
@@ -162,13 +182,13 @@ emits 白名单(谁都没法派白名单外的活):
 
 ## 7. 四条 IM 链路落点(全部映射到已有机制)
 
-| 链路 | 机制 | 现状 |
-| --- | --- | --- |
-| 任务发布 | 守护 → `POST /v1/events`(id=平台消息 id,天然去重)→ 接任务规则 → pm | 新增守护,其余内置 |
-| 进度感知(拉) | 「进度?」→ 守护查 `/v1/state` 回帖:各 subject 的 lane 状态+最近回执摘要+等谁的卡+今日用量 | 新增守护内渲染函数 |
-| 进度感知(推) | ask 卡、完成/失败通知按 `tell` 默认直达飞书;连续失败第 3 次告警卡 | 内置,零开发 |
-| HITL 审批 | ask 卡片挂起(零进程零 token,重启不丢)→ 本人点按钮/回文字 → `answer` 只算第一次 → 原会话唤醒续跑 | 内置,零开发 |
-| 异常干预 | 失败 3 警 10 停;`agent-autoloop stop/pause/resume`;本人回文字经守护转 `im.note` 并进事项 | CLI + 守护,P2 加 `/停 /暂停` 命令路由 |
+| 链路         | 机制                                                                                            | 现状                                  |
+| ------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 任务发布     | 守护 → `POST /v1/events`(id=平台消息 id,天然去重)→ 接任务规则 → pm                              | 新增守护,其余内置                     |
+| 进度感知(拉) | 「进度?」→ 守护查 `/v1/state` 回帖:各 subject 的 lane 状态+最近回执摘要+等谁的卡+今日用量       | 新增守护内渲染函数                    |
+| 进度感知(推) | ask 卡、完成/失败通知按 `tell` 默认直达飞书;连续失败第 3 次告警卡                               | 内置,零开发                           |
+| HITL 审批    | ask 卡片挂起(零进程零 token,重启不丢)→ 本人点按钮/回文字 → `answer` 只算第一次 → 原会话唤醒续跑 | 内置,零开发                           |
+| 异常干预     | 失败 3 警 10 停;`agent-autoloop stop/pause/resume`;本人回文字经守护转 `im.note` 并进事项        | CLI + 守护,P2 加 `/停 /暂停` 命令路由 |
 
 审批超时策略(约定,写进 Skill):不回滚、不自动批;ask 同时交 `later` 复查——2 小时提醒一次、此后每日一次、3 次后停,看板常显「等你拍板」。
 
@@ -200,15 +220,15 @@ emits 白名单(谁都没法派白名单外的活):
 
 ## 9. 风险清单
 
-| 风险 | 对策 |
-| --- | --- |
-| 双长连接互踢(P0 未证) | 二应用方案兜底,设计不变 |
-| pm 派错活 | emits 锁死类型;Skill 限定 detail 结构;错派最坏多一轮澄清卡 |
-| dev/qa 循环打回 | hops 8 硬熔断 + 「2 次即 ask」纪律 |
-| resume 会话越接越长,token 涨 | 协议已知风险(P2 观察项);被停轮次自动开新会话 |
-| answerers 空/写错 → 卡片点了没反应 | 上线 checklist 项;`rules check` + 真点一次 |
-| 守护持本人密钥 | 只跑在本机 launchd,密钥不进 IM、不进事件 detail |
-| 事件 detail 带入提示注入文字 | 协议边界:detail 是资料文件不进提示词;subject 限标识符;指令权只在规则 |
+| 风险                               | 对策                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| 双长连接互踢(P0 未证)              | 二应用方案兜底,设计不变                                              |
+| pm 派错活                          | emits 锁死类型;Skill 限定 detail 结构;错派最坏多一轮澄清卡           |
+| dev/qa 循环打回                    | hops 8 硬熔断 + 「2 次即 ask」纪律                                   |
+| resume 会话越接越长,token 涨       | 协议已知风险(P2 观察项);被停轮次自动开新会话                         |
+| answerers 空/写错 → 卡片点了没反应 | 上线 checklist 项;`rules check` + 真点一次                           |
+| 守护持本人密钥                     | 只跑在本机 launchd,密钥不进 IM、不进事件 detail                      |
+| 事件 detail 带入提示注入文字       | 协议边界:detail 是资料文件不进提示词;subject 限标识符;指令权只在规则 |
 
 ## 10. 实施记录(2026-11-09,as-built)
 

@@ -151,12 +151,12 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 内置插件随程序安装，填好配置即可启用；第三方插件用 `agent-autoloop add <git 地址> [--ref v版本]` 安装。仓库根目录的 `plugin.json` 声明版本和兼容范围（`engine`），每次安装记录在 `plugins.lock.json`（版本、提交、签名人、时间），`plugins list` 看得清、`doctor` 会报异常；`plugins trust <名字> <公钥文件>` 登记发布者的 SSH 公钥后，安装和更新都要它签过名的版本标签，签名不对就拒装；`plugins update <名字>` 换新版本（`--check` 只看），失败停在原版本。详见[插件开发说明](docs/plugins.md)。
 
-| 方向 | 内置 | 配置 |
-|---|---|---|
-| **事件**：怎么发现新活 | [GitHub Webhook](plugins/github/source.ts)、[GitLab Webhook](plugins/gitlab/source.ts)、[HTTP 接口](docs/protocol.md#来源把世界变成事件)、[定时规则](skills/agent-autoloop/SKILL.md#改规则)、[Issue 轮询脚本](examples/recipes/github-issues/watch.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个事件插件) |
-| **Agent**：谁来干活 | [Claude Code](plugins/claude/agent.ts)、[Codex](plugins/codex/agent.ts)、[ACP](plugins/acp/agent.ts)、[DeepSeek Harness](plugins/dsh/agent.ts)、[ZCode](plugins/zcode/agent.ts)、[通用命令](plugins/command/agent.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个-agent) |
-| **通道**：去哪找你拍板 | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个通道) |
-| **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts) | [说明](skills/agent-autoloop/SKILL.md#交付流水线) |
+| 方向                          | 内置                                                                                                                                                                                                                                                   | 配置                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| **事件**：怎么发现新活        | [GitHub Webhook](plugins/github/source.ts)、[GitLab Webhook](plugins/gitlab/source.ts)、[HTTP 接口](docs/protocol.md#来源把世界变成事件)、[定时规则](skills/agent-autoloop/SKILL.md#改规则)、[Issue 轮询脚本](examples/recipes/github-issues/watch.ts) | [说明](skills/agent-autoloop/SKILL.md#接一个事件插件) |
+| **Agent**：谁来干活           | [Claude Code](plugins/claude/agent.ts)、[Codex](plugins/codex/agent.ts)、[ACP](plugins/acp/agent.ts)、[DeepSeek Harness](plugins/dsh/agent.ts)、[ZCode](plugins/zcode/agent.ts)、[通用命令](plugins/command/agent.ts)                                  | [说明](skills/agent-autoloop/SKILL.md#接一个-agent)   |
+| **通道**：去哪找你拍板        | [桌面通知](plugins/desktop/channel.ts)（默认开启）、[飞书](plugins/feishu/channel.ts)、[钉钉 / 企微 / Slack / Discord](plugins/webhook/templates.ts)                                                                                                   | [说明](skills/agent-autoloop/SKILL.md#接一个通道)     |
+| **交付**：把 CI/CD 也做成插件 | [`delivery`](plugins/delivery/delivery.ts)                                                                                                                                                                                                             | [说明](skills/agent-autoloop/SKILL.md#交付流水线)     |
 
 **实测情况：** Claude Code、Codex 和 ACP（官方 Codex ACP 适配器）跑通了多轮问答和跨进程会话续接；ZCode 跑通了提问、回答后接回原会话；[Agentica](https://github.com/shibing624/agentica) 1.6.1 用 `use: "acp"` 跑通了多轮问答和跨进程会话续接；飞书跑通了发送、按钮回调和卡片更新；四种 Webhook 模板只在本地模拟服务上验证过，GitLab Webhook 按官方文档的格式测试，没连过真实 GitLab。这些文字通道靠回答链接拍板，要把 `hub.publicUrl` 配成手机或电脑能打开的地址。有按钮的通道要在 `rules.json` 里登记，并把回答人写进 `answerers`；名单缺失或为空表示它只能收通知，谁都不能通过它回答，只有显式 `["*"]` 才允许任何有名字的人。没登记的通道拿不到卡片。
 
@@ -196,11 +196,11 @@ Windows 用 `npm run test:windows` 和 `node scripts/install-smoke-windows.ts`�
 
 在程序目录 `~/.agent-autoloop/app` 下运行：
 
-| 验证什么                                                | 命令                              |
-| ------------------------------------------------------- | --------------------------------- |
-| 任何一轮的来龙去脉                                      | `agent-autoloop why 1`            |
-| 20 万步模拟断网、丢包、崩溃和重复提交，一个种子就能复现 | `node sim/random.ts 24301 200000` |
-| 强杀进程 1000 次，已确认的记录一条不丢                  | `node sim/crash.ts 1000 12648430` |
+| 验证什么                                                | 命令                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------- |
+| 任何一轮的来龙去脉                                      | `agent-autoloop why 1`                                                |
+| 20 万步模拟断网、丢包、崩溃和重复提交，一个种子就能复现 | `node sim/random.ts 24301 200000`                                     |
+| 强杀进程 1000 次，已确认的记录一条不丢                  | `node sim/crash.ts 1000 12648430`                                     |
 | 下面的性能数字                                          | `npm run benchmark`；历史增长另跑 `node scripts/history.ts 1000 5000` |
 
 ```text
@@ -215,19 +215,19 @@ Windows 用 `npm run test:windows` 和 `node scripts/install-smoke-windows.ts`�
 
 Apple M6、Node 24.22.1。写入逐条提交，事务落盘后才应答。深排队一栏是排队 5000 轮、1000 个长轮询同时等着时量的（`BENCH_QUEUE=5000 node scripts/benchmark.ts --busy`）。
 
-| 指标                                        |          实测 |
-| ------------------------------------------- | ------------: |
-| 冷启动                                      |     84.50 ms |
-| 空闲内存                                    | 123.55 MB RSS |
-| 1000 个同时等待的长轮询                     | 204.06 MB RSS |
-| 持久化写入                                  |    2485 条/秒 |
-| 派活 p99                                    |       1.72 ms |
-| 排队 5000 时收事件 / 领活 / 交回执 P50      | 0.9 / 1.3 / 0.9 ms |
-| 排队 5000 时被挡下的心跳 p99 与空领活 P50   |   1.3 / 0.4 ms |
-| 50 个带容量的长轮询被一条事件唤醒后首领活   |      19.96 ms |
-| 5.5 万条事实时的启动与状态汇总              |  80.5 ms / 1.54 ms |
-| 内核行数（含空行和注释）                    |         2684 |
-| 运行时依赖                                  |             0 |
+| 指标                                      |               实测 |
+| ----------------------------------------- | -----------------: |
+| 冷启动                                    |           84.50 ms |
+| 空闲内存                                  |      123.55 MB RSS |
+| 1000 个同时等待的长轮询                   |      204.06 MB RSS |
+| 持久化写入                                |         2485 条/秒 |
+| 派活 p99                                  |            1.72 ms |
+| 排队 5000 时收事件 / 领活 / 交回执 P50    | 0.9 / 1.3 / 0.9 ms |
+| 排队 5000 时被挡下的心跳 p99 与空领活 P50 |       1.3 / 0.4 ms |
+| 50 个带容量的长轮询被一条事件唤醒后首领活 |           19.96 ms |
+| 5.5 万条事实时的启动与状态汇总            |  80.5 ms / 1.54 ms |
+| 内核行数（含空行和注释）                  |               2684 |
+| 运行时依赖                                |                  0 |
 
 历史变大后，收事件、领活、`why` 和状态汇总都不变慢：状态汇总和 `/v1/metrics` 走派生计数表和投递索引，不扫历史；深排队时到期表只登记真正在退避的轮次，组占满的空领活不读排队表。日志和索引占的磁盘仍随历史增长；格式变化后的首次启动要从日志全量重建，5.5 万条用时 2.0 秒。[完整数据和测法](docs/protocol.md#历史增长实测)。
 

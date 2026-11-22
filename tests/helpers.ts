@@ -1,6 +1,6 @@
 // Each test file runs in its own process with its own home and the fixture rules; modules are imported after this sets
 // the environment they read.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { after } from "node:test";
@@ -21,6 +21,26 @@ export function setup(name: string, rules = "rules.fixture.json") {
 
 /** A moment in a test's own time, minutes after a fixed start: 10:00 in Asia/Shanghai. */
 export const at = (minutes: number) => Date.parse("2026-10-18T02:00:00.000Z") + minutes * 60_000;
+
+/**
+ * Whether this account may make a symlink at all: a Windows account without Developer Mode gets EPERM. A test that needs
+ * one can only say so and stand down, rather than fail the suite on that account. Elsewhere a link that can't be made is
+ * a failure of its own, so the test that needs one doesn't quietly drop what it checks.
+ */
+let links: boolean | undefined;
+export function canSymlink() {
+  if (process.platform !== "win32") return true;
+  if (links !== undefined) return links;
+  const place = mkdtempSync(join(tmpdir(), "agent-autoloop-links-"));
+  try {
+    symlinkSync(join(place, "missing"), join(place, "link"));
+    return (links = true);
+  } catch {
+    return (links = false);
+  } finally {
+    rmSync(place, { recursive: true, force: true });
+  }
+}
 
 /**
  * A stand-in ACP agent in a file of its own, to run for real. It answers as an agent should unless `script` says otherwise,

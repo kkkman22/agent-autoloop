@@ -15,10 +15,12 @@
 规则级 `crossGroup: true`(默认关):该规则一轮的 context.open 与回执 resolve 范围放宽为「同来源+任意组+领取前」。保留 source 过滤与 created_at<=claimed_at。
 
 先写失败测试:
+
 - tests/cards.test.ts:①crossGroup 轮 open 看得到别组 open 卡且 resolve 能结;②crossGroup 轮结不了领取后新开的别组卡。现有 383 行测试不动。
 - tests/rules.test.ts:crossGroup 非 boolean 报错(problem 模式)。
 
 实现:
+
 - kernel/rules.ts:RuleOptions + `crossGroup?: boolean`
 - protocol/rules.ts:字段白名单 + `["crossGroup", boolean, "只能是 true 或 false", true]`
 - kernel/query.ts:openInScope 按 run.rules_version 查规则,置旗标去 grp 过滤;jobOf 透传

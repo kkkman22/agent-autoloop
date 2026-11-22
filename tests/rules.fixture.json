@@ -16,6 +16,7 @@
       "skill": "s",
       "prompt": "按手册做。",
       "title": "note-{id}",
+      "tags": ["shop", "反馈"],
       "group": "notes",
       "parallel": 3
     },

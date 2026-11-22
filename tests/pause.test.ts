@@ -8,7 +8,8 @@
 // with nothing new adds a fact or restarts the pause's clock. A resume doesn't say which pause it lifted; a replay hands
 // the rule anything but the events its pause skipped as they came, hands one over twice, goes ahead while the rule is
 // still paused, changes the event's own record, keeps it from another rule its pause also skipped it for, or leaves no
-// trace in the run's story that it was a replay.
+// trace in the run's story that it was a replay. Past its end, a pause no tick has lifted yet still shows the rule as
+// paused.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { at, setup } from "./helpers.ts";
@@ -75,6 +76,8 @@ test("a pause with an end lifts itself then, and the moments inside it stay skip
     "the end has a deadline of its own",
   );
   tick(at(5));
+  // No tick has lifted the row yet, but the moment it named has passed: the rule already shows as running again.
+  assert.equal(line("巡检", at(12) + 1).paused, null, "past its end a pause holds nothing, before the tick lifts it");
   // Asleep from 10:05 to 10:13: 10:10 was in the pause, so nothing is owed when it wakes.
   tick(at(13));
   assert.deepEqual(ticks(), []);

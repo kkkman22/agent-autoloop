@@ -32,7 +32,7 @@ node handoff.ts browser.json --resume <上一步返回的实际会话-ID>
 在专用测试中台向来源 `browser-tasks` 发送稳定编号的 `browser.verify` 事件即可触发；同一次请求重发保留 `id`，例如：
 
 ```json
-{"id":"browser-check-1","type":"browser.verify","subject":"site-check","summary":"核实已配置的网页"}
+{ "id": "browser-check-1", "type": "browser.verify", "subject": "site-check", "summary": "核实已配置的网页" }
 ```
 
 事件不携带入口命令、目标路径或权限。涉及需要本人操作的阻塞，用 Skill 中的 `ask` 结束本轮；已有卡片时不重复交接，不另约定时复查。本人回答后只继续未完成的网页步骤。

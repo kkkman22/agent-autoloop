@@ -25,7 +25,7 @@ import { after, test } from "node:test";
 import acp from "../plugins/acp/agent.ts";
 import { bridge, permission } from "../plugins/acp/bridge.ts";
 import { versionName } from "../host/version.ts";
-import { acpAgent } from "./helpers.ts";
+import { acpAgent, canSymlink } from "./helpers.ts";
 const home = mkdtempSync(join(tmpdir(), "agent-autoloop-acp-"));
 after(() => rmSync(home, { recursive: true, force: true }));
 const fake = join(home, "fake.mjs");
@@ -356,16 +356,19 @@ test("ACP chooses only a one-time permission and respects structured kinds and r
   assert.equal(ask("read", { kind: "execute", title: "read file" }).optionId, "no");
   assert.equal(ask("edit", { kind: "edit", locations: [{ path: join(home, "new.txt") }] }).optionId, "once");
   mkdirSync(join(home, "work"));
-  symlinkSync(tmpdir(), join(home, "work", "escape"));
-  assert.equal(
-    ask("edit", { kind: "edit", locations: [{ path: join(home, "work", "escape", "outside") }] }).optionId,
-    "no",
-  );
+  if (canSymlink()) {
+    symlinkSync(tmpdir(), join(home, "work", "escape"));
+    assert.equal(
+      ask("edit", { kind: "edit", locations: [{ path: join(home, "work", "escape", "outside") }] }).optionId,
+      "no",
+    );
+  }
   assert.equal(ask("edit", { kind: "other" }).optionId, "no");
   assert.equal(ask("full", { kind: "other" }).optionId, "once");
 });
 
-test("ACP doesn't take a link that goes nowhere for a new file in the folder", () => {
+test("ACP doesn't take a link that goes nowhere for a new file in the folder", (t) => {
+  if (!canSymlink()) return t.skip("this account can't make a symlink");
   const options = [
     { optionId: "once", kind: "allow_once" },
     { optionId: "no", kind: "reject_once" },

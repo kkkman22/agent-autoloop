@@ -101,6 +101,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
     ["title", isTitle, "要是字母或数字开头、不含空白的一个词，占位符只能用 {id}、{subject}", true],
+    ["tags", isWords, "要是文字的列表", true],
     ["group", isText, NOT_EMPTY, true],
     ["parallel", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],
     ["maxActive", atMost(MAX_PARALLEL), `要是 1 到 ${MAX_PARALLEL} 的整数`, true],

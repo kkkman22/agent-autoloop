@@ -3,6 +3,7 @@
 // the explicit localhost-only test switch; a protected path that points outside the repo; a change set whose history is
 // unknown. Git objects are read without a checkout, hooks, filters or project imports.
 // Reviewers by agent are listed with no account trusted to declare one, or a model or depth becomes a command option.
+// A path pattern ending in ** stops at one level, so nested files fall outside the review or release rule they name.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -18,6 +19,7 @@ import {
   readMainSettings,
   liveRelease,
 } from "../plugins/delivery/project.ts";
+import { canSymlink } from "./helpers.ts";
 const root = mkdtempSync(join(tmpdir(), "agent-autoloop-delivery-scope-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 const git = (...args: string[]) =>
@@ -81,7 +83,7 @@ test("release scope compares the entire healthy-live range and both sides of ren
   assert.equal(releaseRequired(root, base, commit(), config.internal), true);
 });
 test("executable or symlink documents and unknown history always need release", () => {
-  for (const mode of ["executable", "symlink"]) {
+  for (const mode of canSymlink() ? ["executable", "symlink"] : ["executable"]) {
     git("reset", "--hard", base);
     if (mode === "executable") {
       chmodSync(join(root, "docs/a.md"), 0o755);
@@ -116,6 +118,13 @@ test("only main provides configuration, with exact path patterns and explicit lo
   assert.throws(() => settings({ ...config, health: { ...health, url: "http://localhost:1234" } }, true));
   assert.throws(() => settings({ ...config, health: { ...health, url: "http://192.168.1.2" } }, true));
   assert.throws(() => settings({ ...config, review: { ...config.review, command: "sh bad" } }));
+});
+test("a path pattern ending in ** covers every level below it", () => {
+  assert.ok(matches("docs/a/b.md", ["docs/**"]));
+  assert.ok(!matches("docsonly/a/b.md", ["docs/**"]));
+  assert.ok(matches("docs/a/b.md", ["**"]));
+  assert.ok(!matches("docsonly/a/b.md", ["docs**"]));
+  assert.ok(!matches("docs/a/b.md", ["docs/**.md"]), "a ** inside a name stays within one level");
 });
 test("unhealthy, redirected or malformed health cannot authorize skipping a release", async () => {
   const s = settings({

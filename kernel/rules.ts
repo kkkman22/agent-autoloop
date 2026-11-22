@@ -25,6 +25,8 @@ type RuleWords = { skill?: string; prompt?: string };
 /** A session's name for clients that take it from the first line: {subject} and {id} filled in by the worker. */
 type RuleOptions = RuleWords & {
   title?: string;
+  /** The owner's labels, say for a project or a team: the hub only carries them, to clients and to the rule's rounds. */
+  tags?: string[];
   parallel?: number;
   maxActive?: number;
   resume?: boolean;

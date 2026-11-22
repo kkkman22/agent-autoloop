@@ -117,8 +117,9 @@ export function readMainSettings(root: string, testLocalHealth = false, ref = "o
 }
 
 function globToRegExp(pattern: string) {
-  const parts = pattern.split(/(\*\*\/|\*)/).map((part) => {
+  const parts = pattern.split(/(\*\*\/|(?<=^|\/)\*\*$|\*)/).map((part) => {
     if (part === "**/") return "(?:.*/)?";
+    if (part === "**") return ".*";
     if (part === "*") return "[^/]*";
     return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   });

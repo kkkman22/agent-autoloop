@@ -553,6 +553,12 @@
               "items": {
                 "$ref": "#/$defs/context-decided"
               }
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": ["events", "answers", "timers", "waiting", "open", "decided"],
