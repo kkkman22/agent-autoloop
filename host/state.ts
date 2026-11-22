@@ -202,8 +202,9 @@ export function ruleHistory(all: Reads["all"], rules: Rules, rule: string, befor
      ORDER BY id DESC LIMIT ?`,
     before === undefined ? [rule, limit + 1] : [rule, before, limit + 1],
   );
+  const tags = tagsOf(rules)(rule);
   return {
-    runs: rows.slice(0, limit).map((run) => runView(run, all, tagsOf(rules)(rule))),
+    runs: rows.slice(0, limit).map((run) => runView(run, all, tags)),
     nextBefore: rows.length > limit ? rows[limit - 1].id : null,
   };
 }

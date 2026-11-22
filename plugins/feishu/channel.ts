@@ -155,8 +155,8 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
     } catch {
       out = null;
     }
-    const identity =
-      typeof out?.identity === "string" ? out.identity : args.includes("--as") ? args[args.indexOf("--as") + 1] : "";
+    const as = args.includes("--as") ? args[args.indexOf("--as") + 1] : undefined;
+    const identity = typeof out?.identity === "string" ? out.identity : typeof as === "string" ? as : "";
     if (out?.ok === false || out?.error)
       throw new Error(explain(where, out.error ?? out, ran.failure, printed, identity));
     if (ran.failure) throw new Error(explain(where, null, ran.failure, printed));
