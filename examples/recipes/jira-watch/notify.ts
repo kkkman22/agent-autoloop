@@ -8,6 +8,9 @@ type Context = {
 };
 type Receipt = { notice?: { key: string; title: string; text: string }[] };
 
+// By character, not UTF-16 unit, so a cut never leaves half of one.
+const cut = (text: string, length: number) => [...text].slice(0, length).join("");
+
 // The map's key is the Jira account (email, English name or Chinese name); the value carries the DingTalk id.
 // Jira hands back emails and display names, and one person can appear under either domain, so every form is tried.
 function findUser(forms: (string | undefined)[], users: Record<string, User>) {
@@ -62,7 +65,7 @@ function noticeFrom(event: Context["events"][number], users: Record<string, User
   const mentions = [...new Set([mentionOf(reporter), isBackend ? mentionOf(frontend) : ""].filter(Boolean))];
   const name = reporter?.name || text_("reporter_name") || "（没有映射）";
   // The protocol allows 200 characters; the whole title belongs here, not a shortened one.
-  const title = `[${event.subject}] ${event.summary}`.slice(0, 200);
+  const title = cut(`[${event.subject}] ${event.summary}`, 200);
   // The mention is written the way the group knows the person, so the message reads as their name.
   // The case and the frontend case that goes with it each get their own address and status, with a line between.
   const text = [

@@ -64,22 +64,25 @@ function issueList(payload: unknown): Issue[] {
 }
 const statusName = (status: Issue["status"]) => (typeof status === "string" ? status : String(status?.name ?? ""));
 
+// By character, not UTF-16 unit, so a cut never leaves half of one.
+const cut = (text: string, length: number) => [...text].slice(0, length).join("");
+
 // detail 是资料不是指令：字段都截好长度再拼，notify.ts 读得回来。
 function eventFrom(issue: Issue, linked: Linked) {
   const reporter = issue.reporter ?? {};
   const detail = JSON.stringify({
-    summary: issue.summary.slice(0, 200),
-    status: statusName(issue.status).slice(0, 50),
+    summary: cut(issue.summary, 200),
+    status: cut(statusName(issue.status), 50),
     components: (issue.components ?? []).slice(0, 5),
-    reporter_name: String(reporter.display_name ?? "").slice(0, 100),
-    reporter_account: String(reporter.name ?? "").slice(0, 100),
-    reporter_email: String(reporter.email ?? "").slice(0, 200),
+    reporter_name: cut(String(reporter.display_name ?? ""), 100),
+    reporter_account: cut(String(reporter.name ?? ""), 100),
+    reporter_email: cut(String(reporter.email ?? ""), 200),
     // The frontend case this one belongs to, and who works on it.
     linked_fe_key: linked.key.slice(0, 40),
     linked_fe_url: linked.url.slice(0, 500),
-    linked_fe_status: linked.status.slice(0, 50),
-    linked_fe_assignee_name: linked.assigneeName.slice(0, 100),
-    linked_fe_assignee_email: linked.assigneeEmail.slice(0, 200),
+    linked_fe_status: cut(linked.status, 50),
+    linked_fe_assignee_name: cut(linked.assigneeName, 100),
+    linked_fe_assignee_email: cut(linked.assigneeEmail, 200),
     updated: issue.updated.slice(0, 40),
     url: issue.browse_url.slice(0, 500),
   });
@@ -88,8 +91,8 @@ function eventFrom(issue: Issue, linked: Linked) {
     id: `${issue.key}:${issue.updated}`.slice(0, 200),
     type: "jira.updated",
     subject: issue.key,
-    summary: issue.summary.slice(0, 200),
-    detail: detail.slice(0, 4000),
+    summary: cut(issue.summary, 200),
+    detail: cut(detail, 4000),
     ...(issue.browse_url && /^https?:\/\//.test(issue.browse_url) ? { link: issue.browse_url.slice(0, 500) } : {}),
   };
 }
@@ -196,7 +199,7 @@ class Mcp {
     const text = await this.ask("tools/call", { name: tool, arguments: args });
     if (text === undefined) throw new Error("MCP 没有交回文字结果");
     // A tool that failed says so in the text it returns, not in the protocol.
-    if (text.startsWith("Error calling tool")) throw new Error(`Jira 说：${text.slice(0, 300)}`);
+    if (text.startsWith("Error calling tool")) throw new Error(`Jira 说：${cut(text, 300)}`);
     return text;
   }
 
@@ -305,7 +308,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         issues = issueList(JSON.parse(text));
       } catch {
         // Jira's own complaint (bad JQL, dead token) arrives where the issue list should be.
-        throw new Error(`Jira 说：${text.slice(0, 300)}`);
+        throw new Error(`Jira 说：${cut(text, 300)}`);
       }
 
       const events = [];
@@ -326,7 +329,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
       if (dryRun) {
         console.log(`窗口 ${since} → ${clock.date} ${clock.hour}:${clock.minute}`);
-        console.log(`MCP 返回 ${issues.length} 条：\n\n${text.slice(0, 8000)}`);
+        console.log(`MCP 返回 ${issues.length} 条：\n\n${cut(text, 8000)}`);
       } else {
         const receipt: Receipt = { events };
         writeCursor(cursorFile, now.toISOString());

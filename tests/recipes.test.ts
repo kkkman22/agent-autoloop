@@ -412,6 +412,29 @@ test("jira-watch: the watcher asks the configured JQL and hands back stable even
   assert.equal(handler.when.source, watcher.emits.source);
 });
 
+test("jira-watch: a summary whose cap lands across a character keeps whole characters", () => {
+  // The cap counts UTF-16 units today, so an emoji sitting across the cut ends up half of one.
+  const { said } = jiraWatch({
+    total: 1,
+    issues: [
+      {
+        key: "OPS-14",
+        summary: `${"x".repeat(199)}😀尾巴`,
+        browse_url: "https://jira.example.com/browse/OPS-14",
+        status: { name: "In Progress" },
+        updated: "2026-11-04 10:00:00 CST",
+      },
+    ],
+  });
+  const { result, problem } = resultFrom(readMessage(said), {});
+  assert.equal(problem, undefined);
+  const [event] = result.events!;
+  assert.ok(event.summary.isWellFormed(), event.summary);
+  assert.equal(event.summary, `${"x".repeat(199)}😀`);
+  const detail = JSON.parse(event.detail);
+  assert.ok(detail.summary.isWellFormed(), detail.summary);
+});
+
 test("jira-watch: the query asks for the cases that turned Testing in the window, and only those", () => {
   const { asked } = jiraWatch({ total: 0, issues: [] });
   const jql = JSON.parse(asked.trim().split("\n")[1]).jql;
@@ -571,6 +594,35 @@ test("jira-watch: the notifier mentions only creators the local map carries", ()
   assert.match(notice[0].text, /张三/);
   assert.doesNotMatch(notice[1].text, /@/, "an unmapped creator is named, not pinged");
   assert.notEqual(notice[0].key, notice[1].key);
+});
+
+test("jira-watch: a notice title whose cap lands across a character keeps whole characters", () => {
+  // `[OPS-12] ` is nine units, so the summary's emoji sits across the two-hundredth.
+  const dir = mkdtempSync(join(scratch, "notify-cut-"));
+  writeFileSync(join(dir, "users.json"), JSON.stringify({}));
+  const events = [
+    {
+      id: "OPS-15:t1",
+      type: "jira.updated",
+      subject: "OPS-15",
+      summary: `${"x".repeat(190)}😀尾巴`,
+      detail: JSON.stringify({ status: "Done" }),
+      link: "",
+    },
+  ];
+  const contextFile = join(dir, "context.json");
+  writeFileSync(contextFile, JSON.stringify({ events }));
+  const done = spawnSync(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", join(RECIPES, "jira-watch", "notify.ts"), join(dir, "users.json")],
+    { env: { ...cleanEnv(), AGENT_AUTOLOOP_CONTEXT: contextFile }, encoding: "utf8" },
+  );
+  assert.equal(done.status, 0, done.stderr);
+  const { result, problem } = resultFrom(readMessage(done.stdout), {});
+  assert.equal(problem, undefined);
+  const [notice] = result.notice!;
+  assert.ok(notice.title.isWellFormed(), notice.title);
+  assert.equal(notice.title, `[OPS-15] ${"x".repeat(190)}😀`);
 });
 
 test("jira-watch: a backend case finds its linked frontend case and who works on it", () => {
