@@ -186,7 +186,17 @@ function signedRepository(name: string, version: string, tags: { tag: string; si
       git(["add", "."]);
       git(["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", tag]);
     }
-    const withKey = ["-c", "gpg.format=ssh", "-c", `user.signingkey=${key}.pub`];
+    // A signed tag carries a tagger, so it needs an identity: a runner has none of its own.
+    const withKey = [
+      "-c",
+      "gpg.format=ssh",
+      "-c",
+      `user.signingkey=${key}.pub`,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@x",
+    ];
     git(sign ? [...withKey, "tag", "-s", tag, "-m", tag] : ["tag", tag]);
   }
   return { dir, publicKey: `${key}.pub` };

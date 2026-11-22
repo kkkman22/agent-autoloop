@@ -5,7 +5,7 @@
 // drops the rule filter when a printed next-page command is copied.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -140,7 +140,12 @@ test("the continue command reads back a rule name any shell would take as words"
     const text = runsText(await findRuns(page, { rule, want: 2 }), { rule, color: false, columns: 100 });
     const suggested = /更早的：agent-autoloop runs (.*--before \d+)/.exec(text)![1];
     const done = await new Promise<string>((resolve, reject) => {
-      execFile(shell, ["-c", `agent-autoloop runs ${suggested} --help`], (error) => resolve(String(error?.code ?? 0)));
+      execFile(
+        shell,
+        ["-c", `agent-autoloop runs ${suggested} --help`],
+        { env: { ...process.env, PATH: `${shim}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}` } },
+        (error) => resolve(String(error?.code ?? 0)),
+      );
     });
     // Quoted, the whole name arrives as one argument: the shell reads one command and hands it the name whole.
     // 127 would mean the shell split the name and went looking for a program called, say, `curl`.
@@ -158,6 +163,17 @@ test("a next-page command keeps a rule starting with # as a shell argument", () 
 const program = join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
 const dir = mkdtempSync(join(tmpdir(), "agent-autoloop-runs-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
+
+// The shell test runs the suggested command the way a real shell would. A PATH shim stands in for an installed
+// agent-autoloop, so the runner needs none: what's under test is how the name parses, not where the program is.
+const shim = mkdtempSync(join(tmpdir(), "agent-autoloop-shim-"));
+writeFileSync(
+  join(shim, "agent-autoloop"),
+  `#!/bin/sh\nexec node --disable-warning=ExperimentalWarning "${program}" "$@"\n`,
+  { mode: 0o755 },
+);
+writeFileSync(join(shim, "agent-autoloop.cmd"), `@node --disable-warning=ExperimentalWarning "${program}" %*\r\n`);
+after(() => rmSync(shim, { recursive: true, force: true }));
 
 test("a --before that isn't a run number says how to use it instead of asking the hub", async () => {
   for (const before of ["x", "0", "1.5"]) {

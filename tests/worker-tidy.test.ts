@@ -1,6 +1,6 @@
 // What a worker keeps of finished runs. Failure cases: old output stays for as long as the worker runs, because it's only
 // cleared when it starts, or stays for a loop of its own that drives the worker round by round; the folder of a run still in
-// hand, or one not old enough, goes; one folder that can't be cleared
+// hand, or one not old enough, goes; one made while the start tidy is still walking stays; one folder that can't be cleared
 // stops the worker or the rest of the clearing.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -54,16 +54,22 @@ test("old output goes while the worker keeps running, not only when it starts", 
   const worker = createWorker({ hub: hub as any, name: "w1", wait: 0, now: () => clock });
   const stop = new AbortController();
   const running = worker.run(stop.signal);
-  await until(() => hub.asked > 0);
-  const old = finished("1-1", 15);
-  const asked = hub.asked;
-  await until(() => hub.asked > asked + 2);
-  assert.equal(existsSync(old), true, "cleared at the start, so not again at once");
-  clock += 60 * 60_000 + 1;
-  await until(() => !existsSync(old));
-  await worker.tidy();
-  stop.abort();
-  await running;
+  try {
+    await until(() => hub.asked > 0);
+    // The start tidy fired on the first tick and walks the folder at its own pace: wait it out before making an
+    // aged folder, or it sees the new one mid-flight and clears what this test is about to keep.
+    await worker.tidy();
+    const old = finished("1-1", 15);
+    const asked = hub.asked;
+    await until(() => hub.asked > asked + 2);
+    assert.equal(existsSync(old), true, "cleared at the start, so not again at once");
+    clock += 60 * 60_000 + 1;
+    await until(() => !existsSync(old));
+    await worker.tidy();
+  } finally {
+    stop.abort();
+    await running;
+  }
 });
 
 test("a loop of its own, going round by round, gets the clearing too", async () => {
