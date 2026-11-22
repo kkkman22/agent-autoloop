@@ -14,7 +14,14 @@ export function setup(name: string, rules = "rules.fixture.json") {
   process.env.AGENT_AUTOLOOP_PUBLIC_URL = "https://hub.test";
   after(() => {
     for (const close of beforeCleanup) close();
-    rmSync(directory, { recursive: true, force: true });
+    try {
+      // A file the process still holds open (the runtime's own SQLite connection, say) keeps Windows from letting the
+      // directory go: retry the busy errors, and where that still can't succeed leave the temp home for the OS to sweep
+      // rather than failing the suite over its cleanup.
+      rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // The tests have said their piece already.
+    }
   });
   return directory;
 }

@@ -24,6 +24,9 @@ const keys = {
 const server = serve(0);
 await new Promise((resolve) => server.once("listening", resolve));
 after(() => {
+  // The runtime's own connection keeps the database locked at exit on Windows, and the process then never leaves:
+  // close it the way a stopping hub would.
+  hub.db.close();
   server.closeAllConnections();
   server.close();
 });

@@ -49,6 +49,15 @@ export const environment = {
 
 const dbFile = join(HOME, "hub.db");
 export const db = openDatabase(dbFile, environment.secret);
+// Windows won't let a process leave with its SQLite handle open, and an exit blocked on the database holds the whole
+// runner: close it as the process exits, the way a stopping hub would. Already closed, or statements still out, is fine.
+process.on("exit", () => {
+  try {
+    db.close();
+  } catch {
+    // The process is on its way out either way.
+  }
+});
 chmodSync(dbFile, 0o600);
 db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
 if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").get()) {
