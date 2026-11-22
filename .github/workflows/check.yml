@@ -16,6 +16,8 @@ concurrency:
 jobs:
   check:
     strategy:
+      # One leg's failure says nothing of the others: let every leg finish and tell what it hit.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
