@@ -3,8 +3,9 @@
 // to look, it holds a stuck or stopped run forever because its timeout and its stop wait on a sighting that never comes;
 // or it holds back the result of a run that has ended, stopping a process group it can't see anything left in; or, unable
 // to see a group it stopped itself because the turn was over, it throws away the answer the turn gave and the hub runs
-// the work again. Or, waiting on a slow lookup (PowerShell takes over a second to start on Windows), it holds up the
-// hub that shares its process, so the state, the stream and answers to cards stall while any run is going.
+// the work again; or, past the grace period with a group it could neither see nor signal, it says a timed-out run was
+// stopped, which nobody watched. Or, waiting on a slow lookup (PowerShell takes over a second to start on Windows), it
+// holds up the hub that shares its process, so the state, the stream and answers to cards stall while any run is going.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -326,4 +327,48 @@ test("a run stopped because its turn was over keeps its answer when its group ca
   assert.equal(results.length, 1, "the run was never handed in");
   assert.notEqual(results[0].outcome, "failed", "a failed run is tried again, and the work it did is done twice");
   assert.match(String(results[0].summary), /做完了/);
+});
+
+test("a timed-out run whose group can't be seen doesn't say it was stopped", async () => {
+  psCannotRun();
+  const group = ownGroup();
+  const clean = stoppedRun(22, group.pid, { why: "timeout" });
+  const results: any[] = [];
+  const originalKill = process.kill;
+  try {
+    process.kill = ((target: number, signal?: string | number) => {
+      if (target === -group.pid) {
+        const error = new Error("operation not permitted") as NodeJS.ErrnoException;
+        error.code = "EPERM";
+        throw error;
+      }
+      return originalKill(target, signal as NodeJS.Signals);
+    }) as typeof process.kill;
+    await idleWorker(results).tick();
+  } finally {
+    process.kill = originalKill;
+    group.kill();
+    clean();
+  }
+  assert.equal(results.length, 1, "the run was never handed in");
+  assert.equal(results[0].outcome, "failed");
+  assert.doesNotMatch(String(results[0].error), /已停止/, "nothing saw this group stop");
+  assert.match(String(results[0].error), /没能确认/, "the reason has to say what wasn't seen");
+});
+
+test("a timed-out run whose group is seen gone still says it was stopped", async () => {
+  psCannotRun();
+  const group = ownGroup();
+  group.kill();
+  await group.gone;
+  const clean = stoppedRun(23, group.pid, { why: "timeout" });
+  const results: any[] = [];
+  try {
+    await idleWorker(results).tick();
+  } finally {
+    clean();
+  }
+  assert.equal(results.length, 1, "the run was never handed in");
+  assert.match(String(results[0].error), /已停止/, "a group that is gone is a stop that was watched");
+  assert.doesNotMatch(String(results[0].error), /没能确认/);
 });

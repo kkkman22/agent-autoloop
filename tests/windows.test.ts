@@ -3,8 +3,10 @@
 // folder whose name the console code page can't write (a Chinese user name) isn't found, so nothing installs or runs; a
 // powershell.exe an Agent left in the turn's folder runs, outside its sandbox, in place of the system's; the npm.cmd and
 // npx.cmd that npm 10 and later write, which name their script through a variable, can't be run at all; a command line
-// longer than Windows starts fails with only "spawn ENAMETOOLONG", which doesn't say what is too long or what to do.
+// longer than Windows starts fails with only "spawn ENAMETOOLONG", which doesn't say what is too long or what to do;
+// a running turn launches PowerShell just to check a child process the worker still holds.
 import assert from "node:assert/strict";
+import { createHook } from "node:async_hooks";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -108,6 +110,47 @@ setInterval(() => {}, 1000);`,
     cancel = [];
     if (pid) spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
   }
+});
+
+test("Windows checks a turn it launched without starting another process", { skip: !windows }, async () => {
+  const run = 40;
+  const ready = join(scratch, "liveness-ready");
+  const agent = join(scratch, "liveness.mjs");
+  writeFileSync(
+    agent,
+    `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(ready)}, '');
+setTimeout(() => {}, 30_000);`,
+  );
+  waiting.push(job(run, [process.execPath, agent]));
+  const running = worker();
+  await running.tick();
+  let spawned = 0;
+  const hook = createHook({
+    init(_id, type) {
+      if (type === "PROCESSWRAP") spawned++;
+    },
+  });
+  try {
+    await until(() => existsSync(ready));
+    hook.enable();
+    await running.tick();
+    hook.disable();
+    assert.equal(spawned, 0, "checking a turn started another process");
+    assert.ok(!results.has(run), "a running turn was reported as ended");
+  } finally {
+    hook.disable();
+    cancel = [run];
+    try {
+      await until(
+        () => results.has(run),
+        () => running.tick(),
+      );
+    } finally {
+      cancel = [];
+    }
+  }
+  assert.equal(results.get(run).outcome, "cancelled");
 });
 
 test("an npm command shim preserves a multiline prompt on Windows", { skip: !windows }, async () => {

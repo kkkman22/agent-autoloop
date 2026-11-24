@@ -2,7 +2,7 @@
 // job. An agent runs detached, in its own process group, writing to files, so the worker can stop and come back and
 // find it still going, or finished. A job is saved before anything slow happens; a result is saved before it's handed
 // in and stays until the hub has taken it.
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -138,9 +138,10 @@ async function alive(entry: Entry): Promise<boolean | null> {
   }
 }
 
-function signal(entry: Entry, name: NodeJS.Signals) {
+function signal(entry: Entry, name: NodeJS.Signals, child?: ChildProcess) {
   try {
-    if (entry.pid) process.kill(process.platform === "win32" ? entry.pid : -entry.pid, name);
+    if (child) child.kill(name);
+    else if (entry.pid) process.kill(process.platform === "win32" ? entry.pid : -entry.pid, name);
   } catch {}
 }
 
@@ -205,6 +206,11 @@ export function createWorker({
   let restored = false;
   let cleaning: Promise<void> | undefined;
   const active = new Map<string, Entry>();
+  const supervisors = new Map<string, ChildProcess>();
+  const supervisor = (entry: Entry) => {
+    const child = supervisors.get(entry.dir);
+    return child?.pid === entry.pid ? child : undefined;
+  };
   const unreadable = new Set<string>();
   const said = new Set<string>();
   /** Trouble that lasts comes round every second, and once in the log will do. */
@@ -259,6 +265,7 @@ export function createWorker({
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
   function launch(entry: Entry, adapter: Adapter, prompt: string) {
+    supervisors.delete(entry.dir);
     entry.turn += 1;
     entry.launchedAt = now();
     entry.usageBaseline = entry.resume ? loadUsage(entry.job.agent.use, entry.resume) : undefined;
@@ -311,6 +318,7 @@ export function createWorker({
         child.on("error", (error) => log(`run ${entry.run}: ${error}`));
         child.unref();
         entry.pid = child.pid;
+        if (child.pid !== undefined) supervisors.set(entry.dir, child);
       } finally {
         closeSync(output);
         closeSync(errors);
@@ -429,7 +437,7 @@ export function createWorker({
   }
 
   /** A turn has ended. What it said is a result, or a reason to ask it again without redoing anything. */
-  function conclude(entry: Entry, adapter: Adapter, code: number | null) {
+  function conclude(entry: Entry, adapter: Adapter, code: number | null, unseen = false) {
     // One ended because its turn was over but it wouldn't exit said what it had to say first.
     const seen = read(entry, adapter, entry.finishedAt ? 0 : code);
     entry.usage = addUsage(addUsage(entry.usage, seen.usage), sessionRise(entry, seen));
@@ -440,7 +448,10 @@ export function createWorker({
     if (entry.why === "cancel") return endWith(entry, { outcome: "cancelled", summary: "已停止", ...known, ...usage });
     if (entry.why === "timeout") {
       const minutes = entry.job.agent.timeout ?? TIMEOUT_MINUTES;
-      const error = `超过 ${minutes} 分钟还没结束，已停止`;
+      // Past the grace period with a group that could be neither looked at nor signalled, nothing watched this run stop:
+      // 已停止 there is a claim about a fact nobody observed, and it is the line the owner reads on the third failure.
+      const stopped = unseen ? "停止信号发出后没能确认进程组已结束，进程可能还在" : "已停止";
+      const error = `超过 ${minutes} 分钟还没结束，${stopped}`;
       if (entry.repairs) return discardReceipt(entry, adapter, error);
       return endWith(entry, { outcome: "failed", error, ...known, ...usage });
     }
@@ -507,19 +518,20 @@ export function createWorker({
     }
     const { exit } = files(entry);
     const exitCode = () => (existsSync(exit) ? Number(readFileSync(exit, "utf8").trim()) : null);
+    const child = supervisor(entry);
     if (entry.stopping !== undefined) {
       const going = await groupAlive(entry);
       const overdue = now() - entry.stopping > STOP_GRACE;
       if (going === true) {
-        if (overdue) signal(entry, "SIGKILL");
+        if (overdue) signal(entry, "SIGKILL", child);
         return;
       }
       if (going === null) {
         // The forced kill is the last thing that can be done to it, and whether it worked can't be seen.
         if (!overdue) return;
-        signal(entry, "SIGKILL");
+        if (process.platform !== "win32" || child) signal(entry, "SIGKILL", child);
         // A turn that was over, or a timeout, ends on what it said: `failed` there is tried again, redoing work done.
-        if (entry.why !== "cancel") return conclude(entry, adapter, exitCode());
+        if (entry.why !== "cancel") return conclude(entry, adapter, exitCode(), true);
         // Reporting `cancelled` would release the item while a process may still be in it, which the protocol forbids
         // (docs/protocol.md: 确认组内没有活进程后才交 cancelled). A cancelled run's `failed` isn't tried again.
         return endWith(entry, {
@@ -531,7 +543,8 @@ export function createWorker({
     }
     if (existsSync(exit)) return conclude(entry, adapter, exitCode());
     // The shell can publish its exit between the first file check and ps returning.
-    const looking = await alive(entry);
+    // A Windows supervisor started here already has a process handle and an exit watcher.
+    const looking = child ? child.exitCode === null && child.signalCode === null : await alive(entry);
     if (looking === false) return conclude(entry, adapter, exitCode());
     // Unable to look, the run counts as still going, so its timeout and its finished turn still end it.
     if (looking === null && !blind) log(`couldn't inspect processes; runs count as going until they end or time out`);
@@ -561,17 +574,18 @@ export function createWorker({
         entry.finishedAt = moment;
         save(entry);
       } else if (moment - entry.finishedAt > GRACE) {
-        stop(entry, "finished");
+        await stop(entry, "finished");
       }
     }
   }
 
-  function stop(entry: Entry, why: NonNullable<Entry["why"]>) {
+  async function stop(entry: Entry, why: NonNullable<Entry["why"]>) {
     if (entry.stopping !== undefined || entry.result) return;
     entry.stopping = now();
     entry.why = why;
     save(entry);
-    signal(entry, "SIGTERM");
+    const child = supervisor(entry);
+    if (child || process.platform !== "win32" || (await alive(entry)) === true) signal(entry, "SIGTERM", child);
     log(`run ${entry.run}: stopping (${why})`);
   }
 
@@ -625,6 +639,7 @@ export function createWorker({
       if (!missing(error)) throw error;
     }
     active.delete(entry.dir);
+    supervisors.delete(entry.dir);
   }
 
   /** Nothing else can tell the owner when the hub is what's gone. */
@@ -694,7 +709,7 @@ export function createWorker({
       });
       for (const id of answer?.cancel ?? []) {
         const entry = inHand.find((entry) => entry.run === id);
-        if (entry) stop(entry, "cancel");
+        if (entry) await stop(entry, "cancel");
       }
       if (answer?.job) {
         claim = randomUUID();

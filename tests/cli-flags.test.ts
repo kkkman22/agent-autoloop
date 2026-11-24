@@ -1,8 +1,9 @@
-// Reading the command line: `init --help` used to install instead of printing how to use it, and a misspelt `--port`
-// installed with the default in silence; `update --help` and `uninstall --yes --help` ran the real update or uninstall; any
-// other command went ahead without what a flag it doesn't read had asked for, and a result given to `resolve` must not be
-// taken for flags. All found here by running the real program in a home of its own and looking at what it wrote. Nothing is
-// installed, updated or uninstalled, no service is touched and no Agent is called.
+// Reading the command line: `init --help` used to install instead of printing how to use it, a misspelt `--port` installed
+// with the default in silence, and an invalid port left a broken installation that could neither start nor be initialized
+// again; `update --help` and `uninstall --yes --help` ran the real update or uninstall; any other command went ahead without
+// what a flag it doesn't read had asked for, and a result given to `resolve` must not be taken for flags. All found here by
+// running the real program in a home of its own and looking at what it wrote. Nothing is installed, updated or uninstalled,
+// no service is touched and no Agent is called.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -69,6 +70,14 @@ test("the flags init does read still reach the config", async () => {
   assert.equal(ran.code, 0, ran.stderr);
   const config = JSON.parse(readFileSync(join(ran.home, "config.json"), "utf8")) as { url: string };
   assert.equal(config.url, "http://127.0.0.1:3361");
+});
+
+test("an invalid init port stops before leaving a broken installation", async () => {
+  const ran = await run(["init", "--command", "node {prompt}", "--port", "not-a-port", "--no-service"]);
+  assert.equal(ran.code, 1);
+  assert.match(ran.stderr, /端口/);
+  assert.equal(existsSync(join(ran.home, "config.json")), false);
+  assert.equal(existsSync(join(ran.home, "rules.json")), false);
 });
 
 test("try --help says how to use it and runs nothing", async () => {

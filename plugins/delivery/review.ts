@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT, git, matches, PLAIN_FILE_MODES, type Reviewer, type Settings } from "./project.ts";
-import { IN_THE_APP } from "../codex/agent.ts";
+import { inTheApp } from "../codex/agent.ts";
 import { findProgram, tail } from "../../worker/agents.ts";
 import { reviewCovers, reviewSignature, selectReview, type SharedPolicy } from "./review-policy.ts";
 import { ledger, OWNER, renderRound, stalled } from "./review-ledger.ts";
@@ -244,7 +244,7 @@ async function runReviewer(
   writeFileSync(changesFile, input.diff);
   const output = join(snapshot, "review.json");
   const { command, model } = reviewer;
-  const codex = () => [findProgram("codex", () => IN_THE_APP), ...codexCommand(output, effort, model)];
+  const codex = () => [findProgram("codex", inTheApp), ...codexCommand(output, effort, model)];
   const argv = command ?? codex();
   const args = argv.slice(1).map((arg) => arg.replaceAll("{input}", changesFile));
   const timeout = Math.min(REVIEW_MINUTES * 60_000, Math.max(remainingMs, 60_000));
@@ -253,6 +253,9 @@ async function runReviewer(
     timeout,
     maxBuffer: 8 * 1024 * 1024,
   });
+  // A reviewer can stop before it reads its prompt, and a long one then fails the write. An error nobody listens for would
+  // end this whole run; the exit code and stderr already say why the review didn't happen.
+  child.stdin!.on("error", () => {});
   child.stdin!.end(input.prompt);
   const text = await new Promise<string>((resolve, reject) => {
     let stdout = "";

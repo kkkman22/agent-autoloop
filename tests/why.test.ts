@@ -2,7 +2,8 @@
 // answer or continuation; receipt actions disappear; retry uses the wrong rules version; --json changes the raw facts;
 // local time is replaced by UTC or a year, columns drift; another's words drive the terminal, or --raw can't keep them;
 // a provisional session link is presented after the agent has supplied its real session; a look-again that came due and
-// ran is shown as cancelled.
+// ran is shown as cancelled; a stop nobody saw finish is shown as stopped, or a run stopped while waiting shows its last
+// failure as why it ended.
 import assert from "node:assert/strict";
 import { rows } from "../kernel/evolve.ts";
 import { execFile } from "node:child_process";
@@ -156,4 +157,24 @@ test("why does not show a look-again that came due and ran as cancelled", async 
   const output = await cli("why", String(job.run));
   assert.ok(output.includes("看过了"), output);
   assert.ok(!output.includes("取消复查"), output);
+});
+test("why shows the worker's reason for a stop nobody saw finish, not that it stopped", async () => {
+  const at = Date.parse("2026-11-06T00:00:00Z");
+  hub.ingest("shop", { id: "order-88", type: "order.created", subject: "order-88" }, at);
+  const job = hub.claimNext("mac-mini", "unseen-1", at + 1000)!;
+  hub.cancel(job.run, at + 2000);
+  const unseen = "停止信号发出后没能确认进程组已结束：这一轮按没跑成记，不再重试，进程可能还在。";
+  hub.finish(job.run, job.token, { outcome: "failed", error: unseen }, at + 3000);
+  const output = await cli("why", String(job.run));
+  assert.ok(output.includes("没能确认进程组已结束"), output);
+  assert.ok(!output.includes("结束：已停止"), output);
+});
+test("why says a run stopped while waiting to try again was stopped, not why it last failed", async () => {
+  const at = Date.parse("2026-11-07T00:00:00Z");
+  hub.ingest("shop", { id: "order-99", type: "order.created", subject: "order-99" }, at);
+  const job = hub.claimNext("mac-mini", "waiting-1", at + 1000)!;
+  hub.finish(job.run, job.token, { outcome: "failed", error: "连接断开" }, at + 2000);
+  hub.cancel(job.run, at + 3000);
+  const output = await cli("why", String(job.run));
+  assert.ok(output.includes("结束：已停止"), output);
 });

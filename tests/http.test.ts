@@ -9,7 +9,8 @@
 // taken, or one without an adapter; a webhook's secret leaks into anything it returns; the owner's key opens the worker's
 // door; a page other than a card's exists; a card's link still answers or shows the card after its week, or sends you to a
 // command that doesn't work; a link opens when no channel takes links; a card that names its answerers takes an answer from
-// a link that proves nobody. A source adapter's long failure reason keeps whole characters at the cap.
+// a link that proves nobody. A source adapter's long failure reason keeps whole characters at the cap. A channel isn't told
+// which matter a card is about, so a task sent in one chat can't be answered in that chat.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -272,6 +273,29 @@ test("a channel comes for cards, reports them, and passes on who answered; the l
   assert.equal(
     (await call("/v1/cards/99999/delivered", { key: keys.chat, body: { version: 1, ref: "x" } })).status,
     404,
+  );
+});
+
+test("a channel is told which matter a card is about, so it can answer where the matter came from", async () => {
+  await call("/v1/events", { key: keys.app, body: note(55) });
+  const job = (await call("/v1/work?claim=c-55&wait=0", { key: keys.w1 })).json.job;
+  const ask = [{ title: "从哪来回哪去", text: "选一个", options: ["甲", "乙"] }];
+  await call(`/v1/runs/${job.run}/result`, { key: job.token, body: { outcome: "done", ask } });
+  const lanes: Record<string, string> = {};
+  for (;;) {
+    const { json } = await call("/v1/cards/next?wait=0", { key: keys.chat });
+    if (!json.card) break;
+    lanes[json.card.title] = json.card.lane;
+    await call(`/v1/cards/${json.card.id}/delivered`, {
+      key: keys.chat,
+      body: { version: json.card.version, ref: "x" },
+    });
+  }
+  // The claim may hand over an earlier matter's run still queued, so compare with the run that asked.
+  assert.equal(
+    lanes["从哪来回哪去"],
+    job.context.events[0].subject,
+    "a parallel rule's card carries its event's subject",
   );
 });
 

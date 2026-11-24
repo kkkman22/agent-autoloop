@@ -41,8 +41,10 @@ export const answer = (id: number, given: Answer, now = Date.now()): { changed: 
   execute("answer", [id, given], now);
 export const resolve = (id: number, reason: string, by: string, now = Date.now()): boolean =>
   execute("resolve", [id, reason, by], now);
-export const nextCard = (channel: string, now = Date.now()): ReturnType<typeof query.cardView> | null =>
-  execute("nextCard", [channel], now);
+export const nextCard = (
+  channel: string,
+  now = Date.now(),
+): (ReturnType<typeof query.cardView> & { lane: string }) | null => execute("nextCard", [channel], now);
 export const delivered = (channel: string, id: number, version: number, ref: string | null, now = Date.now()) =>
   execute("delivered", [channel, id, version, ref], now);
 export const failed = (channel: string, id: number, version: number, error: string, now = Date.now()) =>

@@ -9,7 +9,8 @@
 // the limit still wait for the reset; the ask is spent on the round it sent rather than living on in its retries, and an
 // ask made while the thread's round was running waits out that round's backoff instead of going when it fails; a time
 // that isn't one, or one on a round that didn't
-// fail, is taken; a time days off, which no usage limit gives, holds the agent that long; the hold is lost when the
+// fail, is taken; a time days off, which no usage limit gives, holds the agent that long; a time already past, as from a
+// result read late, is recorded and told to the owner as a hold; the hold is lost when the
 // projection is rebuilt from the log; the state view still reports the agent as held after its reset has passed, until a
 // tick lifts the row.
 import assert from "node:assert/strict";
@@ -132,16 +133,20 @@ test("the owner can try the agent before then, and a round that gets through lif
   );
 });
 
-test("a reset more than eight days off is no usage limit: the round fails as any other", () => {
+test("a reset already past, or more than eight days off, is no usage limit: the round fails as any other", () => {
   clean();
   heartbeat("w1", [], at(0));
   feedback("#1", at(0));
   feedback("#2", at(0));
+  feedback("#3", at(0));
   const job = claim(at(1))!;
   finish(job.run, job.token, limited(at(9 * 24 * 60)), at(2));
-  assert.equal(claim(at(3))!.context.events[0].subject, "#2", "nothing is held");
+  const next = claim(at(3))!;
+  assert.equal(next.context.events[0].subject, "#2", "nothing is held");
+  finish(next.run, next.token, limited(at(2)), at(4));
+  assert.equal(claim(at(5))!.context.events[0].subject, "#3", "nothing is held by a reset that has passed");
   assert.deepEqual(notices(), []);
-  assert.equal(stateOf(at(3)).agents.find((agent) => agent.id === "a1")!.limited, null);
+  assert.equal(stateOf(at(5)).agents.find((agent) => agent.id === "a1")!.limited, null);
   assert.equal(claim(at(7))!.context.events[0].subject, "#1", "tried again after the usual wait");
 });
 

@@ -638,6 +638,9 @@
         },
         "severity": {
           "enum": ["low", "normal", "urgent"]
+        },
+        "lane": {
+          "type": "string"
         }
       },
       "required": [

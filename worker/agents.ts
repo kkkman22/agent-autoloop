@@ -113,6 +113,9 @@ function isProgram(file: string) {
  */
 export function findProgram(name: string, elsewhere: () => string[] = () => []) {
   let program = found.get(name);
+  // An update can delete the program it found while the worker keeps running, and the path it cached then starts nothing:
+  // 2026-11-21 the Codex app moved to a new folder mid-morning and every round failed until the worker restarted.
+  if (program && !existsSync(program)) program = undefined;
   if (!program) {
     program = onPath(name) ?? (process.platform === "win32" ? null : inTerminal(name)) ?? elsewhere().find(existsSync);
     if (!program) throw new Error(`找不到 ${name}：先装好并登录`);

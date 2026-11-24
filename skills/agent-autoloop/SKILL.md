@@ -286,6 +286,8 @@ MCP 服务不区分调用方，都按本人记录（`answer` 记成本人，`emi
 
 Windows 用任务计划程序在本人登录后启动；通过 SSH 管理时仍用这个登录任务运行 Codex，避免它在 OpenSSH 会话中的沙箱启动限制（见 `INSTALL.md`）；`service install`、`service remove`、`update` 同样适用，更新会重启中台。Windows 自带的 Administrator 账号用「启动」文件夹代替登录任务，`service install` 会打印做法。安装见 `INSTALL.md`。
 
+Agent 不要在轮次里直接运行 `up` 重启派它来的这个中台：轮次结束或被停掉时，中台会跟着一起结束，`up` 会拒绝并说明原因。要用上新代码：装了登录服务的运行 `agent-autoloop service install`；Windows 用「启动」文件夹的，结束数据目录（默认 `%USERPROFILE%\.agent-autoloop`）里 `up.pid` 记着的进程，wscript 十秒后会用新代码再拉起；都没有的，请用户在自己的登录会话里启动。用临时数据目录起的测试中台不受这条限制。
+
 日志：Windows 在 `%USERPROFILE%\.agent-autoloop\logs\up.log`，macOS 在 `~/.agent-autoloop/logs/up.log`，Linux 运行 `journalctl --user -u agent-autoloop`。
 
 接插件先在专用测试中台验证：`agent-autoloop conformance <地址> --config <测试凭据文件>`。文件里的 `keys` 分别放来源、接单程序、通道、本人密钥；`eventType` 匹配测试规则，`answerer` 在测试通道的允许名单内。检查会写事件和卡片，不指向正在用的中台。协议类型在 `protocol/schema.json`。

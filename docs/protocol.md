@@ -211,7 +211,7 @@ GET /v1/work?claim=<这次领活的编号>&wait=50&running=7,8&capacity=1    Aut
 - 没活时最多等 `wait` 秒，新活一来立即返回。`running` 是手上在跑的，同时也是心跳。`capacity=0` 只报到、不领活。
 - 手上有活时可以每秒来问活、查取消。心跳最多一分钟记进日志一次，手上有几轮都只记一条；通道领卡片也一样。所以 `/v1/state` 的 `seenAt` 可能比最后一次来的时间早不到一分钟，“5 分钟没报”“10 分钟没连上”也可能因此提前不到一分钟判断；`online` 留了这一分钟的余量，记录后 3 分钟内都算在线。
 - 响应丢了，用同一个 `claim` 再来一次，拿回的是同一份活。
-- `cancel` 是要停掉的。Unix 接单程序先向整个进程组发停止信号，10 秒后仍有进程运行就强制结束；Windows 每轮运行在独立 Job Object 中，停止时结束整个子进程树。确认进程已停止后才交 `outcome: "cancelled"`，这个事项才放开。停止期间重启接单程序也继续这一步。要停的这一轮交回 `failed` 也算停了，不再重试。
+- `cancel` 是要停掉的。Unix 接单程序先向整个进程组发停止信号，10 秒后仍有进程运行就强制结束；Windows 每轮运行在独立 Job Object 中，停止时结束整个子进程树。确认进程已停止后才交 `outcome: "cancelled"`，这个事项才放开。停止期间重启接单程序也继续这一步。要停的这一轮交回 `failed` 也算停了，不再重试；`error` 照记，`why` 显示它，不写成“已停止”。
 
 拿到的是这一轮的全部；`token` 只对这一轮的这一次执行有效，`context` 由接单程序写成文件交给 Agent，都是资料。
 
@@ -369,13 +369,14 @@ GET /v1/cards/next?wait=50    Authorization: Bearer <通道的密钥>
 // Card：这张卡片现在的样子。内容创建后不变，只有状态会变
 { "id": 56, "version": 2, "ref": null, "kind": "ask", "state": "open",
   "title": "…", "text": "…", "options": ["…", "…"], "recommend": 0,
-  "choice": null, "answer": null, "by": null, "result": null, "link": null, "severity": "normal", "rule": "…" }
+  "choice": null, "answer": null, "by": null, "result": null, "link": null, "severity": "normal", "rule": "…", "lane": "#12" }
 ```
 
 - 通道必须先在 `rules.json` 的 `channels` 里登记。密钥有效但名字没登记，`GET /v1/cards/next` 返回 404，不会进入长轮询。
 - 通道可以配安静时段：`"channels": { "chat": { "quiet": { "from": "22:00", "to": "08:00" } } }`，按 `rules.json` 的时区，`from` 和 `to` 不能相同。安静时段里这个通道领不到普通卡片，`urgent` 的照领；时段结束后照常补发。时段结束不会主动叫醒正在长轮询的通道，最多等这一轮（50 秒）结束。安静时段里没领到的卡片不算发送尝试，放弃计时从第一次真正交出算起。
 - `severity` 是卡片想被看到的方式：`low` 的可以只记下不弹出（桌面通知就这样做），`urgent` 的在安静时段也照发。第三方通道插件按需取用。
 - `rule` 是创建这张卡片的规则或别处定时任务的名字，可能没有（比如中台自己的告警，标题就写着从哪来）。卡片从很多地方来，自带的飞书、桌面、Webhook 通道、卡片网页和 `agent-autoloop status` 都写明“来源：<rule>”，标题就是这个名字时不重复；自己写的通道也照这样。
+- `lane` 是卡片所在的事项，和 `/v1/state` 里的一样：写了 `parallel` 的规则是事件的 `subject`，别的规则和 `tell` 是空字符串。通道可以按它把卡片发回事项来的地方，比如来源在单聊里收到的任务，问题和结果也回那个单聊。它是对象，不是凭据：别的规则的回执可以用 `emits` 以同一来源发事件，本人 `run --subject` 也能写，回答和复查沿用原来的事项。所以通道只把认得的 `lane` 对到自己记过的去处（比如自己受理时记下的会话），不按它直接打开任意会话；发到哪里，回答都照样核对 `answerers` 和 `ref`。旧通道忽略这一项即可。
 - `ref` 是空的就发一条新的；不是空的就把那条改成现在的样子，改不了就直接报告。
 - 发完报告：`POST /v1/cards/56/delivered { "version": 2, "ref": "om_xxx" }`。没报告的过一分钟会再给你。**支持幂等键的平台，发新消息只用卡片编号，不带版本**（飞书改不动已经结束的卡片时另发一条，这一条才带版本）。平台不支持时无法保证去重，Webhook 模板可能在报告丢失后重发。
 - 发不出去：`POST /v1/cards/56/failed { "version": 2, "error": "…" }`。第一次发送隔得越来越久地重试，一小时后放弃（卡片还开着，`agent-autoloop status` 看得到）；通道一直没来领不算在内。
@@ -407,7 +408,7 @@ GET  /v1/metrics            Authorization: Bearer <本人的密钥>
 
 `channels` 里的 `online` 只说明通道程序还在来领卡片，不说明卡片送到了：最近一张卡片没送到时，这个通道多一项 `lastFailure`（`card`、`tries`、通道报的 `error`，`givenUp` 表示试满了一小时、已经放弃；卡片在送到前被结掉也不会再发），送到了或还没发过就没有这一项，`agent-autoloop doctor` 照它提醒。
 
-整份状态在同一个快照里读出，`seq` 是那时的日志序号：自己做看板的，先取状态，再从 `GET /v1/stream?after=<seq>` 接着读，不漏也不重。`cards`、`recentCards` 在这里多带两项：`lane` 是卡片所在的事项（写了 `parallel` 的规则是事件的对象，别的规则是空字符串），`about` 是提问时留给接着干的那一轮的说明。通道和卡片页拿不到这两项。`lines`、`runs`、`cards`、`recentCards` 的每一项还带规则的 `tags`（见上面规则一节）。旧客户端忽略这些字段即可。
+整份状态在同一个快照里读出，`seq` 是那时的日志序号：自己做看板的，先取状态，再从 `GET /v1/stream?after=<seq>` 接着读，不漏也不重。`cards`、`recentCards` 在这里多带两项：`lane` 是卡片所在的事项（写了 `parallel` 的规则是事件的对象，别的规则是空字符串），`about` 是提问时留给接着干的那一轮的说明。通道拿得到 `lane`，拿不到 `about`；卡片页两项都拿不到。`lines`、`runs`、`cards`、`recentCards` 的每一项还带规则的 `tags`（见上面规则一节）。旧客户端忽略这些字段即可。
 
 `GET /healthz` 不带密钥，返回 `{ "ok": true, "commit": "<中台运行的版本>" }`；`doctor`、服务状态和一致性检查都用它判断中台是否在线。
 

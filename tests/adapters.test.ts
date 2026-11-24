@@ -17,11 +17,14 @@
 // something other than what the event said. A built-in agent starts the program it finds, not the one its rules name,
 // so a wrapper that sends Claude Code to another service is never run. A service tier the rules name for Codex never
 // reaches its command line, so the run takes whatever tier the machine's own Codex config has that day. A program
-// missing for a moment, as while an update reinstalls it, stays missing until the worker restarts. A program a terminal
-// finds only because ~/.zshrc or ~/.bashrc puts its folder on PATH is missing for a worker launchd or systemd started.
+// missing for a moment, as while an update reinstalls it, stays missing until the worker restarts, and keeps handing out
+// a path it found after an update deleted that program. The Codex the desktop app installs is missed once an update
+// leaves PATH naming the folder it deleted, and a lookup that runs while that update empties the folder throws the
+// lookup out instead of skipping the folder. A program a terminal finds only because ~/.zshrc or ~/.bashrc puts its
+// folder on PATH is missing for a worker launchd or systemd started.
 // Claude at its usage limit doesn't say when it resets, so the hub keeps handing it rounds that fail within seconds.
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
@@ -31,8 +34,12 @@ process.env.PATH = `/nonexistent:${process.env.PATH}`;
 const { findProgram } = await import("../worker/agents.ts");
 // Command construction must also run on CI machines without Codex installed.
 const shell = process.env.SHELL;
-const lookup = join(setup("adapters"), "lookup.sh");
-writeFileSync(lookup, '#!/bin/sh\nprintf "%s\\n" /test/codex\n', { mode: 0o755 });
+const primed = setup("adapters");
+const lookup = join(primed, "lookup.sh");
+// A program a path names has to be there: the worker looks a cached one up again once the file it named is gone.
+const installed = join(primed, "codex");
+writeFileSync(installed, "", { mode: 0o755 });
+writeFileSync(lookup, `#!/bin/sh\nprintf "%s\\n" '${installed}'\n`, { mode: 0o755 });
 process.env.SHELL = lookup;
 findProgram("codex");
 if (shell === undefined) delete process.env.SHELL;
@@ -40,6 +47,7 @@ else process.env.SHELL = shell;
 type Adapter = import("../worker/agents.ts").Adapter;
 const claude: Adapter = (await import("../plugins/claude/agent.ts")).default;
 const codex: Adapter = (await import("../plugins/codex/agent.ts")).default;
+const { inTheApp } = await import("../plugins/codex/agent.ts");
 const command: Adapter = (await import("../plugins/command/agent.ts")).default;
 const dsh: Adapter = (await import("../plugins/dsh/agent.ts")).default;
 const zcode: Adapter = (await import("../plugins/zcode/agent.ts")).default;
@@ -451,6 +459,54 @@ test("a program missing at one lookup is found at the next once it's back", () =
   assert.equal(
     findProgram("reinstalled-agent", () => [program]),
     program,
+  );
+});
+
+test("a program the app moved is found where it keeps it now, newest first", () => {
+  const local = setup("adapters-codex-app");
+  const root = join(local, "OpenAI", "Codex", "bin");
+  const yesterday = join(root, "5b4923dff14fbe66");
+  const today = join(root, "89cd6612adc9c8d8");
+  const helpersOnly = join(root, "6b3391ee968b4b80");
+  for (const folder of [yesterday, today, helpersOnly]) mkdirSync(folder, { recursive: true });
+  writeFileSync(join(yesterday, "codex.exe"), "");
+  writeFileSync(join(today, "codex.exe"), "");
+  // The app keeps its other programs in these folders too, and a folder without codex.exe isn't where codex is: the
+  // same as one an update took codex.exe out of after the list was read, which is left out rather than thrown.
+  writeFileSync(join(helpersOnly, "rg.exe"), "");
+  utimesSync(join(yesterday, "codex.exe"), new Date("2026-11-21T00:12:00Z"), new Date("2026-11-21T00:12:00Z"));
+  utimesSync(join(today, "codex.exe"), new Date("2026-11-21T00:13:00Z"), new Date("2026-11-21T00:13:00Z"));
+  const usual = process.env.LOCALAPPDATA;
+  process.env.LOCALAPPDATA = local;
+  try {
+    assert.deepEqual(
+      inTheApp().slice(0, 2),
+      [join(today, "codex.exe"), join(yesterday, "codex.exe")],
+      "the newest folder the app kept a codex.exe in comes first",
+    );
+  } finally {
+    if (usual === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = usual;
+  }
+});
+
+test("a program moved while the worker runs is looked up again", () => {
+  const folder = setup("adapters-moved");
+  const before = join(folder, "5b4923dff14fbe66", "moved-agent");
+  mkdirSync(join(folder, "5b4923dff14fbe66"), { recursive: true });
+  writeFileSync(before, "", { mode: 0o755 });
+  assert.equal(
+    findProgram("moved-agent", () => [before]),
+    before,
+  );
+  const after = join(folder, "89cd6612adc9c8d8", "moved-agent");
+  mkdirSync(join(folder, "89cd6612adc9c8d8"), { recursive: true });
+  writeFileSync(after, "", { mode: 0o755 });
+  unlinkSync(before);
+  assert.equal(
+    findProgram("moved-agent", () => [before, after]),
+    after,
+    "a cached path that's gone isn't an answer",
   );
 });
 

@@ -45,7 +45,11 @@ export function formatWhy(id: number, facts: Fact[], raw = false) {
     }
     if (row.link && row.link === links.get(row.issued) && row.link !== before?.link) add(fact.at, `会话：${row.link}`);
     if (row.finished_at && row.finished_at !== before?.finished_at) {
-      add(row.finished_at, `结束：${row.summary || (row.state === "cancelled" ? "已停止" : "没有填写结论")}`);
+      add(
+        row.finished_at,
+        // An error that came with this end is its reason; one left from an earlier attempt was told when it came.
+        `结束：${row.summary || (row.error !== before?.error && row.error) || (row.state === "cancelled" ? "已停止" : "没有填写结论")}`,
+      );
     }
     if (receipt && row.state === "queued" && row.attempts !== before?.attempts) {
       add(fact.at, `本次未完成：${row.error}；重试时间 ${time(row.not_before)}`);

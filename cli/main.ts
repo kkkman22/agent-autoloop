@@ -7,7 +7,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { hubClient } from "../protocol/client.ts";
 import { parseRules } from "../protocol/rules.ts";
-import { CONFIG_FILE, readConfig, writeConfig, type Config } from "../host/config.ts";
+import { CONFIG_FILE, parseListen, readConfig, writeConfig, type Config } from "../host/config.ts";
 import { HOME, RULES_FILE } from "../host/home.ts";
 import { findOnPath, psQuote } from "../host/command.ts";
 import { privateDirectory } from "../host/files.ts";
@@ -359,6 +359,14 @@ async function init(args: string[]) {
   // `init -p 4000` would otherwise install on the default port in silence.
   if (rest.length) return fail(`不认识的参数：${rest.join(" ")}\n\n${INIT_USAGE}`);
   if (existsSync(CONFIG_FILE)) return fail(`已经装过了：${CONFIG_FILE}`);
+  if (named.port === true) return fail(INIT_USAGE);
+  const portText = text(named.port) ?? "3350";
+  let port: number;
+  try {
+    port = parseListen(`127.0.0.1:${portText}`).port;
+  } catch {
+    return fail(`--port 要写 1 到 65535 之间的整数端口：${portText}`);
+  }
   privateDirectory(HOME);
   mkdirSync(path.join(HOME, "try"), { recursive: true });
   const hostName = hostname()
@@ -372,7 +380,6 @@ async function init(args: string[]) {
         "或者用 --command 指定别的命令行 Agent，比如 --command 'hermes chat -Q -q {prompt}'",
     );
   }
-  const port = text(named.port) ?? "3350";
   const url = `http://127.0.0.1:${port}`;
   const ownRules = !existsSync(RULES_FILE);
   if (ownRules) {

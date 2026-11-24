@@ -657,10 +657,13 @@ function finish(draft: Draft, id: number, token: string, given: unknown) {
   let rejected: Rejected[] = [];
   // Told to stop, one that failed first has stopped all the same: trying again would start what the owner ended.
   if (result.outcome === "cancelled" || (result.outcome === "failed" && run.cancel_at)) {
+    // A failure here is the worker saying it couldn't see the stop finish: that, not "stopped", is what happened.
+    const error = result.outcome === "failed" ? result.error?.trim().replace(/[。.]+$/, "") : undefined;
     put(draft, "runs", id, {
       state: "cancelled",
       finished_at: draft.at,
       summary: result.summary ?? "",
+      ...(error ? { error } : {}),
       cancel_at: null,
     });
     clearFiredTimers(draft, run);
@@ -752,7 +755,11 @@ function nextCard(draft: Draft, channel: string) {
     }
     const attempt = { tries: delivery.tries + 1, first_try_at: firstTry ?? draft.at, not_before: iso(now + MINUTE) };
     put(draft, "deliveries", key, { card_id: card.id, channel, ...attempt });
-    return cardView(card, draft.env, delivery.ref, draft.rules.channels[channel]?.links === true);
+    // The lane lets a channel send the card back to where its matter came from; the card page doesn't get it.
+    return {
+      ...cardView(card, draft.env, delivery.ref, draft.rules.channels[channel]?.links === true),
+      lane: card.lane,
+    };
   }
   return null;
 }

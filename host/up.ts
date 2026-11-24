@@ -93,6 +93,16 @@ async function keepRunning(say: (line: string) => void, run: () => Promise<unkno
 }
 
 export async function up() {
+  // Everything an Agent starts belongs to its turn: Windows ends the turn's job when the turn ends, and Unix signals the
+  // whole process group when it stops one. Restarting the hub that runs the turn from inside it would take that hub along.
+  // A throwaway hub on another home, as tests and acceptance runs start, goes with the turn as it should.
+  const { AGENT_AUTOLOOP_RUN: run, AGENT_AUTOLOOP_CONTEXT: context } = process.env;
+  const turn = run && context ? path.relative(HOME, context) : "";
+  if (turn && !turn.startsWith("..") && !path.isAbsolute(turn))
+    throw new Error(
+      `这是在第 ${run} 轮 Agent 里启动这个中台：这一轮结束或被停掉时，中台可能跟着一起结束，通道也会断。` +
+        `要重启：装了登录服务的运行 agent-autoloop service install；用「启动」文件夹的，结束 ${path.join(HOME, "up.pid")} 里记着的进程，十秒后会自动用新代码拉起；都没有的，请本人在自己的登录会话里启动。`,
+    );
   const config = readConfig();
   mkdirSync(HOME, { recursive: true, mode: 0o700 });
   const unlock = lock();

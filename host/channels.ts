@@ -20,6 +20,7 @@ export type Card = {
   /** How much the card wants to be seen: a quiet channel holds everything but `urgent`, and `low` need not pop up. */
   severity?: "low" | "normal" | "urgent";
   rule?: string;
+  lane?: string;
 };
 export type ChannelContext = {
   hub: Pick<Hub, "nextCard" | "delivered" | "failed" | "answer">;

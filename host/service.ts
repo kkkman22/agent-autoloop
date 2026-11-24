@@ -49,7 +49,7 @@ export function startupShortcut(folder = "[Environment]::GetFolderPath('Startup'
 export const startupInstead = () =>
   "可以改用「启动」文件夹：在 PowerShell 里运行下面这行，以后登录时由桌面以普通权限拉起中台，退出后照样自动重启，" +
   "现在注销再登录一次就开始跑。这样起的中台不算系统服务：doctor 会说服务没在跑；重新运行安装器更新时加 --no-service，" +
-  "不然它又去建登录任务；更新之后注销再登录一次才用上新版。\n\n" +
+  "不然它又去建登录任务；更新之后结束数据目录里 up.pid 记着的进程，十秒后就用上新版（注销再登录也行）。\n\n" +
   startupShortcut();
 
 function installWindowsService() {

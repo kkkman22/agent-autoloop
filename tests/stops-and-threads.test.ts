@@ -1,5 +1,5 @@
 // What the owner stopped stays stopped, and what comes back to a thread comes back to that thread. Failure cases: a run told
-// to stop hands in a failure and is queued again, so it starts again minutes later; the card saying it will try again stays
+// to stop hands in a failure and is queued again, so it starts again minutes later, or loses the reason it gave; the card saying it will try again stays
 // open once it's stopped, and needs clearing by hand; after a rule stops running in parallel, an answer or a due check starts a
 // run on another thread, whose context has neither the answer nor the check, so the question is never really answered.
 import assert from "node:assert/strict";
@@ -65,6 +65,18 @@ test("a run told to stop that hands in a failure stays stopped, and doesn't star
   assert.equal(it.run(job.run).finished_at !== null, true);
   it.pass(120);
   assert.equal(it.act("claimNext", "w1", "c2"), null);
+  it.check();
+});
+
+test("a stop nobody saw finish keeps the reason the worker gave, and isn't told as stopped", () => {
+  const it = hub();
+  it.act("ingest", "app", feedback);
+  const job = it.act("claimNext", "w1", "c1");
+  it.act("cancel", job.run);
+  const unseen = "停止信号发出后没能确认进程组已结束：这一轮按没跑成记，不再重试，进程可能还在。";
+  it.act("finish", job.run, job.token, { outcome: "failed", error: unseen });
+  assert.equal(it.run(job.run).state, "cancelled");
+  assert.match(String(it.run(job.run).error), /没能确认进程组已结束/, "the only word on what happened is dropped");
   it.check();
 });
 

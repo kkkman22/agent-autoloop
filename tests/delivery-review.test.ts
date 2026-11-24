@@ -35,8 +35,9 @@ function reviewPullRequest(
   config: ReturnType<typeof settings>,
   source: { agent: string | null; required: boolean } = { agent: null, required: false },
   budget?: () => number,
+  body = "",
 ) {
-  const pr = { number: 7, head: { sha: head }, labels: source.required ? [{ name: "deliver-review" }] : [], body: "" };
+  const pr = { number: 7, head: { sha: head }, labels: source.required ? [{ name: "deliver-review" }] : [], body };
   const states = new Map<string, any[]>();
   if (source.agent)
     states.set(head, [
@@ -168,6 +169,8 @@ function project(review: (stand: (name: string) => string[]) => object = () => (
     git,
     identity,
     commit,
+    config,
+    snapshot,
     write: (name: string, content: string) => {
       mkdirSync(join(repo, name, ".."), { recursive: true });
       writeFileSync(join(repo, name), content);
@@ -219,6 +222,18 @@ test("a reviewer that failed says why in whole characters, however its output wa
     assert.ok(error.message.isWellFormed(), error.message);
     assert.equal(error.message, `审查没有完成：${"x".repeat(999)}`);
     return true;
+  });
+});
+test("a reviewer that stops before reading a long prompt fails the review, not the run", async () => {
+  const failing = [process.execPath, "-e", "process.stderr.write('no model'); process.exit(1)"];
+  using p = project(() => ({ command: failing }));
+  p.write("app.ts", "export const version = 2;\n");
+  const head = p.commit();
+  // A pull request description at GitHub's limit, with the review points and rules on top of it, is larger than the pipe
+  // a reviewer that has already exited no longer reads.
+  const body = "x".repeat(64 * 1024);
+  await assert.rejects(reviewPullRequest(p.repo, p.snapshot, p.main, head, p.config, undefined, undefined, body), {
+    message: "审查没有完成：no model",
   });
 });
 test("a Chinese path still matches the settings", async () => {
