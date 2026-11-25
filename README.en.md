@@ -228,7 +228,7 @@ Apple M6, Node 24.22.1. Each write is a separate request, acknowledged only afte
 | Held-back heartbeat p99 and empty claim P50, 5,000 queued |       1.3 / 0.4 ms |
 | First claim after 50 capacity polls wake for one event    |           19.96 ms |
 | Startup and status summary at 55k facts                   |  80.5 ms / 1.54 ms |
-| Kernel lines (with comments and blanks)                   |              2,684 |
+| Kernel lines (with comments and blanks)                   |              2,695 |
 | Runtime dependencies                                      |                  0 |
 
 Ingest, claims, `why` and the status summary no longer slow down as history grows: the summary and `/v1/metrics` read derived counters and delivery indexes instead of scanning history, and with a deep queue only rounds actually waiting out a backoff enter the due table, while a claim with every lane taken reads no queue at all. The log and indexes keep using disk as history grows. The first start after a format change rebuilds from the log, which took 2.0 seconds for 55,000 facts. [Full numbers and method](docs/protocol.md#历史增长实测) (in Chinese).
@@ -265,6 +265,7 @@ For automated workloads, providers generally recommend using API keys rather tha
 ## Documentation
 
 - [Installation guide](INSTALL.md)
+- [Feature usage guide](docs/user-guide.md) (in Chinese)
 - [Configuration & delivery pipeline manual](skills/agent-autoloop/SKILL.md)
 - [Writing plugins](docs/plugins.md)
 - [Full HTTP protocol specification](docs/protocol.md)

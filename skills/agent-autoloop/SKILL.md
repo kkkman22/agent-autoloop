@@ -50,7 +50,7 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 - 默认的先问清单是 `askFirst`，用户说什么事必须先问他，就改这里。
 - 用户在别的地方定时跑的任务（Claude、Codex 应用里），写进 `elsewhere`，只在 `agent-autoloop status` 里列出来；它们要找用户时运行 `agent-autoloop tell <编号> --task <任务名>`，内容从标准输入传。要用户拍板的，给这个任务写上 `cwd` 和 `skill` 或 `prompt`，任务里运行 `agent-autoloop ask --task <任务名>`，标准输入传回执那样的 `ask`：卡片带选项，用户点了，中台叫醒它的 Agent 在 `cwd` 照 `skill`、`prompt` 接着做，回答在这一轮资料文件的 `answers` 里。
 
-现成场景和内置插件从 [README](../../README.md#拿来即用的场景模板)进入，开发示例见[写插件](../../docs/plugins.md)。用户想接自动化时先从例子改，不要从零写：`examples/recipes/` 里有早报（`morning-brief`）、处理 GitHub issue（`github-issues`）、线上报错（`ops-alerts`）、反馈处理（`feedback`）、网站巡检（`website-watch`）、飞书周报与业务摘要（`feishu-brief`）和 Claude 浏览器交接（`browser-handoff`），每个都有规则、Skill 和写明权限原因的 README。反馈、巡检、飞书摘要和浏览器交接默认飞书本人私聊；按模板说明替换虚构标识，业务资料留在私有目录，读取用本人身份，通知用机器人身份。要写新的 Agent、通道或事件插件，看教程 `docs/plugins.md` 和最小例子 `examples/plugins/`。
+现成场景和内置插件从 [README](../../README.md#拿来即用的场景模板)进入，开发示例见[写插件](../../docs/plugins.md)。用户想接自动化时先从例子改，不要从零写：`examples/recipes/` 里有早报（`morning-brief`）、处理 GitHub issue（`github-issues`）、线上报错（`ops-alerts`）、反馈处理（`feedback`）、网站巡检（`website-watch`）、飞书周报与业务摘要（`feishu-brief`）、Jira 更新通知钉钉（`jira-watch`）、收件箱分诊（`inbox-triage`）和 Claude 浏览器交接（`browser-handoff`），每个都有规则、Skill 和写明权限原因的 README。反馈、巡检、飞书摘要和收件箱分诊默认飞书本人私聊；按模板说明替换虚构标识，业务资料留在私有目录，读取用本人身份，通知用机器人身份。要写新的 Agent、通道或事件插件，看教程 `docs/plugins.md` 和最小例子 `examples/plugins/`。
 
 ## 写处理手册
 
@@ -145,7 +145,7 @@ Claude 主任务要委托 Codex 操作网页时，从 `examples/recipes/browser-
 
 ## 交付流水线
 
-需要这台接单电脑已有 `gh` 登录和审查程序。`delivery` 进程只执行本机插件和 main 指定的审查命令，PR 不检出、不在本机跑代码。先把项目的 `ops/delivery.json` 和审查要点放到 main：
+需要这台接单电脑已有 `gh` 登录和审查程序。`delivery` 进程只执行本机插件和 main 指定的审查命令，PR 不检出、不在本机跑代码。GitLab 项目同样接法：接单电脑装已登录的 `glab`，设 `AGENT_AUTOLOOP_DELIVERY_HOST=gitlab`，MR 的草稿是标题前缀、完整检查是流水线（manual/skipped 只算等待），细节见 `docs/protocol.md` 的交付插件一节。先把项目的 `ops/delivery.json` 和审查要点放到 main：
 
 ```json
 {
@@ -193,7 +193,7 @@ PR 改了 `.github/**`、`scripts/**`、`tests/**`、`package.json`、`package-l
 gh api repos/owner/app/statuses/<完整提交编号> -f context=delivery-agent/<PR 编号> -f state=success -f description=claude
 ```
 
-只认 `trusted` 里的 GitHub 账号写的状态，填账号的数字 ID（`gh api user --jq .id`）。声明跟着提交走：再推提交要重新声明，没声明就走默认审查；同步 main 产生的干净合并沿用原来的声明。要撤回，在同一个提交上再写一条 `state=failure` 的同名状态。PR 说明、标签和分支名都不算声明。
+只认 `trusted` 里的 GitHub 账号写的状态，填账号的数字 ID（`gh api user --jq .id`）。GitLab 的提交状态不带作者，`delivery-agent` 声明和 `delivery-owner` 放行都按内容核对：要把接单电脑 runner 的数字 id 也写进 `trusted`，这两样在 GitLab 上才生效。声明跟着提交走：再推提交要重新声明，没声明就走默认审查；同步 main 产生的干净合并沿用原来的声明。要撤回，在同一个提交上再写一条 `state=failure` 的同名状态。PR 说明、标签和分支名都不算声明。
 
 `check.job` 写 job 的名字；矩阵 job（名字像 `check (ubuntu-latest)`）算同一个 job，每一项都要成功。检查工作流的触发类型要带 `ready_for_review`：草稿转 ready 后，只接受这之后新跑的一次检查，而 `pull_request` 默认不在转 ready 时触发。写成 `on: { pull_request: { types: [opened, synchronize, reopened, ready_for_review] } }`。
 
@@ -280,7 +280,7 @@ MCP 服务不区分调用方，都按本人记录（`answer` 记成本人，`emi
 
 中台按调用者限量：每把密钥、每一轮、每个 Webhook 来源各算各的，对不上的密钥合起来算一个。超了回 429，接单程序会留着结果稍后再交。正常用量碰不到默认上限；真碰到了（比如一个来源一次推几百条），在 `config.json` 的 `hub.limits` 里调大 `perMinute`、`burst`、`inFlight` 或 `waiting`，再 `agent-autoloop service install` 重启。中台日志里的 `limited <调用者>` 说明是谁、超了哪一项。通道插件一启动就退出时会越等越久再重启，最长 5 分钟，日志里能看到原因。
 
-服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。`agent-autoloop update`、再跑一遍安装命令和 `service install` 都不碰它，只提示你自己运行 `systemctl restart`，运行后才会用上新版。
+服务器上自己写的系统级 systemd unit，名字要和 `agent-autoloop service install` 用的一样（默认 `agent-autoloop`），`doctor` 才认得出。`agent-autoloop update`、再跑一遍安装命令和 `service install` 都不碰它，只提示你自己运行 `systemctl restart`，运行后才会用上新版。
 
 ## 日志与恢复
 
