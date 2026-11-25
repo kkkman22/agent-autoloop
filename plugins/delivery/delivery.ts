@@ -59,6 +59,25 @@ export class DeliveryRefusal extends Error {
 
 export class DeliverySuperseded extends Error {}
 
+/** GitHub has the full check and it is going: only GitHub's own time limits end it, so outlasting a round isn't a failure. */
+export class ChecksStillRunning extends Error {
+  readonly head: string;
+
+  constructor(head: string, waited: unknown) {
+    super(waited instanceof Error ? waited.message : String(waited), { cause: waited });
+    this.head = head;
+  }
+}
+
+const newestFirst = (a: any, b: any) => b.id - a.id;
+
+/** The change's own newest workflow run: only one started by the change can wait out or authorize its checks. */
+async function newestCheck(head: string, config: Settings, io: DeliveryIO) {
+  const query = `head_sha=${head}&event=pull_request&per_page=100`;
+  const { workflow_runs: runs } = await io.api(`actions/workflows/${config.check.workflow}/runs?${query}`);
+  return runs.filter((run: any) => run.head_sha === head && run.event === "pull_request").sort(newestFirst)[0];
+}
+
 const FINDINGS = "审查发现问题，修复后推新提交才会重审";
 
 export const status = (
@@ -429,7 +448,14 @@ export async function deliver(
             if (!auto || !change.autoMerge) throw new Error("尚未确认合并，稍后继续核实");
           }
         }
-        await io.wait();
+        try {
+          await io.wait();
+        } catch (error) {
+          // A finished run waits too when its required job was skipped or isn't there; only one still going ends on its own.
+          const going = state === "waiting" ? await newestCheck(head, config, io) : undefined;
+          if (going && going.id > after && going.status !== "completed") throw new ChecksStillRunning(head, error);
+          throw error;
+        }
       }
     } catch (error) {
       await stopAuto();

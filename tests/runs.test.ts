@@ -13,7 +13,7 @@
 // has stopped; a retry doesn't get its own session back; retries overwrite usage or replayed results count it twice; a run
 // that keeps failing goes on spending for good, stops without telling the owner, or takes newer events down with it.
 // A report of starting is taken whatever it holds, however long; stopping a run that isn't there or has ended crashes,
-// or marks it as stopping.
+// or marks it as stopping. A round nobody has heard from is refused as though it had ended, or stays that way for good.
 // Reloading rules must not combine an old agent with a new folder, or change an already claimed job and its worker.
 // A rule moved to another group counts what it already has going in its old group, so it runs twice at once (issue #362).
 // Rule and agent limits must hold across different subjects and rules, without losing their separate queued work.
@@ -638,6 +638,33 @@ test("stopping a run that isn't there, or has already ended, is refused and chan
     job.run,
   ])!;
   assert.deepEqual([row.state, row.cancel_at], ["done", null]);
+});
+
+test("stopping a round nobody has heard from ends it instead of saying it had already ended", () => {
+  clean();
+  ingest("ops", alert("u"), at(0));
+  const job = claim("w1", at(0))!;
+  heartbeat("w1", [job.run], at(0));
+  // The worker keeps coming back but no longer lists this round, so past the lease the hub stops knowing if it ran.
+  heartbeat("w1", [], at(6));
+  sweep(at(6));
+  assert.equal(state(job.run), "unknown");
+  assert.deepEqual(cancels("w1"), []);
+  cancel(job.run, at(7));
+  const row = one<{ state: string; summary: string | null; finished_at: string | null }>(
+    "SELECT state, summary, finished_at FROM runs WHERE id = ?",
+    [job.run],
+  )!;
+  assert.equal(row.state, "cancelled");
+  assert.match(row.summary ?? "", /没有回音/);
+  assert.ok(row.finished_at);
+  // The card that said nobody knew how it went is closed, and nothing is left waiting for a worker that stopped reporting it.
+  assert.equal(told().find((card) => card.key === `run:${job.run}:unknown`)?.state, "closed");
+  assert.deepEqual(cancels("w1"), []);
+  // It stays ended: later sweeps can't put it back to unknown, and its token no longer finishes anything.
+  sweep(at(24 * 60));
+  assert.equal(state(job.run), "cancelled");
+  assert.throws(() => finish(job.run, job.token, { outcome: "done", summary: "后来交上来了" }, at(8)), AuthError);
 });
 
 test("a report of starting is bounded, and a refused one changes nothing", () => {

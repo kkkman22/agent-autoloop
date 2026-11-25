@@ -21,7 +21,8 @@
 // survives a failed recheck of that toolkit; a lost auto-merge response triggers a second mutation; a lost branch-update
 // response ignores the already-synchronized head instead of continuing the same handoff; an accepted check with no jobs
 // waits through five half-hour retries, or is restarted repeatedly, and a draft or manual run then authorizes merging;
-// a missing ready run or required job never triggers recovery, or recovery reuses the first ready time and refuses too soon.
+// a missing ready run or required job never triggers recovery, or recovery reuses the first ready time and refuses too soon;
+// a finished check whose required job was skipped or never existed is waited on for good as though it were still running.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -29,6 +30,7 @@ import {
   fullCheck,
   waitLive,
   disableAuto,
+  ChecksStillRunning,
   DeliveryRefusal,
   type DeliveryIO,
 } from "../plugins/delivery/delivery.ts";
@@ -897,6 +899,20 @@ test("an old check with a queued required job keeps waiting for a machine withou
     assert.equal((await deliver("example/app", 1, io)).merged, "merged");
     assert.equal(waits, 1);
     assert.ok(!state.writes.some((path: string) => /\/(draft|ready)$/.test(path)));
+  }
+});
+
+test("a finished check that can never pass is not waited on as one still running", async () => {
+  for (const jobs of [
+    [{ name: "check", status: "completed", conclusion: "skipped" }],
+    [{ ...passedJob, name: "lint" }],
+  ]) {
+    const { io, state } = queuedFullCheck("completed", 60 * 60_000, jobs);
+    state.checkRuns[0].conclusion = "success";
+    const thrown = await deliver("example/app", 1, io).catch((error) => error);
+    assert.match(String(thrown), /still waiting/);
+    assert.ok(!(thrown instanceof ChecksStillRunning));
+    assert.equal(state.merges, 0);
   }
 });
 

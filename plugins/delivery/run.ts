@@ -7,10 +7,29 @@ import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { createIO as createGitlabIO, gitlabApi } from "./gitlab.ts";
 import { createIO as createGithubIO, gh, isGitHubHiccup, type DeliveryOptions } from "./github.ts";
-import { deliver, DeliveryRefusal, DeliverySuperseded, disableAuto, status, type DeliveryIO } from "./delivery.ts";
+import {
+  ChecksStillRunning,
+  deliver,
+  DeliveryRefusal,
+  DeliverySuperseded,
+  disableAuto,
+  status,
+  type DeliveryIO,
+} from "./delivery.ts";
 import { hostFor } from "./host.ts";
 import { deliveryReceipt, question, receiptBlock, subjectNumber } from "./input.ts";
-import { hasLabel, retryHandoff, retryState, runHook, tellQuestion, tellReturn, unattendedFailure } from "./handoff.ts";
+import {
+  hasLabel,
+  retryHandoff,
+  retryState,
+  runHook,
+  tellQuestion,
+  tellReturn,
+  unattendedFailure,
+  waitHandoff,
+} from "./handoff.ts";
+
+const STILL_RUNNING = "完整检查还在跑，一分钟后接着等";
 
 const platform = (): "github" | "gitlab" =>
   process.env.AGENT_AUTOLOOP_DELIVERY_HOST === "gitlab" ? "gitlab" : "github";
@@ -115,6 +134,10 @@ async function handoff(
     return { text: result.summary, exit: result.merged || result.reviewOnly ? undefined : 2 };
   } catch (error) {
     if (error instanceof DeliverySuperseded) return { text: error.message, exit: 2 };
+    if (error instanceof ChecksStillRunning) {
+      await io.report?.("retrying", error.head, { detail: "checks" });
+      return { text: STILL_RUNNING, retry: waitHandoff(timers, error.head, Date.now(), io.checkRecovery) };
+    }
     if (error instanceof DeliveryRefusal) {
       head = error.head ?? head;
       try {
@@ -162,7 +185,6 @@ async function handoff(
 
 export async function run(repo: string, context: Context, testLocalHealth = false, options: Options = {}) {
   const number = subjectNumber(repo, context);
-  clearAbandonedFolders();
   const folder = mkdtempSync(join(tmpdir(), "agent-autoloop-delivery-"));
   // A stop that flattens the process never reaches the finally below: take the folder with us on the way out.
   const going = () => {
@@ -188,6 +210,8 @@ export async function run(repo: string, context: Context, testLocalHealth = fals
       ? createGitlabIO(repo, folder, { report, reviewStatus: options.reviewStatus })
       : createGithubIO(repo, folder, { ...options, report });
   const io = makeIO();
+  // Cleanup reads the clock too, so it comes after the io takes the round's first read of it.
+  clearAbandonedFolders();
   try {
     if (options.notifyCommand || options.direct) {
       if (platform() === "gitlab") throw new Error("GitLab 交付不支持 --notify-command 和 --pr 直连");
@@ -222,6 +246,8 @@ export async function run(repo: string, context: Context, testLocalHealth = fals
       return deliveryReceipt(number, result, hasLabel(issue, "deliver-attended"));
     } catch (error) {
       if (error instanceof DeliverySuperseded) return error.message;
+      if (error instanceof ChecksStillRunning)
+        return `${STILL_RUNNING}\n${receiptBlock({ later: [waitHandoff([], error.head)] })}`;
       const change = await hostFor(io, repo).change(number);
       if (change.autoMerge) await disableAuto(number, io, repo);
       await status(io, change.headSha, "delivery", "failure", (error as Error).message, repo);

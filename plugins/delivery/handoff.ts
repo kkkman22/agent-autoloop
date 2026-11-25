@@ -28,6 +28,27 @@ export function retryState(timers: Timer[]): RetryState | undefined {
   return saved ? JSON.parse(saved) : undefined;
 }
 
+function carried(timers: Timer[], head: string, checkRecovery?: DeliveryIO["checkRecovery"]) {
+  const previous = retryState(timers);
+  const count = previous?.head === head ? previous : { head, github: 0, execution: 0 };
+  if (checkRecovery?.head === head) count.checkAfter = checkRecovery.after;
+  return count;
+}
+
+/** A full check still going isn't a failed try: look again in a minute with the counts as they were. */
+export function waitHandoff(
+  timers: Timer[],
+  head: string,
+  now = Date.now(),
+  checkRecovery?: DeliveryIO["checkRecovery"],
+) {
+  return {
+    key: retryKey,
+    at: new Date(now + retryInterval).toISOString(),
+    about: JSON.stringify(carried(timers, head, checkRecovery)),
+  };
+}
+
 export function retryHandoff(
   timers: Timer[],
   head: string,
@@ -36,9 +57,7 @@ export function retryHandoff(
   canReturn = true,
   checkRecovery?: DeliveryIO["checkRecovery"],
 ) {
-  const previous = retryState(timers);
-  const count = previous?.head === head ? previous : { head, github: 0, execution: 0 };
-  if (checkRecovery?.head === head) count.checkAfter = checkRecovery.after;
+  const count = carried(timers, head, checkRecovery);
   const kind = hiccup ? "github" : "execution";
   const limit = hiccup ? 60 : 5;
   count[kind] = Math.min(count[kind] + 1, limit);

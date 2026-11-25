@@ -11,6 +11,8 @@ import { readSharedPolicy, reviewDelivery, ROUND_BUDGET_MS } from "./review.ts";
 const LONGEST_WAIT = 1800000;
 // A run GitHub took but never started counts as stalled after this long.
 const STALL = 10 * 60_000;
+// Several deliveries share one account's 5,000 requests an hour, and a full check loop asks three things each time round.
+const POLL = 30_000;
 class GitHubHiccup extends Error {}
 export function isGitHubHiccup(error: unknown): boolean {
   return error instanceof GitHubHiccup || (error instanceof Error && !!error.cause && isGitHubHiccup(error.cause));
@@ -324,7 +326,7 @@ export function createIO(repo: string, folder: string, options: DeliveryOptions 
     live: liveRelease,
     async wait() {
       if (Date.now() - started > LONGEST_WAIT) throw new Error("等待超过半小时，保留远端状态，稍后继续核实");
-      await setTimeout(5000);
+      await setTimeout(POLL);
     },
   };
 }

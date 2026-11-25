@@ -25,7 +25,7 @@ import {
   untilAnswering,
 } from "../host/service.ts";
 import { versionLine } from "../host/version.ts";
-import { flags, text, type Flags } from "./flags.ts";
+import { BOOLEAN_FLAGS, flags, text, type Flags } from "./flags.ts";
 import { printable, printer } from "./plain-text.ts";
 import { addPlugin, pluginReport, plugins } from "./plugins.ts";
 import { rules } from "./rules.ts";
@@ -233,8 +233,11 @@ function refuseUnknownFlags(args: string[], { flags: known, usage }: { flags: st
     console.log(usage);
     process.exit(0);
   }
-  const unknown = Object.keys(flags(args).named).filter((name) => !known.includes(name));
+  const { named } = flags(args);
+  const unknown = Object.keys(named).filter((name) => !known.includes(name));
   if (unknown.length) fail(`不认识的参数：${unknown.map((name) => `--${name}`).join("、")}\n\n${usage}`);
+  const badBool = Object.entries(named).find(([name, value]) => BOOLEAN_FLAGS.has(name) && value !== true);
+  if (badBool) fail(`--${badBool[0]} 不接参数值\n\n${usage}`);
 }
 
 const client = (key: string, config = readConfig()) => hubClient(config.url, key);
@@ -834,12 +837,11 @@ function runOf(word: string | undefined, usage: string) {
 }
 
 async function why(args: string[]) {
-  const id = runOf(
-    args.find((arg) => !arg.startsWith("--")),
-    "用法：agent-autoloop why <第几轮> [--json]",
-  );
+  const { named, rest } = flags(args);
+  if (rest.length !== 1) return fail(TAKES.why.usage);
+  const id = runOf(rest[0], TAKES.why.usage);
   const facts = await ownerClient().why(id);
-  if (args.includes("--json")) return console.log(JSON.stringify(facts, null, 2));
+  if (named.json !== undefined) return console.log(JSON.stringify(facts, null, 2));
   const { formatWhy } = await import("./why.ts");
   console.log(formatWhy(id, facts, args.includes("--raw")));
 }

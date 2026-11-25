@@ -4,6 +4,7 @@
 // of rounds is cut off at the first page of 60, or a run stuck in the queue since long ago ends the paging early.
 // A run created before the reporting window can finish today behind many old completed runs. Tokens read from a cache, a
 // small part of the price, aren't told apart, so a day mostly served from cache reads as many times what it cost.
+// A historical page loses usage and retry counts from runs outside that page.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -16,6 +17,7 @@ import { setup } from "./helpers.ts";
 import { spendLines } from "../cli/spend.ts";
 import { spendingOf } from "../host/state.ts";
 import { dayStart } from "../kernel/cron.ts";
+import { hubClient } from "../protocol/client.ts";
 
 const home = setup("status-cost");
 const now = Date.parse("2026-11-03T02:00:00Z"); // 10:00 in Asia/Shanghai
@@ -102,13 +104,9 @@ test("status includes runs beyond the first page, including old runs that finish
     server.close();
     hub.db.close();
   });
-  writeFileSync(
-    join(home, "config.json"),
-    JSON.stringify({
-      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-      owner: hub.addKey("owner", "reader"),
-    }),
-  );
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const owner = hub.addKey("owner", "reader");
+  writeFileSync(join(home, "config.json"), JSON.stringify({ url, owner }));
   const clock = Date.now();
   const DAY = 86400_000;
   const round = (id: string, at: number, usage: object) => {
@@ -130,6 +128,26 @@ test("status includes runs beyond the first page, including old runs that finish
   const lines = stdout.split("\n");
   assert.match(lines[0], /^等你 /);
   assert.deepEqual(lines.slice(1, 3), ["今天      1 轮 · 100 Token · $1.00", "最近 7 天 66 轮 · 750 Token · $1.65"]);
+
+  hub.ingest("app", { id: "retry", type: "feedback.new", subject: "retry" }, clock);
+  const retry = hub.claimNext("w1", "retry", clock)!;
+  hub.finish(retry.run, retry.token, { outcome: "failed", usage: { input: 4, output: 2 } }, clock);
+  const client = hubClient(url, owner);
+  const current = await client.state();
+  const older = await client.state(current.nextBefore);
+  assert.ok(older.runs.every((run: { id: number }) => run.id < current.nextBefore));
+  assert.deepEqual(older.spending, current.spending);
+  assert.deepEqual(older.totals, current.totals);
+  assert.equal(older.totals.doneToday, 1);
+  assert.equal(older.totals.retrying, 1);
+  assert.equal(older.totals.usage.input, 1754);
+  assert.equal(older.totals.usage.output, 2);
+  assert.deepEqual(older.lines.find((line: { id: string }) => line.id === "意见").totals.usage, {
+    input: 754,
+    output: 2,
+    cost: 1.65,
+  });
+  assert.deepEqual(older.agents.find((agent: { id: string }) => agent.id === "a1").totals.usage, older.totals.usage);
 
   for (const table of ["run_events", "runs", "events", "seen", "cards", "deliveries", "timers"] as const)
     fixtureClear(table);

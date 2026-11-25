@@ -127,7 +127,7 @@ function check(dir: string, name: string, info: FileInfo) {
 
 export function readManifest(dir: string): Manifest {
   const file = path.join(dir, MANIFEST);
-  if (!existsSync(file)) throw new Error(`这里没有 ${MANIFEST}，不像是一份备份：${dir}`);
+  if (!existsSync(file)) throw new Error(`这里没有 ${MANIFEST}，不像备份：${dir}`);
   let manifest: Manifest;
   try {
     manifest = JSON.parse(readFileSync(file, "utf8"));

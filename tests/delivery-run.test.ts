@@ -6,7 +6,8 @@
 // reuses its scratch folder and fails because the origin already exists; closing a labelled PR leaves its status pending;
 // a restarted check that still has no jobs is counted as an execution error instead of returned with its cause and notice;
 // syncing main before a restart saves that restart under the old head, so the next round restarts the same check again;
-// an owner's decision written by anyone lets a commit with findings through; a suggestion returns the change.
+// an owner's decision written by anyone lets a commit with findings through; a suggestion returns the change; a full check
+// that is still running when the round's half hour is up uses up one of the five tries, so a slow check is returned.
 // Nothing here reaches GitHub: `gh` is a stand-in first on PATH, and the Git remote is a local folder.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -397,6 +398,47 @@ test("an execution error says its cause in the round's result", async (t) => {
   assert.match(String(message.summary), /交付步骤暂时出错（.*审查超过 30 分钟没有完成，已停止.*），一分钟后接着查/);
   const [retry] = (message.receipt as any).later;
   assert.equal(JSON.parse(retry.about).execution, 1);
+});
+
+test("a full check still running past the round's half hour comes back in a minute without using up a try", async (t) => {
+  const started = Date.parse("2026-11-12T00:00:00Z");
+  for (const handedOff of [false, true]) {
+    startOver();
+    reviewFinds([]);
+    answers({
+      ...delivering(openPr),
+      [`repos/example/app/actions/workflows/check.yml/runs?head_sha=${code}&event=pull_request&per_page=100`]: {
+        workflow_runs: [
+          { id: 13, head_sha: code, event: "pull_request", status: "in_progress", created_at: "2026-11-12T00:00:00Z" },
+        ],
+      },
+      "repos/example/app/actions/runs/13/jobs?filter=latest&per_page=100": {
+        jobs: [{ name: "check", status: "in_progress", conclusion: null }],
+      },
+    });
+    let clockReads = 0;
+    // The round's own clock starts at the first read; every later read is past its half hour, so nothing sleeps.
+    t.mock.method(Date, "now", () => started + (clockReads++ === 0 ? 0 : 31 * 60_000));
+    const phases: { phase: string; detail?: string }[] = [];
+    const timers = [{ key: "delivery-retry", about: JSON.stringify({ head: code, github: 2, execution: 4 }) }];
+    const options = {
+      ...(handedOff ? { notifyCommand: join(root, "must-not-notify") } : {}),
+      report: (phase: string, _head: string, metadata?: { detail?: string }) => {
+        phases.push({ phase, detail: metadata?.detail });
+      },
+    };
+    const message = readMessage(await run("example/app", { ...about(8), timers }, true, options as any));
+    t.mock.restoreAll();
+    assert.match(String(message.summary), /完整检查还在跑/);
+    const [retry] = (message.receipt as any).later;
+    assert.equal(retry.at, new Date(started + 32 * 60_000).toISOString());
+    // Handed off, the round carries the tries it had; under the hub's own retries it isn't a failed round at all.
+    if (handedOff) {
+      assert.deepEqual(JSON.parse(retry.about), { head: code, github: 2, execution: 4 });
+      assert.deepEqual(phases.at(-1), { phase: "retrying", detail: "checks" });
+    }
+    assert.notEqual(lastStatus("delivery")?.state, "failure");
+  }
 });
 
 test("a check still stalled after a saved restart returns with its exact cause and notice, without an error retry", async (t) => {

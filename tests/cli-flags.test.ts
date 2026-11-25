@@ -1,6 +1,7 @@
 // Reading the command line: `init --help` used to install instead of printing how to use it, a misspelt `--port` installed
 // with the default in silence, and an invalid port left a broken installation that could neither start nor be initialized
-// again; `update --help` and `uninstall --yes --help` ran the real update or uninstall; any other command went ahead without
+// again; `update --help` and `uninstall --yes --help` ran the real update or uninstall; boolean flags before positional
+// words swallowed the words, `--flag=value` was rejected, and `--yes=false` counted as `--yes`; any other command went ahead without
 // what a flag it doesn't read had asked for, and a result given to `resolve` must not be taken for flags. All found here by
 // running the real program in a home of its own and looking at what it wrote. Nothing is installed, updated or uninstalled,
 // no service is touched and no Agent is called.
@@ -70,6 +71,32 @@ test("the flags init does read still reach the config", async () => {
   assert.equal(ran.code, 0, ran.stderr);
   const config = JSON.parse(readFileSync(join(ran.home, "config.json"), "utf8")) as { url: string };
   assert.equal(config.url, "http://127.0.0.1:3361");
+});
+
+test("boolean flags before positional words leave the words intact, and --flag=value works", async () => {
+  const initEq = await run(["init", "--command=node {prompt}", "--port=3362", "--no-service"]);
+  assert.equal(initEq.code, 0, initEq.stderr);
+  const config = JSON.parse(readFileSync(join(initEq.home, "config.json"), "utf8")) as { url: string };
+  assert.equal(config.url, "http://127.0.0.1:3362");
+
+  // Previously `--dry-run` swallowed `try.start` as its value and failed with usage.
+  const dry = await promisify(execFile)(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", program, "emit", "--dry-run", "try.start"],
+    { env: { ...process.env, AGENT_AUTOLOOP_HOME: initEq.home }, timeout: 30_000 },
+  );
+  assert.match(dry.stdout, /预演/);
+  assert.match(dry.stdout, /试一下/);
+
+  // Previously `--yes` swallowed the backup directory path and printed usage instead of checking the folder.
+  const restoreMissing = await run(["restore", "--yes", join(dir, "missing-backup")]);
+  assert.equal(restoreMissing.code, 1);
+  assert.match(restoreMissing.stderr, /不像备份/);
+
+  // Boolean flags must not silently accept `--yes=false`.
+  const badBool = await run(["uninstall", "--yes=false"]);
+  assert.equal(badBool.code, 1);
+  assert.match(badBool.stderr, /--yes 不接参数值/);
 });
 
 test("an invalid init port stops before leaving a broken installation", async () => {
