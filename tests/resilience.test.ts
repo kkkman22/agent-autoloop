@@ -1,8 +1,9 @@
-// Failure modes: a hub that says "slow down" (429) is taken as refusing a finished run's result, so the worker throws the
-// result away; it is taken as gone, so after ten minutes the owner is told the hub can't be reached; one run whose agent
-// plugin throws while being looked at stops every other run from being looked at, handed in or taken on, and stays
-// stuck after the plugin is fixed; a channel plugin that returns or crashes as soon as it starts is started again at once,
-// for ever, or waits ever longer even after it has been running fine; stopping the machine waits out a channel's pause.
+// Failure modes: a hub that says "slow down" (429) keeps the finished run's result in the worker, which hands it in again
+// after the requested wait; it is taken as gone, so after ten minutes the owner is told the hub can't be reached; one run
+// whose agent plugin throws while being looked at stops every other run from being looked at, handed in or taken on, and
+// stays stuck after the plugin is fixed; a channel plugin that returns or crashes as soon as it starts is started again at
+// once, for ever, or waits ever longer even after it has been running fine; stopping the machine waits out a channel's
+// pause.
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

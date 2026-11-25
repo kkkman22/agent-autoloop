@@ -169,8 +169,6 @@ function project(review: (stand: (name: string) => string[]) => object = () => (
     git,
     identity,
     commit,
-    config,
-    snapshot,
     write: (name: string, content: string) => {
       mkdirSync(join(repo, name, ".."), { recursive: true });
       writeFileSync(join(repo, name), content);
