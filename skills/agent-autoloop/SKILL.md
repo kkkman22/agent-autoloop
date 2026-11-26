@@ -292,7 +292,7 @@ Agent 不要在轮次里直接运行 `up` 重启派它来的这个中台：轮�
 
 接插件先在专用测试中台验证：`agent-autoloop conformance <地址> --config <测试凭据文件>`。文件里的 `keys` 分别放来源、接单程序、通道、本人密钥；`eventType` 匹配测试规则，`answerer` 在测试通道的允许名单内。检查会写事件和卡片，不指向正在用的中台。协议类型在 `protocol/schema.json`。
 
-`kernel/` 不读时钟、不取随机数。判断、事实追加和 `evolve` 更新投影在同一 WAL + FULL 事务里完成，提交后才应答。正常启动复用带游标和编号高水位的投影；格式指纹变化时从日志逐条重建，不改变旧事实。`agent-autoloop runs [规则] [--before <第几轮>]` 列出更早做完的轮次和编号，`agent-autoloop why 42` 查一轮的事件、规则和回执；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希，卡片链接查找索引也只保存 token 的哈希。
+`kernel/` 不读时钟、不取随机数。判断、事实追加和 `evolve` 更新投影在同一 WAL + FULL 事务里完成，提交后才应答。正常启动复用带游标和编号高水位的投影；格式指纹变化时从日志逐条重建，不改变旧事实。`agent-autoloop runs [规则] [--before <第几轮>]` 列出更早做完的轮次和编号，`agent-autoloop why 42` 查一轮的事件、规则和回执；`agent-autoloop wakeups [规则]` 按叫醒原因（到期复查、人工回答、别的事件）汇总最近的轮次和用量，看哪条规则在反复复查；`GET /v1/stream?after=42` 供本人客户端按序号续读。备份要一起保留 `hub.db` 和权限为 0600 的 `master.key`；后者推导轮次和卡片链接的 token。普通访问密钥只保存哈希，卡片链接查找索引也只保存 token 的哈希。
 
 备份用命令：`agent-autoloop backup [目录]` 把数据库、主密钥、配置和规则写进一个新目录（默认 `~/.agent-autoloop/backups/<时间>`），中台在跑也能备份；目录和文件只给本人读。换回来用 `agent-autoloop restore <目录> --yes`：中台要先停掉，命令先核对清单、每个文件的哈希和事实条数，任何一处对不上就整份拒绝；确认后旧文件先挪到 `replaced-<时间>` 里保留。换主密钥用 `agent-autoloop key rotate --yes`（同样要求先停掉中台，换之前自动在 `backups/` 留一份当时的备份）：换完所有旧的卡片链接、以及已经发出去还没交回结果的轮次 token 立刻失效，`key new` 建的访问密钥不受影响；换完启动中台，它按新的格式指纹从日志重建视图，慢一点，数据不丢。
 

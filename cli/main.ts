@@ -41,6 +41,7 @@ const HELP = `Agent 自动化中台
   agent-autoloop init [--agent claude|codex] [--command '某个命令 {prompt}'] [--port 3350] [--no-service]
                                     在这台电脑上装好：一个人一台电脑就够
   agent-autoloop try                     用你的 Agent 跑一遍完整流程
+  agent-autoloop wakeups [规则] [--limit 条数] [--json]  按触发原因核对历史轮次和用量（默认最近 100 条）
   agent-autoloop why <第几轮> [--json] [--raw]
                                     查看时间线；--json 输出原始事实，--raw 不过滤文字里的控制字符
   agent-autoloop conformance <地址> --config <测试凭据文件>
@@ -207,6 +208,7 @@ rules.json 里这个定时任务要写 cwd；你答了，中台叫醒它的 Agen
   },
   rules: { flags: ["yes"], usage: RULES_USAGE },
   runs: { flags: ["before", "json"], usage: RUNS_USAGE },
+  wakeups: { flags: ["limit", "json"], usage: "用法：agent-autoloop wakeups [规则] [--limit 正整数] [--json]" },
   run: { flags: ["subject", "reason"], usage: "用法：agent-autoloop run <规则> [--subject 对象] [--reason 说明]" },
   service: { flags: [], usage: "用法：agent-autoloop service install|remove" },
   status: { flags: ["raw", "json"], usage: STATUS_USAGE },
@@ -419,14 +421,24 @@ async function join(args: string[]) {
   const name = text(named.worker);
   const key = text(named.key);
   if (!url || !name || !key) return fail(TAKES.join.usage);
-  let target: URL;
+  const badAddress = "中台地址要写完整的 http:// 或 https:// 地址，不能带账号、查询参数或片段";
+  let address: URL;
   try {
-    target = new URL(url);
+    address = new URL(url);
   } catch {
-    return fail(`中台地址要是完整的网址：${url}`);
+    return fail(badAddress);
   }
-  const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(target.hostname);
-  if (target.protocol !== "https:" && !(target.protocol === "http:" && local)) {
+  if (
+    !["http:", "https:"].includes(address.protocol) ||
+    address.username ||
+    address.password ||
+    address.search ||
+    address.hash
+  ) {
+    return fail(badAddress);
+  }
+  const local = ["127.0.0.1", "localhost", "::1", "[::1]"].includes(address.hostname);
+  if (address.protocol !== "https:" && !(address.protocol === "http:" && local)) {
     return fail("远程中台要用 https；http 只允许本机回环地址，其他情况请走 SSH 隧道");
   }
   // Joining another hub must not silently replace this machine's existing hub, worker or owner keys.
@@ -535,6 +547,15 @@ async function runs(args: string[]) {
   if (named.json !== undefined) return console.log(JSON.stringify({ runs: found.runs, before: found.more }, null, 2));
   const color = colorFor(process.stdout, process.env);
   console.log(runsText(found, { rule: rest[0], color, columns: process.stdout.columns }));
+}
+
+async function wakeups(args: string[]) {
+  const { named, rest } = flags(args);
+  if (rest.length > 1 || named.limit === true) return fail(TAKES.wakeups.usage);
+  const limit = named.limit === undefined ? 100 : runOf(named.limit, TAKES.wakeups.usage);
+  const { wakeupReport, wakeupText } = await import("./wakeups.ts");
+  const report = await wakeupReport(ownerClient(), rest[0], limit);
+  console.log(named.json ? JSON.stringify(report, null, 2) : wakeupText(report));
 }
 
 async function answer(args: string[]) {
@@ -996,6 +1017,7 @@ const commands: Record<string, () => unknown> = {
   status: () => status(flags(args).named),
   why: () => why(args),
   runs: () => runs(args),
+  wakeups: () => wakeups(args),
   conformance: () => checkConformance(args),
   answer: () => answer(args),
   resolve: () => resolve(args),

@@ -452,7 +452,7 @@ POST /v1/rules/巡检/run        { "subject": "#12", "reason": "看一眼" }    
 
 命令行：`agent-autoloop pause <规则> [--reason 原因] [--until 时间]`、`resume <规则>`、`replay <规则> --since <时间>`、`run <规则> [--subject 对象] [--reason 说明]`。`pause` 说明暂停期间的事件不排队、恢复时会列出；`resume` 列出这次暂停跳过的事件（最多 20 条，多了写明共几条），并给出补跑这一段的 `replay` 命令；`status` 列出暂停中的规则、从什么时候起、跳过了几条和最近 5 条。已经恢复的规则以前跳过的事件不再出现在 `status` 里。
 
-`agent-autoloop check [文件]` 只读文件、校验规则，不打开中台数据库，也不把文件载入中台；不写文件名就查 `rules.json`。可以先校验一份草稿再换上去。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。`agent-autoloop runs [规则] [--before <第几轮>]` 一次列 20 轮做完的。指定规则时，使用本人密钥请求 `GET /v1/runs?rule=<URL 编码的规则名>[&before=<编号>]`，返回 `{now, timezone, runs, nextBefore}`。轮次与 state 同形，按编号倒序，排除 queued 和 claimed；before 不含该轮，末页游标为 null，规则没有历史时返回空列表。旧中台没有这个地址时，命令行仍从 state 翻页筛选。
+`agent-autoloop check [文件]` 只读文件、校验规则，不打开中台数据库，也不把文件载入中台；不写文件名就查 `rules.json`。可以先校验一份草稿再换上去。`/v1/state` 一次给最近 60 轮，`?before=<nextBefore>` 翻更早的。`agent-autoloop runs [规则] [--before <第几轮>]` 一次列 20 轮做完的。指定规则时，使用本人密钥请求 `GET /v1/runs?rule=<URL 编码的规则名>[&before=<编号>]`，返回 `{now, timezone, runs, nextBefore}`。轮次与 state 同形，按编号倒序，排除 queued 和 claimed；before 不含该轮，末页游标为 null，规则没有历史时返回空列表。旧中台没有这个地址时，命令行仍从 state 翻页筛选。`agent-autoloop wakeups [规则] [--limit 条数] [--json]` 也这样翻页，默认看最近 100 轮，再逐轮读 `why` 的事实，按规则和叫醒原因分组：到期复查只认中台自己的定时器，人工回答只认卡片的回答，来源发来的同名事件算别的事件，几种原因并进一轮的单列；每组给出轮数、有过失败的轮数、已上报的用量合计和覆盖的轮数，以及几个轮次编号。统计在命令行这边做，协议不变。
 
 `/v1/state` 的 `spending.today`、`spending.week` 独立于分页，按规则时区的今天和过去 7 × 24 小时的完成时间汇总。每项含 `rounds`、`tokens`、`cached`、`cost`、`missingTokens`、`missingCost`，`tokens` 是输入加输出，`cached` 是其中从缓存读的，后两项是没报对应用量的轮数；从未开始就取消的轮次不计入。旧请求和响应字段保持不变，旧客户端可以忽略新增字段；新版 `status` 需要中台一起更新，不再逐页读取历史来算费用。
 

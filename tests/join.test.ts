@@ -1,4 +1,5 @@
-// A machine that already runs a hub or worker must not lose its config when someone mistakenly calls join.
+// An unusable hub address must not leave a worker that cannot connect, and a machine that already runs a hub or worker
+// must not lose its config when someone mistakenly calls join.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,6 +14,23 @@ const join = (home: string, url = "https://hub.example") =>
     encoding: "utf8",
     timeout: 20_000,
   });
+
+test("join rejects an unusable hub address before it creates a configuration", (t) => {
+  for (const url of [
+    "hub.example",
+    "ftp://hub.example",
+    "https://person@hub.example",
+    "https://hub.example?view=worker",
+    "https://hub.example#worker",
+  ]) {
+    const home = mkdtempSync(path.join(tmpdir(), "agent-autoloop-join-invalid-url-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const result = join(home, url);
+    assert.equal(result.status, 1, `${url}: ${result.stderr}`);
+    assert.match(result.stderr, /中台地址.*http:\/\//);
+    assert.ok(!existsSync(path.join(home, "config.json")), url);
+  }
+});
 
 test("join creates a worker configuration on a fresh machine", (t) => {
   const home = mkdtempSync(path.join(tmpdir(), "agent-autoloop-join-new-"));
