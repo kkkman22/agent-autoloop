@@ -667,6 +667,27 @@ test("stopping a round nobody has heard from ends it instead of saying it had al
   assert.throws(() => finish(job.run, job.token, { outcome: "done", summary: "后来交上来了" }, at(8)), AuthError);
 });
 
+test("a round asked to stop, then lost by its worker, ends with no stop left pending", () => {
+  clean();
+  ingest("ops", alert("u"), at(0));
+  const job = claim("w1", at(0))!;
+  heartbeat("w1", [job.run], at(0));
+  // The owner asks this round to stop while the worker still holds it, so the stop waits for the worker to say it stopped.
+  cancel(job.run, at(1));
+  assert.equal(state(job.run), "claimed");
+  // The worker keeps coming back but no longer lists it, so past the lease the hub stops knowing if it ran at all — and the
+  // stop being waited on is one no process can answer.
+  heartbeat("w1", [], at(6));
+  sweep(at(6));
+  assert.equal(state(job.run), "unknown");
+  cancel(job.run, at(7));
+  const row = one<{ state: string; cancel_at: string | null }>("SELECT state, cancel_at FROM runs WHERE id = ?", [
+    job.run,
+  ])!;
+  // Ending it has to forget the stop it was waiting on, or the round reads as still stopping after it has ended.
+  assert.deepEqual([row.state, row.cancel_at], ["cancelled", null]);
+});
+
 test("a report of starting is bounded, and a refused one changes nothing", () => {
   clean();
   ingest("ops", alert("x"), at(0));

@@ -1,10 +1,10 @@
 // When a schedule comes next, in the rules' time zone. Failure cases: a malformed schedule is taken; 7 isn't Sunday; a day
 // and a weekday both given don't take either; the wall clock is read in the wrong zone; a moment that doesn't exist on the
 // day clocks go forward fires at a shifted time, or one that happens twice on the day they go back fires twice; a
-// schedule that never comes (February 30) never returns.
+// schedule that never comes (February 30) never returns; a zone that skips midnight itself still has a day start.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeCron, latestBefore, nextRun, parseCron } from "../kernel/cron.ts";
+import { dayStart, describeCron, latestBefore, nextRun, parseCron } from "../kernel/cron.ts";
 
 const next = (text: string, after: string, zone = "Asia/Shanghai") => {
   const at = nextRun(parseCron(text)!, Date.parse(after), zone);
@@ -53,6 +53,13 @@ test("a moment that doesn't exist is skipped, and one that happens twice runs th
 
 test("a schedule that never comes says so", () => {
   assert.equal(next("0 0 30 2 *", "2026-01-01T00:00:00Z"), null);
+});
+
+test("a zone that skips midnight starts its day at the first hour that exists", () => {
+  // Beirut, 2026-03-29: clocks go from 23:59 straight to 01:00, so 00:00 never happens that day.
+  const noon = Date.parse("2026-03-29T12:00:00Z");
+  assert.equal(new Date(dayStart(noon, "Asia/Beirut")).toISOString(), "2026-03-28T22:00:00.000Z");
+  assert.equal(new Date(dayStart(noon, "Asia/Shanghai")).toISOString(), "2026-03-28T16:00:00.000Z");
 });
 
 test("the latest time due is found across a long gap without walking every minute of it", () => {

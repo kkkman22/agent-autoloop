@@ -64,7 +64,7 @@ function hasDesktop() {
 function show(title: string) {
   const [program, args] = notifyCommand(title);
   return new Promise<void>((resolve, reject) => {
-    execFile(program, args, { timeout: 30_000 }, (error) => (error ? reject(error) : resolve()));
+    execFile(program, args, { timeout: 30_000, windowsHide: true }, (error) => (error ? reject(error) : resolve()));
   });
 }
 
