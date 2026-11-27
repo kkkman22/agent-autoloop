@@ -20,6 +20,7 @@ test("join rejects an unusable hub address before it creates a configuration", (
     "hub.example",
     "ftp://hub.example",
     "https://person@hub.example",
+    "https://:secret@hub.example",
     "https://hub.example?view=worker",
     "https://hub.example#worker",
   ]) {

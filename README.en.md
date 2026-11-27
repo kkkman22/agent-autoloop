@@ -25,7 +25,7 @@ Works on Windows, macOS, and Linux. You need Node 24 or newer, Git, and a comman
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/main/install.ps1 | iex
+iex ((irm https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/main/install.ps1).TrimStart([char]0xFEFF))
 ```
 
 macOS / Linux:

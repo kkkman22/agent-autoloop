@@ -657,7 +657,7 @@ export function createWorker({
     const text = `${name} 连不上中台已经 ${minutes} 分钟了，派给它的活暂时没人接；它还在一直重试。`;
     const [program, args] = commandLine(unreachable.map((part) => part.replaceAll("{text}", text)));
     try {
-      execFileSync(program, args, { timeout: 60_000, stdio: "ignore" });
+      execFileSync(program, args, { timeout: 60_000, stdio: "ignore", windowsHide: true });
       told = true;
     } catch (error) {
       log(`couldn't tell anyone the hub is gone: ${error}`);

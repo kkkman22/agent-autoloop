@@ -13,7 +13,11 @@ export function commitOf(root = ROOT) {
     // Only a checkout has its own .git entry; unpacked copies must not inherit a parent repository's commit.
     if (!existsSync(path.join(root, ".git"))) return "dev";
     const args = ["-C", root, "rev-parse", "HEAD"];
-    return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).trim();
   } catch {
     return "dev";
   }
@@ -30,7 +34,11 @@ export function releaseOf(root = ROOT) {
   try {
     if (!existsSync(path.join(root, ".git"))) return null;
     const args = ["-C", root, "tag", "--points-at", "HEAD"];
-    const tags = execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n");
+    const tags = execFileSync("git", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    }).split("\n");
     return tags.find((tag) => /^v\d+\.\d+\.\d+$/.test(tag)) ?? tags.find((tag) => /^v\d+\.\d+\.\d+-/.test(tag)) ?? null;
   } catch {
     return null;

@@ -4,10 +4,11 @@
 // powershell.exe an Agent left in the turn's folder runs, outside its sandbox, in place of the system's; the npm.cmd and
 // npx.cmd that npm 10 and later write, which name their script through a variable, can't be run at all; a command line
 // longer than Windows starts fails with only "spawn ENAMETOOLONG", which doesn't say what is too long or what to do;
-// a running turn launches PowerShell just to check a child process the worker still holds.
+// a running turn launches PowerShell just to check a child process the worker still holds; a desktop notice shown from a
+// process with no console puts a console window on the desktop.
 import assert from "node:assert/strict";
 import { createHook } from "node:async_hooks";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -438,6 +439,91 @@ test("Windows notification text remains data in PowerShell", { skip: !windows },
     body: `${title}\n运行 agent-autoloop status 查看`,
   });
 });
+
+/**
+ * Visible console windows on the signed-in desktop, sampled for a while. A console-less process that starts one without
+ * hiding it gets a window of its own; one started hidden has no window at all, so it never shows up here.
+ */
+const CONSOLE_WINDOWS = `Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class Consoles {
+  delegate bool Each(IntPtr window, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(Each each, IntPtr data);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int size);
+  public static int Visible() {
+    var count = 0;
+    EnumWindows((window, data) => {
+      var name = new StringBuilder(256);
+      GetClassName(window, name, 256);
+      if (IsWindowVisible(window) && (name.ToString() == "ConsoleWindowClass" || name.ToString() == "CASCADIA_HOSTING_WINDOW_CLASS")) count++;
+      return true;
+    }, IntPtr.Zero);
+    return count;
+  }
+}
+"@`;
+function consoles(seconds = 0) {
+  return Number(
+    powershell(`${CONSOLE_WINDOWS}
+$most = [Consoles]::Visible()
+$end = (Get-Date).AddSeconds(${seconds})
+while ((Get-Date) -lt $end) { $most = [Math]::Max($most, [Consoles]::Visible()); Start-Sleep -Milliseconds 200 }
+$most`),
+  );
+}
+
+// The hub has no console of its own (the login task starts it under wscript), and a card is shown from the hub's own
+// process. A notice that doesn't hide its window puts a PowerShell console on the desktop for the five seconds it stays.
+test(
+  "Windows shows a desktop notice without putting a console window on the desktop",
+  { skip: !windows || !!process.env.CI },
+  async (t) => {
+    const module = pathToFileURL(join(import.meta.dirname, "../plugins/desktop/channel.ts")).href;
+    const said = join(scratch, "notice.txt");
+    const baseline = consoles();
+    const child = spawn(
+      process.execPath,
+      [
+        "--disable-warning=ExperimentalWarning",
+        "--input-type=module",
+        "-e",
+        `
+const { writeFileSync } = await import("node:fs");
+const { default: desktop } = await import(${JSON.stringify(module)});
+let once = true;
+await desktop({
+  options: {},
+  log: () => {},
+  signal: new AbortController().signal,
+  hub: {
+    nextCard: async () => {
+      if (!once) return new Promise(() => {});
+      once = false;
+      return { card: { id: 1, version: 1, ref: null, kind: "notice", state: "open", title: "测试通知",
+        text: "", options: [], recommend: null, choice: null, answer: null, result: null, link: null } };
+    },
+    delivered: async (id, version, ref) => writeFileSync(${JSON.stringify(said)}, String(ref)),
+    failed: async () => {},
+  },
+});`,
+      ],
+      { detached: true, windowsHide: true, stdio: "ignore" },
+    );
+    try {
+      // Its own console-less process samples the desktop while the notice shows.
+      const most = consoles(8);
+      const end = Date.now() + 10_000;
+      while (!existsSync(said) && Date.now() < end) await new Promise((resolve) => setTimeout(resolve, 100));
+      const ref = existsSync(said) ? readFileSync(said, "utf8") : "";
+      if (ref.startsWith("skipped-")) return t.skip("no signed-in desktop here to show a notice on");
+      assert.equal(ref, "shown-1", "the notice never went out");
+      assert.equal(most, baseline, "the notice left a console window on the desktop");
+    } finally {
+      child.kill();
+    }
+  },
+);
 
 // The elevated Codex sandbox uses another Windows account, which cannot read a private hub's context file by default.
 test(

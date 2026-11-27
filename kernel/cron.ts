@@ -109,7 +109,13 @@ export function latestBefore(cron: Cron, due: number, now: number, zone: string)
 
 export function dayStart(now: number, zone: string) {
   const clock = wallClock(now, zone);
-  return moment(clock.year, clock.month, clock.day, 0, 0, zone) ?? now;
+  // Some zones skip midnight itself (Beirut, Santiago, Havana): the day begins at the first hour that exists. Taking
+  // `now` would leave today's spending and counts at nothing for the whole day.
+  for (let hour = 0; hour < 24; hour++) {
+    const at = moment(clock.year, clock.month, clock.day, hour, 0, zone);
+    if (at !== null) return at;
+  }
+  return now;
 }
 
 // With the rest of the cron and not with the status summary: a client's own page can import this file, which needs nothing
